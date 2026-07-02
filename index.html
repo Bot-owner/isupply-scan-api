@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iSupply Scan – Professional iPhone Diagnostics</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --pink:#ec4899;--pink-light:#f9a8d4;--pink-dim:rgba(236,72,153,.08);
+  --black:#09090b;--white:#ffffff;--gray-50:#fafafa;--gray-100:#f4f4f5;
+  --gray-200:#e4e4e7;--gray-400:#a1a1aa;--gray-600:#52525b;--gray-800:#27272a;
+  --green:#16a34a;--mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif;
+  --radius:12px;--shadow:0 4px 24px rgba(0,0,0,.07);
+}
+html{scroll-behavior:smooth}
+body{font-family:var(--sans);color:var(--black);background:var(--white);-webkit-font-smoothing:antialiased}
+
+/* ── NAV ── */
+nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(255,255,255,.85);backdrop-filter:blur(12px);border-bottom:1px solid var(--gray-200)}
+.nav-inner{max-width:1200px;margin:0 auto;padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
+.nav-logo-img{width:36px;height:36px;object-fit:contain}
+.nav-logo-text{font-size:17px;font-weight:700;color:var(--black);letter-spacing:-0.02em}
+.nav-logo-text span{color:var(--pink)}
+.nav-links{display:flex;align-items:center;gap:32px}
+.nav-links a{font-size:14px;font-weight:500;color:var(--gray-600);text-decoration:none;transition:color .15s}
+.nav-links a:hover{color:var(--black)}
+.nav-right{display:flex;align-items:center;gap:12px}
+.btn-nav-admin{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gray-600);background:var(--gray-100);border:1.5px solid var(--gray-200);padding:6px 14px;border-radius:7px;text-decoration:none;transition:all .15s;letter-spacing:0.04em}
+.btn-nav-admin:hover{color:var(--black);border-color:var(--gray-400)}
+.btn-nav-cta{font-size:14px;font-weight:600;color:var(--white);background:var(--pink);border:none;padding:8px 20px;border-radius:8px;text-decoration:none;transition:all .15s}
+.btn-nav-cta:hover{opacity:.88;transform:translateY(-1px)}
+
+/* ── HERO ── */
+.hero{padding:140px 32px 100px;max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
+.hero-eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--pink);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:20px;display:flex;align-items:center;gap:8px}
+.hero-eyebrow::before{content:'';width:24px;height:2px;background:var(--pink)}
+.hero h1{font-size:56px;font-weight:800;line-height:1.08;letter-spacing:-0.03em;color:var(--black);margin-bottom:24px}
+.hero h1 em{font-style:normal;color:var(--pink)}
+.hero-sub{font-size:18px;color:var(--gray-600);line-height:1.6;margin-bottom:40px;max-width:460px}
+.hero-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.btn-primary{font-size:15px;font-weight:600;color:var(--white);background:var(--pink);border:none;padding:14px 28px;border-radius:10px;text-decoration:none;transition:all .2s;display:inline-flex;align-items:center;gap:8px}
+.btn-primary:hover{opacity:.88;transform:translateY(-2px);box-shadow:0 8px 24px rgba(236,72,153,.3)}
+.btn-secondary{font-size:15px;font-weight:500;color:var(--black);background:transparent;border:1.5px solid var(--gray-200);padding:14px 28px;border-radius:10px;text-decoration:none;transition:all .2s}
+.btn-secondary:hover{border-color:var(--gray-400);background:var(--gray-50)}
+.hero-note{font-family:var(--mono);font-size:11px;color:var(--gray-400);margin-top:16px;letter-spacing:0.04em}
+
+/* ── HERO VISUAL – LIVE DEMO ── */
+.hero-visual{position:relative}
+.demo-window{background:var(--black);border-radius:16px;padding:20px;box-shadow:0 32px 80px rgba(0,0,0,.2);overflow:hidden}
+.demo-bar{display:flex;gap:6px;margin-bottom:16px}
+.demo-bar span{width:12px;height:12px;border-radius:50%}
+.demo-bar span:nth-child(1){background:#ff5f57}
+.demo-bar span:nth-child(2){background:#ffbd2e}
+.demo-bar span:nth-child(3){background:#28ca41}
+.demo-slots{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.demo-slot{background:#111;border:1px solid #222;border-radius:8px;padding:10px;font-family:var(--mono);font-size:9px;min-height:120px;position:relative;overflow:hidden;transition:border-color .3s}
+.demo-slot.active{border-color:var(--pink)}
+.demo-slot.done{border-color:#16a34a}
+.demo-slot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e1e1e}
+.demo-slot-num{color:#444;font-size:8px;letter-spacing:.08em}
+.demo-badge{font-size:7px;padding:1px 6px;border-radius:3px;font-weight:600;letter-spacing:.06em}
+.badge-empty{background:#1a1a1a;color:#444}
+.badge-testing{background:rgba(236,72,153,.15);color:var(--pink);animation:blink 1s infinite}
+.badge-done{background:rgba(22,163,74,.15);color:#4ade80}
+.demo-imei{background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.2);border-radius:4px;padding:4px 6px;margin-bottom:6px;display:flex;justify-content:space-between}
+.demo-imei-lbl{color:var(--pink);font-size:7px;letter-spacing:.08em}
+.demo-imei-val{color:#e2e8f0;font-size:8px;font-weight:600}
+.demo-model{color:#e2e8f0;font-size:9px;font-weight:600;margin-bottom:2px}
+.demo-ios{color:#666;font-size:7px}
+.demo-tests{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+.demo-test{display:flex;justify-content:space-between;padding:2px 4px;border-radius:2px;font-size:7px}
+.demo-test.pass{background:rgba(22,163,74,.08);color:#4ade80}
+.demo-test.warn{background:rgba(251,191,36,.08);color:#fbbf24}
+.demo-test.scanning{background:rgba(236,72,153,.08);color:var(--pink)}
+.demo-test.pending{color:#333}
+.demo-grade{text-align:center;margin-top:6px;padding:4px;border-radius:4px;font-weight:700;font-size:12px}
+.demo-grade.A{background:rgba(22,163,74,.15);color:#4ade80;border:1px solid rgba(22,163,74,.2)}
+
+/* ── STATS BAR ── */
+.stats-bar{background:var(--gray-50);border-top:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200);padding:32px}
+.stats-inner{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:0}
+.stat-item{text-align:center;padding:0 32px;border-right:1px solid var(--gray-200)}
+.stat-item:last-child{border-right:none}
+.stat-num{font-size:36px;font-weight:800;color:var(--black);letter-spacing:-0.03em;line-height:1}
+.stat-num span{color:var(--pink)}
+.stat-desc{font-size:13px;color:var(--gray-600);margin-top:6px;line-height:1.4}
+
+/* ── SECTIONS ── */
+section{padding:96px 32px}
+.section-inner{max-width:1200px;margin:0 auto}
+.section-eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--pink);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px}
+.section-title{font-size:40px;font-weight:800;letter-spacing:-0.025em;line-height:1.15;margin-bottom:16px}
+.section-sub{font-size:17px;color:var(--gray-600);line-height:1.6;max-width:520px}
+
+/* ── FEATURES ── */
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px}
+.feature-card{background:var(--white);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:32px;transition:all .2s}
+.feature-card:hover{border-color:var(--pink-light);box-shadow:0 8px 32px rgba(236,72,153,.08);transform:translateY(-2px)}
+.feature-icon{width:48px;height:48px;background:var(--pink-dim);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:20px}
+.feature-title{font-size:17px;font-weight:700;margin-bottom:8px;letter-spacing:-0.01em}
+.feature-desc{font-size:14px;color:var(--gray-600);line-height:1.65}
+.feature-tag{display:inline-block;font-family:var(--mono);font-size:10px;color:var(--pink);background:var(--pink-dim);padding:3px 8px;border-radius:4px;margin-top:14px;font-weight:600}
+
+/* ── HOW IT WORKS ── */
+.how-section{background:var(--gray-50);border-top:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200)}
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:56px;position:relative}
+.steps::before{content:'';position:absolute;top:28px;left:14%;right:14%;height:1px;background:var(--gray-200);z-index:0}
+.step{text-align:center;padding:0 20px;position:relative;z-index:1}
+.step-num{width:56px;height:56px;border-radius:50%;background:var(--white);border:2px solid var(--gray-200);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--black);transition:all .2s}
+.step:hover .step-num{border-color:var(--pink);color:var(--pink);background:var(--pink-dim)}
+.step-title{font-size:15px;font-weight:700;margin-bottom:8px}
+.step-desc{font-size:13px;color:var(--gray-600);line-height:1.6}
+
+/* ── PRICING ── */
+.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px;align-items:start}
+.pricing-card{border:1.5px solid var(--gray-200);border-radius:16px;padding:36px;background:var(--white);position:relative;transition:all .2s}
+.pricing-card:hover{box-shadow:var(--shadow)}
+.pricing-card.featured{border-color:var(--pink);background:var(--black);color:var(--white)}
+.pricing-card.featured .pricing-desc{color:#a1a1aa}
+.pricing-card.featured .pricing-feature{color:#e4e4e7}
+.pricing-card.featured .pricing-feature::before{color:var(--pink)}
+.popular-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--pink);color:var(--white);font-family:var(--mono);font-size:10px;font-weight:700;padding:4px 14px;border-radius:20px;letter-spacing:.08em;white-space:nowrap}
+.pricing-plan{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--gray-400);margin-bottom:12px}
+.pricing-card.featured .pricing-plan{color:var(--pink)}
+.pricing-price{font-size:48px;font-weight:800;letter-spacing:-0.03em;line-height:1;margin-bottom:4px}
+.pricing-price sup{font-size:20px;font-weight:600;vertical-align:top;margin-top:10px;margin-right:2px}
+.pricing-period{font-size:13px;color:var(--gray-400);margin-bottom:16px}
+.pricing-desc{font-size:14px;color:var(--gray-600);line-height:1.5;margin-bottom:28px;padding-bottom:28px;border-bottom:1px solid var(--gray-200)}
+.pricing-card.featured .pricing-desc{border-bottom-color:#27272a}
+.pricing-features{display:flex;flex-direction:column;gap:12px;margin-bottom:32px}
+.pricing-feature{font-size:14px;color:var(--gray-800);display:flex;align-items:flex-start;gap:8px;line-height:1.4}
+.pricing-feature::before{content:'✓';color:var(--green);font-weight:700;flex-shrink:0}
+.pricing-feature.no::before{content:'✗';color:var(--gray-400)}
+.pricing-feature.no{color:var(--gray-400)}
+.btn-pricing{width:100%;padding:13px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .2s;text-align:center;text-decoration:none;display:block}
+.btn-pricing-white{background:var(--white);color:var(--black);border:1.5px solid var(--gray-200)}
+.btn-pricing-white:hover{border-color:var(--pink);color:var(--pink)}
+.btn-pricing-pink{background:var(--pink);color:var(--white)}
+.btn-pricing-pink:hover{opacity:.88;transform:translateY(-1px);box-shadow:0 6px 20px rgba(236,72,153,.3)}
+.btn-pricing-outline{background:transparent;color:var(--white);border:1.5px solid #3f3f46}
+.btn-pricing-outline:hover{border-color:var(--white);background:rgba(255,255,255,.05)}
+
+/* ── COMPATIBILITY ── */
+.compat-section{background:var(--black);color:var(--white)}
+.compat-section .section-title{color:var(--white)}
+.compat-section .section-sub{color:#a1a1aa}
+.compat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:56px}
+.compat-card{background:#111;border:1px solid #1e1e1e;border-radius:var(--radius);padding:24px;text-align:center;transition:border-color .2s}
+.compat-card:hover{border-color:#333}
+.compat-model{font-size:14px;font-weight:600;color:var(--white);margin-bottom:4px}
+.compat-gen{font-family:var(--mono);font-size:11px;color:#666}
+.compat-more{grid-column:1/-1;text-align:center;font-family:var(--mono);font-size:12px;color:#666;padding:16px;border:1px dashed #1e1e1e;border-radius:var(--radius)}
+
+/* ── CTA ── */
+.cta-section{background:linear-gradient(135deg, var(--pink) 0%, #be185d 100%);color:var(--white);text-align:center;padding:96px 32px}
+.cta-section h2{font-size:44px;font-weight:800;letter-spacing:-0.025em;margin-bottom:16px}
+.cta-section p{font-size:18px;opacity:.85;margin-bottom:40px;max-width:480px;margin-left:auto;margin-right:auto;line-height:1.6}
+.btn-cta-white{font-size:16px;font-weight:700;color:var(--pink);background:var(--white);border:none;padding:16px 36px;border-radius:10px;text-decoration:none;transition:all .2s;display:inline-block}
+.btn-cta-white:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.2)}
+
+/* ── FOOTER ── */
+footer{background:var(--black);color:#71717a;padding:56px 32px 32px}
+.footer-inner{max-width:1200px;margin:0 auto}
+.footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
+.footer-brand-text{font-size:17px;font-weight:700;color:var(--white);margin-bottom:12px}
+.footer-brand-text span{color:var(--pink)}
+.footer-brand-desc{font-size:13px;line-height:1.7;color:#71717a;max-width:240px}
+.footer-col-title{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--white);letter-spacing:.1em;text-transform:uppercase;margin-bottom:16px}
+.footer-links{display:flex;flex-direction:column;gap:10px}
+.footer-links a{font-size:13px;color:#71717a;text-decoration:none;transition:color .15s}
+.footer-links a:hover{color:var(--white)}
+.footer-bottom{border-top:1px solid #18181b;padding-top:24px;display:flex;justify-content:space-between;align-items:center}
+.footer-copy{font-size:12px;font-family:var(--mono)}
+.footer-legal{display:flex;gap:24px}
+.footer-legal a{font-size:12px;color:#71717a;text-decoration:none;font-family:var(--mono)}
+.footer-legal a:hover{color:var(--white)}
+
+/* ── ANIMATIONS ── */
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+@keyframes scanLine{0%{transform:translateY(-100%)}100%{transform:translateY(400%)}}
+
+.scan-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--pink),transparent);animation:scanLine 3s linear infinite;opacity:.4}
+
+/* ── RESPONSIVE ── */
+@media(max-width:900px){
+  .hero{grid-template-columns:1fr;gap:48px;padding:100px 24px 60px}
+  .hero h1{font-size:36px}
+  .hero-visual{order:-1}
+  .features-grid,.pricing-grid{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr 1fr;gap:32px}
+  .steps::before{display:none}
+  .compat-grid{grid-template-columns:1fr 1fr}
+  .stats-inner{grid-template-columns:1fr 1fr;gap:24px}
+  .stat-item{border-right:none;border-bottom:1px solid var(--gray-200);padding-bottom:24px}
+  .footer-top{grid-template-columns:1fr 1fr;gap:32px}
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="nav-logo" href="/">
+      <img class="nav-logo-img" src="photo_2026-07-01_01-43-29.jpg" alt="iS" onerror="this.outerHTML='<div style=\'width:32px;height:32px;background:#ec4899;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:13px;\'>iS</div>'" />
+      <span class="nav-logo-text">iSupply <span>Scan</span></span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#how-it-works">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#compatibility">Compatibility</a>
+    </div>
+    <div class="nav-right">
+      <a class="btn-nav-admin" href="https://isupply-scan-api-production.up.railway.app" target="_blank">Admin Panel →</a>
+      <a class="btn-nav-cta" href="#pricing">Get started</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section style="padding:0">
+  <div class="hero">
+    <div class="hero-content">
+      <div class="hero-eyebrow">Professional iPhone Diagnostics</div>
+      <h1>Know exactly what's<br><em>inside every iPhone</em></h1>
+      <p class="hero-sub">iSupply Scan tests 12 components in seconds — display, Touch ID, cameras, battery health and more. Built for EU refurbishers who demand accuracy.</p>
+      <div class="hero-actions">
+        <a href="#pricing" class="btn-primary">
+          <span>Start free trial</span>
+          <span>→</span>
+        </a>
+        <a href="#how-it-works" class="btn-secondary">See how it works</a>
+      </div>
+      <p class="hero-note">No credit card required · Works on Windows · USB connection</p>
+    </div>
+
+    <!-- LIVE DEMO ANIMATION -->
+    <div class="hero-visual">
+      <div class="demo-window">
+        <div class="demo-bar">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="demo-slots">
+          <!-- SLOT 1 – Done -->
+          <div class="demo-slot done">
+            <div class="demo-slot-header">
+              <span class="demo-slot-num">SLOT 01</span>
+              <span class="demo-badge badge-done">OK ✓</span>
+            </div>
+            <div class="demo-imei">
+              <span class="demo-imei-lbl">IMEI</span>
+              <span class="demo-imei-val">35224093658</span>
+            </div>
+            <div class="demo-model">iPhone 15 Pro</div>
+            <div class="demo-ios">A2650 · 256 GB · iOS 17.5.1</div>
+            <div class="demo-tests">
+              <div class="demo-test pass">🔋 Battery · 94% · Excellent</div>
+              <div class="demo-test pass">📱 Display · Original</div>
+              <div class="demo-test pass">👆 Touch ID · Original</div>
+            </div>
+            <div class="demo-grade A">A</div>
+          </div>
+          <!-- SLOT 2 – Scanning -->
+          <div class="demo-slot active" id="demo-slot2">
+            <div class="scan-line"></div>
+            <div class="demo-slot-header">
+              <span class="demo-slot-num">SLOT 02</span>
+              <span class="demo-badge badge-testing">Testing ●</span>
+            </div>
+            <div class="demo-imei">
+              <span class="demo-imei-lbl">IMEI</span>
+              <span class="demo-imei-val">35722409365</span>
+            </div>
+            <div class="demo-model">iPhone XS</div>
+            <div class="demo-ios">A1920 · 256 GB · iOS 18.7.9</div>
+            <div class="demo-tests" id="demo-tests2">
+              <div class="demo-test pass">🔋 Battery · 91% · Excellent</div>
+              <div class="demo-test pass">📱 Display · Original</div>
+              <div class="demo-test scanning" id="scanning-row">📷 Rear camera · scanning...</div>
+              <div class="demo-test pending">🤳 Front camera</div>
+              <div class="demo-test pending">🎤 Microphone</div>
+            </div>
+          </div>
+          <!-- SLOT 3 – Empty -->
+          <div class="demo-slot" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
+            <div style="width:32px;height:32px;border:1px dashed #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">📲</div>
+            <div style="color:#333;font-size:8px;text-align:center">Connect iPhone<br>via USB</div>
+          </div>
+          <!-- SLOT 4 – Empty -->
+          <div class="demo-slot" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
+            <div style="width:32px;height:32px;border:1px dashed #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">📲</div>
+            <div style="color:#333;font-size:8px;text-align:center">Connect iPhone<br>via USB</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- STATS -->
+<div class="stats-bar">
+  <div class="stats-inner">
+    <div class="stat-item">
+      <div class="stat-num">12<span>+</span></div>
+      <div class="stat-desc">Components tested<br>per device</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">8</div>
+      <div class="stat-desc">Simultaneous slots<br>per workstation</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">&lt;60<span>s</span></div>
+      <div class="stat-desc">Average full<br>diagnostic time</div>
+    </div>
+    <div class="stat-item">
+      <div class="stat-num">A–D</div>
+      <div class="stat-desc">Automatic grading<br>with label printing</div>
+    </div>
+  </div>
+</div>
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="section-inner">
+    <div class="section-eyebrow">What you get</div>
+    <h2 class="section-title">Everything a refurbisher needs</h2>
+    <p class="section-sub">From USB detection to Brother QL label printing — iSupply Scan handles the full workflow.</p>
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon">🔌</div>
+        <div class="feature-title">Automatic USB Detection</div>
+        <div class="feature-desc">Connect an iPhone and diagnostics start instantly. No clicks, no setup. Supports up to 8 devices simultaneously on one workstation.</div>
+        <span class="feature-tag">Plug & play</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🔋</div>
+        <div class="feature-title">Real Battery Health</div>
+        <div class="feature-desc">Reads MaximumCapacityPercent directly from Apple's IOKit — the same value iOS shows in Settings. Not just charge level, but actual degradation.</div>
+        <span class="feature-tag">Apple IOKit</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📱</div>
+        <div class="feature-title">Original Parts Detection</div>
+        <div class="feature-desc">Detects replaced displays, Touch ID sensors, cameras, mainboards and more. Instantly flags non-original components with red indicators.</div>
+        <span class="feature-tag">12 components</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🖨️</div>
+        <div class="feature-title">Brother QL Label Printing</div>
+        <div class="feature-desc">One click prints a 62mm label with IMEI, model, grade, battery health and status. Designed for Brother QL-800 and compatible printers.</div>
+        <span class="feature-tag">62mm tape</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">📊</div>
+        <div class="feature-title">Excel Export & Database</div>
+        <div class="feature-desc">Every tested device is logged automatically. Export to Excel with custom column selection — model, IMEI, capacity, color, battery. Ready for your ERP.</div>
+        <span class="feature-tag">Custom columns</span>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">🌍</div>
+        <div class="feature-title">6 Languages</div>
+        <div class="feature-desc">Full UI in English, Czech, Polish, Russian, Italian and French. Switch instantly from the header — ideal for multi-national warehouses.</div>
+        <span class="feature-tag">EN · CZ · PL · RU · IT · FR</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- HOW IT WORKS -->
+<section id="how-it-works" class="how-section">
+  <div class="section-inner">
+    <div class="section-eyebrow">Setup in minutes</div>
+    <h2 class="section-title">From purchase to first scan</h2>
+    <p class="section-sub">No technical knowledge required. If you can plug in a USB cable, you can run iSupply Scan.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-title">Buy a licence</div>
+        <div class="step-desc">Choose a plan below and complete the purchase. Your licence key arrives instantly.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-title">Download & install</div>
+        <div class="step-desc">Download the Windows installer. Double-click, follow the setup wizard — done in under 2 minutes.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-title">Activate</div>
+        <div class="step-desc">Enter your licence key, choose a username and password. One-time setup per device.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-title">Start scanning</div>
+        <div class="step-desc">Plug in an iPhone. Diagnostics start automatically. Grade, print label, export — repeat.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- PRICING -->
+<section id="pricing">
+  <div class="section-inner">
+    <div class="section-eyebrow">Pricing</div>
+    <h2 class="section-title">Simple, transparent pricing</h2>
+    <p class="section-sub">All plans include the full feature set. The difference is how many workstations you can run simultaneously.</p>
+    <div class="pricing-grid">
+
+      <!-- TRIAL -->
+      <div class="pricing-card">
+        <div class="pricing-plan">Trial</div>
+        <div class="pricing-price"><sup>€</sup>0</div>
+        <div class="pricing-period">30 days free</div>
+        <div class="pricing-desc">Try everything before you commit. No credit card needed.</div>
+        <div class="pricing-features">
+          <div class="pricing-feature">Full diagnostic suite (12 tests)</div>
+          <div class="pricing-feature">1 workstation</div>
+          <div class="pricing-feature">Label printing</div>
+          <div class="pricing-feature">Excel export</div>
+          <div class="pricing-feature no">Priority support</div>
+          <div class="pricing-feature no">Multi-user accounts</div>
+        </div>
+        <a href="mailto:info@isupply.cz?subject=Trial licence request" class="btn-pricing btn-pricing-white">Request trial key</a>
+      </div>
+
+      <!-- PRO – FEATURED -->
+      <div class="pricing-card featured">
+        <div class="popular-badge">Most popular</div>
+        <div class="pricing-plan">Pro</div>
+        <div class="pricing-price"><sup>€</sup>29</div>
+        <div class="pricing-period">per month · per workstation</div>
+        <div class="pricing-desc">The right choice for most refurbishment operations.</div>
+        <div class="pricing-features">
+          <div class="pricing-feature">Full diagnostic suite (12 tests)</div>
+          <div class="pricing-feature">Up to 3 workstations</div>
+          <div class="pricing-feature">Label printing</div>
+          <div class="pricing-feature">Excel export</div>
+          <div class="pricing-feature">Email support</div>
+          <div class="pricing-feature no">Multi-user accounts</div>
+        </div>
+        <a href="mailto:info@isupply.cz?subject=Pro licence request" class="btn-pricing btn-pricing-pink">Get Pro licence</a>
+      </div>
+
+      <!-- ENTERPRISE -->
+      <div class="pricing-card">
+        <div class="pricing-plan">Enterprise</div>
+        <div class="pricing-price" style="font-size:36px;padding-top:6px">Custom</div>
+        <div class="pricing-period">annual contract</div>
+        <div class="pricing-desc">For large operations with multiple sites and technicians.</div>
+        <div class="pricing-features">
+          <div class="pricing-feature">Full diagnostic suite (12 tests)</div>
+          <div class="pricing-feature">Unlimited workstations</div>
+          <div class="pricing-feature">Label printing</div>
+          <div class="pricing-feature">Excel export</div>
+          <div class="pricing-feature">Priority phone support</div>
+          <div class="pricing-feature">Multi-user accounts + API</div>
+        </div>
+        <a href="mailto:info@isupply.cz?subject=Enterprise enquiry" class="btn-pricing btn-pricing-white">Contact us</a>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- COMPATIBILITY -->
+<section id="compatibility" class="compat-section">
+  <div class="section-inner">
+    <div class="section-eyebrow" style="color:var(--pink)">Device support</div>
+    <h2 class="section-title">Tested on every major iPhone</h2>
+    <p class="section-sub">From iPhone 6s to iPhone 16 Pro Max — iSupply Scan reads model numbers, A-series identifiers and component serial numbers.</p>
+    <div class="compat-grid">
+      <div class="compat-card"><div class="compat-model">iPhone 16 Pro Max</div><div class="compat-gen">A3293 · Latest</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone 15 Pro</div><div class="compat-gen">A3101</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone 14</div><div class="compat-gen">A2882</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone 13 Pro Max</div><div class="compat-gen">A2641</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone 12 mini</div><div class="compat-gen">A2399</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone 11</div><div class="compat-gen">A2111</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone XS Max</div><div class="compat-gen">A1921</div></div>
+      <div class="compat-card"><div class="compat-model">iPhone SE (all gen)</div><div class="compat-gen">A2595 / A2275 / A1662</div></div>
+      <div class="compat-more">+ iPhone X, 8, 7, 6s and all variants · 60+ models supported</div>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section">
+  <h2>Ready to diagnose faster?</h2>
+  <p>Join refurbishers across the EU using iSupply Scan to process more devices with fewer errors.</p>
+  <a href="mailto:info@isupply.cz?subject=iSupply Scan licence" class="btn-cta-white">Get your licence today</a>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div>
+        <div class="footer-brand-text">iSupply <span>Scan</span></div>
+        <div class="footer-brand-desc">Professional iPhone diagnostics software for EU refurbishers. Built by iSupply trade s.r.o.</div>
+      </div>
+      <div>
+        <div class="footer-col-title">Product</div>
+        <div class="footer-links">
+          <a href="#features">Features</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#pricing">Pricing</a>
+          <a href="#compatibility">Compatibility</a>
+        </div>
+      </div>
+      <div>
+        <div class="footer-col-title">Support</div>
+        <div class="footer-links">
+          <a href="mailto:info@isupply.cz">Email support</a>
+          <a href="tel:+420703125125">+420 703 125 125</a>
+          <a href="#" onclick="alert('Documentation coming soon')">Documentation</a>
+        </div>
+      </div>
+      <div>
+        <div class="footer-col-title">Company</div>
+        <div class="footer-links">
+          <a href="https://www.isupply.cz" target="_blank">isupply.cz</a>
+          <a href="mailto:info@isupply.cz">info@isupply.cz</a>
+          <a href="#" onclick="alert('IČO: 23199351\nDIČ: CZ23199351\nKřižíkova 177/29, Praha 8\nPobočka: Opletalova 703, Chrudim')">Legal info</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div class="footer-copy">© 2026 iSupply trade s.r.o. · IČO: 23199351</div>
+      <div class="footer-legal">
+        <a href="#">Privacy Policy</a>
+        <a href="#">Terms of Service</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Animace scanning v hero demo
+const tests = [
+  {icon:'🔋',label:'Battery · 91% · Excellent',cls:'pass'},
+  {icon:'📱',label:'Display · Original',cls:'pass'},
+  {icon:'📷',label:'Rear camera · Original',cls:'pass'},
+  {icon:'🤳',label:'Front camera · Original',cls:'pass'},
+  {icon:'🎤',label:'Microphone · Original',cls:'pass'},
+  {icon:'🔊',label:'Speaker · Original',cls:'pass'},
+  {icon:'📶',label:'Wi-Fi · Original',cls:'pass'},
+];
+let testIdx = 2;
+const testsEl = document.getElementById('demo-tests2');
+
+function nextTest() {
+  if (testIdx >= tests.length) return;
+  const t = tests[testIdx];
+  const rows = testsEl.querySelectorAll('.demo-test');
+  // Update scanning row
+  if (rows[testIdx]) {
+    rows[testIdx].className = 'demo-test ' + t.cls;
+    rows[testIdx].textContent = t.icon + ' ' + t.label;
+  }
+  testIdx++;
+  if (testIdx < tests.length) {
+    // Add next scanning row
+    const next = tests[testIdx];
+    if (rows[testIdx]) {
+      rows[testIdx].className = 'demo-test scanning';
+      rows[testIdx].textContent = next.icon + ' ' + next.label.split('·')[0] + '· scanning...';
+    }
+  }
+  if (testIdx < tests.length) {
+    setTimeout(nextTest, 900);
+  } else {
+    // Done
+    const slot = document.getElementById('demo-slot2');
+    slot.className = 'demo-slot done';
+    slot.querySelector('.demo-badge').className = 'demo-badge badge-done';
+    slot.querySelector('.demo-badge').textContent = 'OK ✓';
+    slot.querySelector('.scan-line').style.display = 'none';
+    // Add grade
+    const grade = document.createElement('div');
+    grade.className = 'demo-grade A';
+    grade.textContent = 'A';
+    slot.appendChild(grade);
+    // Restart after 3s
+    setTimeout(resetDemo, 3000);
+  }
+}
+
+function resetDemo() {
+  testIdx = 2;
+  const slot = document.getElementById('demo-slot2');
+  slot.className = 'demo-slot active';
+  slot.querySelector('.demo-badge').className = 'demo-badge badge-testing';
+  slot.querySelector('.demo-badge').textContent = 'Testing ●';
+  slot.querySelector('.scan-line').style.display = '';
+  const grade = slot.querySelector('.demo-grade');
+  if (grade) grade.remove();
+  testsEl.innerHTML = `
+    <div class="demo-test pass">🔋 Battery · 91% · Excellent</div>
+    <div class="demo-test pass">📱 Display · Original</div>
+    <div class="demo-test scanning" id="scanning-row">📷 Rear camera · scanning...</div>
+    <div class="demo-test pending">🤳 Front camera</div>
+    <div class="demo-test pending">🎤 Microphone</div>
+  `;
+  setTimeout(nextTest, 1000);
+}
+
+setTimeout(nextTest, 1200);
+
+// Smooth nav highlight
+const sections = document.querySelectorAll('section[id], div[id="pricing"]');
+window.addEventListener('scroll', () => {
+  const y = window.scrollY + 80;
+  document.querySelectorAll('.nav-links a').forEach(a => {
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target && target.offsetTop <= y && target.offsetTop + target.offsetHeight > y) {
+      a.style.color = 'var(--pink)';
+    } else {
+      a.style.color = '';
+    }
+  });
+});
+</script>
+</body>
+</html>
