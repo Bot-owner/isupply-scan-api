@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iSupply Scan – Platba úspěšná</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'IBM Plex Sans',sans-serif;background:#f0f0f0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{background:#fff;border-radius:20px;padding:48px;max-width:480px;width:100%;text-align:center;box-shadow:0 4px 40px rgba(0,0,0,0.08)}
+  .logo{font-size:22px;font-weight:700;margin-bottom:32px}
+  .logo span{color:#ec4899}
+  .icon{font-size:56px;margin-bottom:20px}
+  h1{font-size:24px;font-weight:700;margin-bottom:8px}
+  .sub{color:#6b7280;font-size:14px;margin-bottom:32px;line-height:1.6}
+  .key-box{background:#f9f9f9;border:2px solid #ec4899;border-radius:12px;padding:20px;margin-bottom:32px}
+  .key-label{font-size:10px;font-family:'IBM Plex Mono',monospace;color:#6b7280;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:8px}
+  .key{font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;letter-spacing:0.08em;color:#0a0a0a;word-break:break-all}
+  .copy-btn{background:#0a0a0a;color:#fff;border:none;border-radius:8px;padding:10px 20px;font-family:'IBM Plex Mono',monospace;font-size:12px;cursor:pointer;margin-top:12px;transition:opacity .2s}
+  .copy-btn:hover{opacity:.8}
+  .steps{text-align:left;background:#f9f9f9;border-radius:10px;padding:20px;margin-bottom:24px}
+  .step{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px}
+  .step:last-child{margin-bottom:0}
+  .step-num{width:22px;height:22px;border-radius:50%;background:#ec4899;color:#fff;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+  .step-text{font-size:13px;color:#374151;line-height:1.5}
+  .btn{display:inline-block;background:#0a0a0a;color:#fff;text-decoration:none;border-radius:10px;padding:14px 28px;font-weight:600;font-size:14px;transition:opacity .2s}
+  .btn:hover{opacity:.8}
+  .email-note{font-size:12px;color:#9ca3af;margin-top:16px}
+  .loading{color:#6b7280;font-size:14px;padding:20px 0}
+  .spinner{display:inline-block;width:20px;height:20px;border:2px solid #e8e8e8;border-top-color:#ec4899;border-radius:50%;animation:spin .8s linear infinite;margin-right:8px;vertical-align:middle}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .error{color:#dc2626;font-size:13px;background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:12px;margin-bottom:20px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">iSupply <span>Scan</span></div>
+
+  <div id="loading">
+    <div class="loading"><span class="spinner"></span>Ověřuji platbu...</div>
+  </div>
+
+  <div id="success" style="display:none">
+    <div class="icon">🎉</div>
+    <h1>Platba proběhla úspěšně!</h1>
+    <p class="sub">Váš licenční klíč byl vygenerován. Zkopírujte ho a použijte při aktivaci aplikace.</p>
+
+    <div class="key-box">
+      <div class="key-label">Váš licenční klíč</div>
+      <div class="key" id="license-key">—</div>
+      <button class="copy-btn" onclick="copyKey()">📋 Kopírovat klíč</button>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">Stáhněte aplikaci <strong>iSupply Scan</strong> z <a href="/" style="color:#ec4899">isupply-scan.cz</a></div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">Spusťte aplikaci a klikněte na <strong>Activate licence</strong></div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">Zadejte licenční klíč, vyberte uživatelské jméno a heslo</div>
+      </div>
+    </div>
+
+    <a href="/" class="btn">Přejít na stránku stahování</a>
+    <div class="email-note">Licenční klíč vám byl také zaslán na email.</div>
+  </div>
+
+  <div id="error" style="display:none">
+    <div class="icon">⚠️</div>
+    <h1>Něco se pokazilo</h1>
+    <div class="error" id="error-msg"></div>
+    <p class="sub">Kontaktujte nás na <a href="mailto:info@isupply.cz" style="color:#ec4899">info@isupply.cz</a> s ID vaší objednávky.</p>
+  </div>
+</div>
+
+<script>
+async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get('session_id');
+
+  if (!sessionId) {
+    showError('Chybí session_id. Kontaktujte podporu.');
+    return;
+  }
+
+  // Polling – webhook může přijít se zpožděním
+  let attempts = 0;
+  const maxAttempts = 12;
+
+  const poll = async () => {
+    attempts++;
+    try {
+      const res = await fetch(`/api/checkout/success?session_id=${sessionId}`);
+      const data = await res.json();
+
+      if (data.ok && data.license_key) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('success').style.display = 'block';
+        document.getElementById('license-key').textContent = data.license_key;
+        return;
+      }
+
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 3000); // Zkus znovu za 3s
+      } else {
+        showError('Platba proběhla, ale licenci se nepodařilo načíst. Kontaktujte info@isupply.cz');
+      }
+    } catch (e) {
+      if (attempts < maxAttempts) {
+        setTimeout(poll, 3000);
+      } else {
+        showError('Chyba při načítání. Kontaktujte info@isupply.cz');
+      }
+    }
+  };
+
+  poll();
+}
+
+function showError(msg) {
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('error').style.display = 'block';
+  document.getElementById('error-msg').textContent = msg;
+}
+
+function copyKey() {
+  const key = document.getElementById('license-key').textContent;
+  navigator.clipboard.writeText(key).then(() => {
+    const btn = document.querySelector('.copy-btn');
+    btn.textContent = '✅ Zkopírováno!';
+    setTimeout(() => btn.textContent = '📋 Kopírovat klíč', 2000);
+  });
+}
+
+init();
+</script>
+</body>
+</html>
