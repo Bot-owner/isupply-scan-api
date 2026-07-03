@@ -349,7 +349,6 @@ def create_checkout():
 
     try:
         session = stripe.checkout.Session.create(
-            payment_method_types=['card'],
             customer_email=email or None,
             line_items=[{
                 'price_data': {
