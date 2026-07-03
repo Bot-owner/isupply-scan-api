@@ -27,6 +27,12 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 CORS(app)
 
+@app.before_request
+def force_https():
+    if not request.is_secure and request.headers.get("X-Forwarded-Proto", "http") != "https":
+        url = request.url.replace("http://", "https://", 1)
+        return redirect(url, code=301)
+
 SECRET_KEY      = os.environ.get('SECRET_KEY', 'change-this-in-production')
 ADMIN_PASS      = os.environ.get('ADMIN_PASSWORD', 'isupply-admin-2024')
 DATABASE_URL    = os.environ.get('DATABASE_URL', '')
