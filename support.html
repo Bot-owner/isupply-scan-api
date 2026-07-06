@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iSupply Scan – Support</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg: #f5f5f5;
+    --surface: #ffffff;
+    --surface2: #f9f9f9;
+    --border: #e8e8e8;
+    --pink: #F9A8D4;
+    --pink-dark: #ec4899;
+    --pink-dim: rgba(249,168,212,0.15);
+    --green: #16a34a;
+    --text: #0a0a0a;
+    --text-dim: #6b7280;
+    --text-mid: #374151;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: var(--sans); min-height: 100vh; display: flex; flex-direction: column; }
+
+  /* HEADER */
+  header {
+    background: var(--surface);
+    border-bottom: 1.5px solid var(--border);
+    padding: 12px 48px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+  .logo-img { width: 32px; height: 32px; object-fit: contain; }
+  .logo-text { font-family: var(--sans); font-size: 16px; font-weight: 700; color: var(--text); }
+  .logo-text span { color: var(--pink-dark); }
+  .back-btn {
+    font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    background: var(--surface2); border: 1.5px solid var(--border);
+    padding: 6px 14px; border-radius: 7px; text-decoration: none;
+    transition: all 0.2s;
+  }
+  .back-btn:hover { color: var(--pink-dark); border-color: var(--pink); }
+
+  /* HERO */
+  .hero {
+    background: linear-gradient(135deg, #fff 0%, #fdf0f7 100%);
+    border-bottom: 1.5px solid var(--border);
+    padding: 64px 48px 48px;
+    text-align: center;
+  }
+  .hero-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--pink-dim); border: 1px solid var(--pink);
+    color: var(--pink-dark); font-family: var(--mono); font-size: 11px;
+    padding: 4px 12px; border-radius: 20px; margin-bottom: 20px;
+    font-weight: 600; letter-spacing: 0.08em;
+  }
+  .hero h1 {
+    font-size: 36px; font-weight: 700; color: var(--text);
+    margin-bottom: 12px; letter-spacing: -0.02em;
+  }
+  .hero h1 span { color: var(--pink-dark); }
+  .hero p {
+    font-size: 16px; color: var(--text-dim); max-width: 480px;
+    margin: 0 auto; line-height: 1.6;
+  }
+
+  /* MAIN */
+  main { flex: 1; max-width: 960px; margin: 0 auto; width: 100%; padding: 48px 24px; }
+
+  /* CONTACT CARDS */
+  .contact-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 48px; }
+
+  .contact-card {
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 24px;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 12px; text-align: center;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  .contact-card:hover { border-color: var(--pink); box-shadow: 0 4px 20px var(--pink-dim); }
+
+  .contact-icon {
+    width: 52px; height: 52px;
+    background: var(--pink-dim);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 24px;
+  }
+
+  .contact-label {
+    font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+    letter-spacing: 0.12em; text-transform: uppercase; font-weight: 600;
+  }
+
+  .contact-value {
+    font-size: 16px; font-weight: 700; color: var(--text);
+    text-decoration: none; transition: color 0.2s;
+  }
+  .contact-value:hover { color: var(--pink-dark); }
+
+  .contact-desc { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+
+  /* SECTION TITLE */
+  .section-title {
+    font-size: 20px; font-weight: 700; color: var(--text);
+    margin-bottom: 16px; display: flex; align-items: center; gap: 10px;
+  }
+  .section-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+  /* FAQ */
+  .faq-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 48px; }
+  .faq-item {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 10px; overflow: hidden;
+  }
+  .faq-q {
+    padding: 16px 20px; font-weight: 600; font-size: 14px; color: var(--text);
+    cursor: pointer; display: flex; justify-content: space-between; align-items: center;
+    transition: background 0.15s;
+  }
+  .faq-q:hover { background: var(--surface2); }
+  .faq-q .arrow { font-size: 12px; color: var(--text-dim); transition: transform 0.2s; }
+  .faq-item.open .faq-q .arrow { transform: rotate(180deg); }
+  .faq-a {
+    display: none; padding: 0 20px 16px;
+    font-size: 13px; color: var(--text-mid); line-height: 1.7;
+    border-top: 1px solid var(--border);
+  }
+  .faq-item.open .faq-a { display: block; padding-top: 14px; }
+
+  /* COMPANY INFO */
+  .company-card {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 14px; padding: 32px 36px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  }
+  .company-logo-section { display: flex; align-items: center; gap: 14px; grid-column: 1 / -1; margin-bottom: 8px; }
+  .company-logo-img { width: 48px; height: 48px; object-fit: contain; }
+  .company-name { font-size: 20px; font-weight: 700; color: var(--text); }
+  .company-name span { color: var(--pink-dark); }
+  .company-tagline { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+
+  .company-info-group { display: flex; flex-direction: column; gap: 10px; }
+  .company-row { display: flex; flex-direction: column; gap: 2px; }
+  .company-row-label { font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; }
+  .company-row-value { font-size: 14px; color: var(--text); font-weight: 500; }
+
+  /* FOOTER */
+  footer {
+    background: var(--surface); border-top: 1.5px solid var(--border);
+    padding: 20px 48px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .footer-copy { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .footer-version { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <a class="logo" href="/">
+    <img class="logo-img" src="photo_2026-07-01_01-43-29.jpg" alt="iS" onerror="this.style.display='none'" />
+    <div class="logo-text">iSupply<span> Scan</span></div>
+  </a>
+  <a class="back-btn" href="/">← Back to app</a>
+</header>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-badge">🛟 Support Center</div>
+  <h1>How can we <span>help you?</span></h1>
+  <p>Contact our technical team or browse the FAQ for quick answers about iSupply Scan.</p>
+</div>
+
+<!-- MAIN -->
+<main>
+
+  <!-- CONTACT -->
+  <div class="section-title">Contact us</div>
+  <div class="contact-grid">
+
+    <div class="contact-card">
+      <div class="contact-icon">📞</div>
+      <div class="contact-label">Phone</div>
+      <a class="contact-value" href="tel:+420703125125">+420 703 125 125</a>
+      <div class="contact-desc">Mon–Fri 9:00 – 17:00<br>CET / CEST</div>
+    </div>
+
+    <div class="contact-card">
+      <div class="contact-icon">✉️</div>
+      <div class="contact-label">Email</div>
+      <a class="contact-value" href="mailto:info@isupply.cz">info@isupply.cz</a>
+      <div class="contact-desc">We reply within<br>24 business hours</div>
+    </div>
+
+    <div class="contact-card">
+      <div class="contact-icon">🌐</div>
+      <div class="contact-label">Website</div>
+      <a class="contact-value" href="https://www.isupply.cz" target="_blank">www.isupply.cz</a>
+      <div class="contact-desc">News, pricing<br>and documentation</div>
+    </div>
+
+  </div>
+
+  <!-- FAQ -->
+  <div class="section-title">FAQ</div>
+  <div class="faq-list">
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>The phone is not detected after connecting via USB</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        Make sure iTunes or Apple Devices (from Microsoft Store) is installed and running. The Apple Mobile Device Service must be active. Try a different USB cable or port. On the iPhone, tap <strong>Trust</strong> when prompted. Then restart server.py.
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>Battery health shows 0% or incorrect value</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        iSupply Scan reads battery health via Apple's IOKit diagnostic service (same as 3uTools). If the value is missing, the device may have an aftermarket battery without an Apple chip, or the iOS version restricts access. The app will fall back to showing the current charge level instead.
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>Storage capacity shows N/A</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        Storage is read from Apple's <code>com.apple.disk_usage</code> domain. Make sure the device is fully unlocked and trusted. Reconnect the cable and try again. If the problem persists, check the server.py console for error details.
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>Two slots fill up for one phone</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        This is caused by a race condition in USB detection. It has been fixed in the latest version of server.py. Please update to the newest release. If it still occurs, disconnect and reconnect the device.
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>How do I add more users / licenses?</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        Open the Admin Panel at <strong>localhost:5000/admin</strong>, log in with your admin account, and go to the Users section. Click <strong>+ New user</strong> and fill in the details. Each user needs a valid license type (Trial / Pro / Enterprise) and expiry date.
+      </div>
+    </div>
+
+    <div class="faq-item">
+      <div class="faq-q" onclick="toggleFaq(this)">
+        <span>Can I run iSupply Scan on multiple computers?</span>
+        <span class="arrow">▼</span>
+      </div>
+      <div class="faq-a">
+        Yes — the server.py runs on each workstation independently. Each workstation needs its own license. Enterprise licenses allow unlimited installations within one company. Contact us at info@isupply.cz for multi-seat pricing.
+      </div>
+    </div>
+
+  </div>
+
+  <!-- COMPANY INFO -->
+  <div class="section-title">About iSupply</div>
+  <div class="company-card">
+    <div class="company-logo-section">
+      <img class="company-logo-img" src="photo_2026-07-01_01-43-29.jpg" alt="iS" onerror="this.style.display='none'" />
+      <div>
+        <div class="company-name">iSupply<span> Trade</span> s.r.o.</div>
+        <div class="company-tagline">Professional refurbishment tools for the EU market</div>
+      </div>
+    </div>
+
+    <div class="company-info-group">
+      <div class="company-row">
+        <div class="company-row-label">Company name</div>
+        <div class="company-row-value">iSupply trade s.r.o.</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">IČO</div>
+        <div class="company-row-value">23199351</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">DIČ</div>
+        <div class="company-row-value">CZ23199351</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">Datová schránka</div>
+        <div class="company-row-value">sih4byy</div>
+      </div>
+    </div>
+
+    <div class="company-info-group">
+      <div class="company-row">
+        <div class="company-row-label">Registered office</div>
+        <div class="company-row-value">Křižíkova 177/29, Karlín<br>186 00 Praha 8</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">Branch</div>
+        <div class="company-row-value">Opletalova 703<br>537 01 Chrudim</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">Phone</div>
+        <div class="company-row-value">+420 703 125 125</div>
+      </div>
+      <div class="company-row">
+        <div class="company-row-label">Email</div>
+        <div class="company-row-value">info@isupply.cz</div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-copy">© 2026 iSupply trade s.r.o. · IČO: 23199351 · All rights reserved</div>
+  <div class="footer-version">iSupply Scan v0.1 · support.html</div>
+</footer>
+
+<script>
+function toggleFaq(el) {
+  const item = el.parentElement;
+  item.classList.toggle('open');
+}
+</script>
+</body>
+</html>

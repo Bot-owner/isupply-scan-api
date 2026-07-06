@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>iSupply Scan – Admin Panel</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+  :root {
+    --bg:          #f5f5f5;
+    --surface:     #ffffff;
+    --surface2:    #f9f9f9;
+    --border:      #e8e8e8;
+    --border-bright:#d4d4d4;
+    --pink:        #F9A8D4;
+    --pink-dark:   #ec4899;
+    --pink-dim:    rgba(249,168,212,0.18);
+    --pink-border: rgba(249,168,212,0.5);
+    --green:       #16a34a;
+    --green-dim:   rgba(22,163,74,0.08);
+    --red:         #dc2626;
+    --red-dim:     rgba(220,38,38,0.08);
+    --yellow:      #d97706;
+    --yellow-dim:  rgba(217,119,6,0.08);
+    --purple:      #7c3aed;
+    --purple-dim:  rgba(124,58,237,0.08);
+    --text:        #0a0a0a;
+    --text-dim:    #6b7280;
+    --text-mid:    #374151;
+    --mono: 'IBM Plex Mono', monospace;
+    --sans: 'IBM Plex Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: var(--sans); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+
+  /* ── LOGIN ── */
+  #login-overlay {
+    position: fixed; inset: 0; background: #fff;
+    display: flex; align-items: center; justify-content: center; z-index: 100;
+  }
+  #login-overlay.hidden { display: none; }
+
+  .login-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 44px 48px; width: 380px;
+    display: flex; flex-direction: column; gap: 22px;
+    box-shadow: 0 4px 32px rgba(0,0,0,0.07);
+  }
+  .login-logo { display: flex; align-items: center; gap: 12px; justify-content: center; }
+  .login-logo-img { width: 48px; height: 48px; object-fit: contain; }
+  .login-logo-text { font-family: var(--sans); font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .login-logo-text span { color: var(--pink-dark); }
+  .login-subtitle { text-align: center; font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.12em; text-transform: uppercase; margin-top: -12px; }
+  .login-field { display: flex; flex-direction: column; gap: 6px; }
+  .login-field label { font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; }
+  .login-field input {
+    background: var(--surface2); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 10px 14px;
+    font-family: var(--mono); font-size: 13px; color: var(--text); outline: none; transition: border-color 0.2s;
+  }
+  .login-field input:focus { border-color: var(--pink); }
+  .login-error { font-family: var(--mono); font-size: 11px; color: var(--red); text-align: center; min-height: 16px; }
+  .login-btn {
+    background: var(--text); color: #fff; border: none; border-radius: 8px; padding: 12px;
+    font-family: var(--mono); font-size: 13px; font-weight: 600; cursor: pointer; letter-spacing: 0.06em; transition: opacity 0.2s;
+  }
+  .login-btn:hover { opacity: 0.8; }
+
+  /* ── HEADER ── */
+  header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 28px; border-bottom: 1.5px solid var(--border);
+    background: var(--surface); flex-shrink: 0;
+  }
+  .logo { display: flex; align-items: center; gap: 10px; }
+  .logo-img { width: 30px; height: 30px; object-fit: contain; }
+  .logo-text { font-family: var(--sans); font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .logo-text span { color: var(--pink-dark); }
+  .header-badge {
+    background: var(--pink-dim); border: 1px solid var(--pink-border);
+    color: var(--pink-dark); font-family: var(--mono); font-size: 10px;
+    padding: 3px 10px; border-radius: 4px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;
+  }
+  .header-right { display: flex; align-items: center; gap: 16px; }
+  .user-pill { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .user-pill strong { color: var(--pink-dark); }
+  .btn-logout {
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+    background: var(--surface2); border: 1.5px solid var(--border);
+    padding: 5px 12px; border-radius: 6px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-logout:hover { color: var(--red); border-color: var(--red); }
+
+  /* ── LAYOUT ── */
+  .page { display: flex; flex: 1; min-height: 0; }
+
+  /* ── SIDEBAR ── */
+  .sidebar {
+    width: 220px; background: var(--surface);
+    border-right: 1.5px solid var(--border);
+    padding: 20px 0; flex-shrink: 0;
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .sidebar-label {
+    font-family: var(--mono); font-size: 9px; color: var(--text-dim);
+    letter-spacing: 0.15em; text-transform: uppercase; padding: 0 18px 10px;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 18px; cursor: pointer; font-size: 13px; color: var(--text-mid);
+    transition: all 0.15s; border-left: 2.5px solid transparent;
+  }
+  .nav-item:hover { background: var(--pink-dim); color: var(--text); }
+  .nav-item.active { background: var(--pink-dim); color: var(--pink-dark); border-left-color: var(--pink-dark); font-weight: 600; }
+  .nav-icon { font-size: 15px; width: 20px; text-align: center; }
+
+  /* ── CONTENT ── */
+  .content { flex: 1; padding: 28px 32px; overflow-y: auto; }
+  .section { display: none; }
+  .section.active { display: block; }
+
+  .page-title { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+  .page-sub { font-family: var(--mono); font-size: 11px; color: var(--text-dim); margin-bottom: 24px; letter-spacing: 0.04em; }
+
+  /* ── STAT CARDS ── */
+  .stats-row { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; margin-bottom: 28px; }
+  .stat-card {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 12px; padding: 16px 20px;
+  }
+  .stat-card-value { font-family: var(--mono); font-size: 28px; font-weight: 700; line-height: 1; }
+  .stat-card-label { font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; margin-top: 4px; }
+
+  /* ── TOOLBAR ── */
+  .toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .toolbar-left { display: flex; gap: 10px; align-items: center; }
+  .search-input {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 8px; padding: 8px 12px;
+    font-family: var(--mono); font-size: 12px; color: var(--text);
+    outline: none; width: 240px; transition: border-color 0.2s;
+  }
+  .search-input:focus { border-color: var(--pink); }
+  .search-input::placeholder { color: var(--text-dim); }
+  .btn-primary {
+    background: var(--text); color: #fff; border: none;
+    border-radius: 8px; padding: 8px 18px;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    cursor: pointer; letter-spacing: 0.05em; transition: opacity 0.2s;
+  }
+  .btn-primary:hover { opacity: 0.8; }
+
+  /* ── TABLE ── */
+  .table-wrap {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 12px; overflow: hidden;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  thead { background: var(--surface2); }
+  th {
+    font-family: var(--mono); font-size: 10px; color: var(--text-dim);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border);
+  }
+  td { padding: 11px 14px; font-size: 13px; color: var(--text-mid); border-bottom: 1px solid var(--border); }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: #fdf2f8; }
+
+  .td-mono { font-family: var(--mono); font-size: 12px; }
+  .td-name { color: var(--text); font-weight: 600; }
+
+  /* ── BADGES ── */
+  .badge {
+    display: inline-block; font-family: var(--mono); font-size: 9px;
+    padding: 2px 8px; border-radius: 4px; letter-spacing: 0.08em;
+    text-transform: uppercase; font-weight: 600; white-space: nowrap;
+  }
+  .badge-admin      { background: var(--pink-dim); color: var(--pink-dark); border: 1px solid var(--pink-border); }
+  .badge-manager    { background: var(--purple-dim); color: var(--purple); border: 1px solid rgba(124,58,237,0.2); }
+  .badge-technician { background: #f3f4f6; color: #6b7280; border: 1px solid #e5e7eb; }
+  .badge-enterprise { background: var(--pink-dim); color: var(--pink-dark); border: 1px solid var(--pink-border); }
+  .badge-pro        { background: var(--green-dim); color: var(--green); border: 1px solid rgba(22,163,74,0.25); }
+  .badge-trial      { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(217,119,6,0.25); }
+  .badge-active     { background: var(--green-dim); color: var(--green); border: 1px solid rgba(22,163,74,0.25); }
+  .badge-suspended  { background: var(--red-dim); color: var(--red); border: 1px solid rgba(220,38,38,0.25); }
+  .badge-expired    { background: var(--yellow-dim); color: var(--yellow); border: 1px solid rgba(217,119,6,0.25); }
+
+  /* ── ACTIONS ── */
+  .action-btns { display: flex; gap: 6px; }
+  .btn-action {
+    background: none; border: 1.5px solid var(--border);
+    color: var(--text-dim); border-radius: 5px;
+    padding: 3px 9px; font-family: var(--mono); font-size: 10px;
+    cursor: pointer; transition: all 0.2s;
+  }
+  .btn-action:hover { color: var(--pink-dark); border-color: var(--pink); }
+  .btn-action.danger:hover { color: var(--red); border-color: var(--red); }
+
+  /* ── MODAL ── */
+  #modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.25);
+    display: flex; align-items: center; justify-content: center; z-index: 50;
+  }
+  #modal-overlay.hidden { display: none; }
+  .modal-box {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 14px; padding: 28px 32px; width: 480px;
+    display: flex; flex-direction: column; gap: 18px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.1);
+  }
+  .modal-title {
+    font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--text);
+    letter-spacing: 0.05em; display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal-close { background: none; border: none; color: var(--text-dim); font-size: 18px; cursor: pointer; }
+  .modal-close:hover { color: var(--text); }
+
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .form-field { display: flex; flex-direction: column; gap: 6px; }
+  .form-field.full { grid-column: 1/-1; }
+  .form-field label { font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; text-transform: uppercase; }
+  .form-field input,
+  .form-field select,
+  .form-field textarea {
+    background: var(--surface2); border: 1.5px solid var(--border);
+    border-radius: 7px; padding: 9px 12px;
+    font-family: var(--mono); font-size: 12px; color: var(--text); outline: none; transition: border-color 0.2s;
+  }
+  .form-field input:focus,
+  .form-field select:focus,
+  .form-field textarea:focus { border-color: var(--pink); }
+  .form-field textarea { resize: vertical; min-height: 56px; }
+
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .btn-save {
+    background: var(--text); color: #fff; border: none;
+    border-radius: 7px; padding: 9px 20px;
+    font-family: var(--mono); font-size: 12px; font-weight: 600;
+    cursor: pointer; letter-spacing: 0.05em; transition: opacity 0.2s;
+  }
+  .btn-save:hover { opacity: 0.8; }
+  .btn-cancel {
+    background: var(--surface2); color: var(--text-dim);
+    border: 1.5px solid var(--border); border-radius: 7px; padding: 9px 16px;
+    font-family: var(--mono); font-size: 12px; cursor: pointer; transition: all 0.2s;
+  }
+  .btn-cancel:hover { color: var(--text); }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--surface); border: 1.5px solid var(--pink);
+    color: var(--pink-dark); font-family: var(--mono); font-size: 12px;
+    padding: 10px 18px; border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(249,168,212,0.2);
+    opacity: 0; transition: opacity 0.3s; pointer-events: none;
+    z-index: 200; letter-spacing: 0.04em;
+  }
+  #toast.show { opacity: 1; }
+
+  /* ── LICENSE PLANS ── */
+  .info-box {
+    background: var(--surface); border: 1.5px solid var(--border);
+    border-radius: 12px; padding: 20px 24px; margin-bottom: 20px;
+  }
+  .info-box-title { font-family: var(--mono); font-size: 10px; color: var(--text-dim); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 14px; }
+  .license-plans { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; }
+  .plan-card { background: var(--surface2); border: 1.5px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+  .plan-name { font-family: var(--mono); font-size: 12px; font-weight: 700; margin-bottom: 8px; }
+  .plan-name.trial      { color: var(--yellow); }
+  .plan-name.pro        { color: var(--green); }
+  .plan-name.enterprise { color: var(--pink-dark); }
+  .plan-features { font-size: 12px; color: var(--text-dim); line-height: 1.8; }
+
+  .expires-soon { color: var(--yellow); font-size: 10px; font-family: var(--mono); }
+  .expires-ok   { color: var(--text-dim); font-size: 10px; font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+  <div class="login-box">
+    <div class="login-logo">
+      <img class="login-logo-img" src="/mnt/user-data/uploads/photo_2026-07-01_01-43-29.jpg" alt="iSupply"
+           onerror="this.style.display='none'" />
+      <div class="login-logo-text">iSupply<span> Scan</span></div>
+    </div>
+    <div class="login-subtitle">Admin Panel · Správa licencí</div>
+    <div class="login-field">
+      <label>Uživatelské jméno</label>
+      <input type="text" id="login-user" placeholder="admin" />
+    </div>
+    <div class="login-field">
+      <label>Heslo</label>
+      <input type="password" id="login-pass" placeholder="••••••••"
+             onkeydown="if(event.key==='Enter') doLogin()" />
+    </div>
+    <div class="login-error" id="login-error"></div>
+    <button class="login-btn" onclick="doLogin()">Přihlásit se</button>
+  </div>
+</div>
+
+<!-- MODAL -->
+<div id="modal-overlay" class="hidden">
+  <div class="modal-box">
+    <div class="modal-title">
+      <span id="modal-title-text">Nový uživatel</span>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="form-grid">
+      <div class="form-field"><label>Uživatelské jméno</label><input type="text" id="f-username" placeholder="jan.novak" /></div>
+      <div class="form-field"><label>Heslo <span style="color:var(--text-dim);font-size:9px">(prázdné = nezměnit)</span></label><input type="password" id="f-password" placeholder="••••••••" /></div>
+      <div class="form-field"><label>Celé jméno</label><input type="text" id="f-fullname" placeholder="Jan Novák" /></div>
+      <div class="form-field"><label>E-mail</label><input type="email" id="f-email" placeholder="jan@firma.cz" /></div>
+      <div class="form-field"><label>Firma</label><input type="text" id="f-company" placeholder="Firma s.r.o." /></div>
+      <div class="form-field"><label>Role</label>
+        <select id="f-role">
+          <option value="technician">Technician</option>
+          <option value="manager">Manager</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Typ licence</label>
+        <select id="f-license">
+          <option value="trial">Trial</option>
+          <option value="pro">Pro</option>
+          <option value="enterprise">Enterprise</option>
+        </select>
+      </div>
+      <div class="form-field"><label>Platnost do</label><input type="date" id="f-valid-until" /></div>
+      <div class="form-field"><label>Status</label>
+        <select id="f-active">
+          <option value="1">Aktivní</option>
+          <option value="0">Pozastavený</option>
+        </select>
+      </div>
+      <div class="form-field full"><label>Poznámky</label><textarea id="f-notes" placeholder="Interní poznámka..."></textarea></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Zrušit</button>
+      <button class="btn-save" onclick="saveUser()">Uložit uživatele</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <img class="logo-img" src="/mnt/user-data/uploads/photo_2026-07-01_01-43-29.jpg" alt="iS"
+         onerror="this.outerHTML='<div style=\'width:28px;height:28px;background:#F9A8D4;border-radius:6px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;\'>iS</div>'" />
+    <div class="logo-text">iSupply<span> Scan</span></div>
+  </div>
+  <div class="header-badge">Admin Panel</div>
+  <div class="header-right">
+    <div class="user-pill">Přihlášen: <strong id="current-user">—</strong></div>
+    <button class="btn-logout" onclick="doLogout()">Odhlásit</button>
+  </div>
+</header>
+
+<div class="page">
+  <nav class="sidebar">
+    <div class="sidebar-label">Navigace</div>
+    <div class="nav-item active" onclick="showSection('users',this)"><span class="nav-icon">👥</span> Uživatelé</div>
+    <div class="nav-item" onclick="showSection('licenses',this)"><span class="nav-icon">🔑</span> Licence</div>
+    <div class="nav-item" onclick="showSection('overview',this)"><span class="nav-icon">📊</span> Přehled</div>
+  </nav>
+
+  <div class="content">
+
+    <!-- USERS -->
+    <div class="section active" id="section-users">
+      <div class="page-title">Správa uživatelů</div>
+      <div class="page-sub">Databáze účtů a přístupových práv · isupply_users.db</div>
+      <div class="toolbar">
+        <div class="toolbar-left">
+          <input class="search-input" type="text" placeholder="Hledat uživatele..." oninput="filterUsers(this.value)" />
+        </div>
+        <button class="btn-primary" onclick="openNewUser()">+ Nový uživatel</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>ID</th><th>Uživatel</th><th>Firma</th><th>Role</th><th>Licence</th><th>Platnost</th><th>Status</th><th>Akce</th></tr></thead>
+          <tbody id="users-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- LICENSES -->
+    <div class="section" id="section-licenses">
+      <div class="page-title">Přehled licencí</div>
+      <div class="page-sub">Typy licencí a jejich oprávnění</div>
+      <div class="info-box">
+        <div class="info-box-title">Licenční plány</div>
+        <div class="license-plans">
+          <div class="plan-card">
+            <div class="plan-name trial">Trial</div>
+            <div class="plan-features">✓ 30 dní zdarma<br>✓ 2 sloty<br>✓ Základní testy<br>✗ Tisk štítků<br>✗ Export PDF</div>
+          </div>
+          <div class="plan-card">
+            <div class="plan-name pro">Pro</div>
+            <div class="plan-features">✓ 1 rok<br>✓ 8 slotů<br>✓ Všechny testy<br>✓ Tisk štítků QL<br>✓ Export PDF</div>
+          </div>
+          <div class="plan-card">
+            <div class="plan-name enterprise">Enterprise</div>
+            <div class="plan-features">✓ Neomezeno<br>✓ Neomezené sloty<br>✓ Všechny testy<br>✓ Tisk štítků QL<br>✓ API přístup</div>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Uživatel</th><th>Firma</th><th>Typ licence</th><th>Platnost do</th><th>Stav</th><th>Akce</th></tr></thead>
+          <tbody id="licenses-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- OVERVIEW -->
+    <div class="section" id="section-overview">
+      <div class="page-title">Přehled systému</div>
+      <div class="page-sub">Statistiky databáze a licencí</div>
+      <div class="stats-row" id="overview-stats"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Ukazatel</th><th>Hodnota</th></tr></thead>
+          <tbody id="overview-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── AUTH ──────────────────────────────────────────────────────
+let DB = [
+  { id:1, username:'admin',    password:'admin',     full_name:'Administrator',   email:'admin@isupply.cz',       company:'iSupply s.r.o.',      role:'admin',      license_type:'enterprise', license_valid_until:'2099-12-31', active:1, created_at:'2026-07-01', notes:'Hlavní administrátorský účet' },
+  { id:2, username:'tester1',  password:'Test1234!', full_name:'Jan Novák',       email:'jan.novak@refurb.cz',    company:'Refurb Praha s.r.o.', role:'technician', license_type:'pro',        license_valid_until:'2025-12-31', active:1, created_at:'2026-07-01', notes:'Technik Praha' },
+  { id:3, username:'tester2',  password:'Scan5678!', full_name:'Petra Svobodová', email:'petra.s@mobilezone.cz',  company:'MobileZone EU',       role:'technician', license_type:'pro',        license_valid_until:'2025-12-31', active:1, created_at:'2026-07-01', notes:'Technik Brno' },
+  { id:4, username:'manager1', password:'Mgr9999!',  full_name:'Karel Dvořák',    email:'k.dvorak@mobilezone.cz', company:'MobileZone EU',       role:'manager',    license_type:'enterprise', license_valid_until:'2025-12-31', active:1, created_at:'2026-07-01', notes:'Vedoucí skladu' },
+  { id:5, username:'trial_eu', password:'Trial2024', full_name:'Demo Uživatel',   email:'demo@eurefurb.eu',       company:'EURefurb GmbH',       role:'technician', license_type:'trial',      license_valid_until:'2024-12-31', active:1, created_at:'2026-07-01', notes:'Zkušební licence 30 dní' },
+];
+let nextId = 6;
+let editingId = null;
+let loggedInUser = null;
+
+async function doLogin() {
+  const username = document.getElementById('login-user').value.trim();
+  const password = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+  const btn = document.querySelector('.login-btn');
+
+  if (!username || !password) { err.textContent = 'Vyplňte jméno a heslo.'; return; }
+
+  btn.textContent = 'Přihlašování...'; btn.disabled = true;
+
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+
+    if (data.ok && data.user.role === 'admin') {
+      loggedInUser = data.user;
+      // Uložit credentials pro admin API volání
+      window._adminUser = username;
+      window._adminPass = password;
+      document.getElementById('current-user').textContent = username;
+      document.getElementById('login-overlay').classList.add('hidden');
+      err.textContent = '';
+      await loadUsers();
+    } else if (data.ok && data.user.role !== 'admin') {
+      err.textContent = 'Tento účet nemá admin přístup.';
+      document.getElementById('login-pass').value = '';
+    } else {
+      err.textContent = data.error || 'Přihlášení selhalo.';
+      document.getElementById('login-pass').value = '';
+    }
+  } catch (e) {
+    err.textContent = 'Nelze se připojit k serveru. Spusťte server.py.';
+  }
+
+  btn.textContent = 'Přihlásit se'; btn.disabled = false;
+}
+
+function doLogout() {
+  loggedInUser = null;
+  window._adminUser = null; window._adminPass = null;
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.getElementById('login-user').value = '';
+  document.getElementById('login-pass').value = '';
+}
+
+function adminHeaders() {
+  return {
+    'Content-Type': 'application/json',
+    'X-Username': window._adminUser || '',
+    'X-Password': window._adminPass || '',
+  };
+}
+
+async function loadUsers() {
+  try {
+    const res = await fetch('/api/users', { headers: adminHeaders() });
+    const data = await res.json();
+    if (data.ok) {
+      DB = data.users.map(u => ({ ...u, password: '••••' }));
+      renderAll();
+    }
+  } catch(e) { console.error('loadUsers:', e); }
+}
+
+// ── NAVIGATION ────────────────────────────────────────────────
+function showSection(name, el) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('section-'+name).classList.add('active');
+  el.classList.add('active');
+  if (name==='overview') renderOverview();
+}
+
+// ── HELPERS ───────────────────────────────────────────────────
+function isExpired(d) { return new Date(d) < new Date(); }
+function daysLeft(d)  { return Math.ceil((new Date(d)-new Date())/(1000*60*60*24)); }
+function licenseStatus(u) {
+  if (!u.active) return 'suspended';
+  if (isExpired(u.license_valid_until)) return 'expired';
+  return 'active';
+}
+function roleBadge(r)    { return `<span class="badge badge-${r}">${r}</span>`; }
+function licenseBadge(t) { return `<span class="badge badge-${t}">${t}</span>`; }
+function statusBadge(u)  {
+  const s=licenseStatus(u), labels={active:'Aktivní',suspended:'Pozastaven',expired:'Vypršela'};
+  return `<span class="badge badge-${s}">${labels[s]}</span>`;
+}
+function toast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+// ── RENDER ────────────────────────────────────────────────────
+function renderAll() { renderUsers(DB); renderLicenses(DB); }
+
+function renderUsers(list) {
+  const tbody = document.getElementById('users-tbody');
+  if (!list.length) {
+    tbody.innerHTML=`<tr><td colspan="8" style="text-align:center;color:var(--text-dim);padding:28px;font-family:var(--mono);font-size:12px;">Žádní uživatelé</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = list.map(u => {
+    const days=daysLeft(u.license_valid_until);
+    const validDisplay = isExpired(u.license_valid_until)
+      ? `<span class="expires-soon">Vypršela ${u.license_valid_until}</span>`
+      : days<60
+        ? `<span class="expires-soon">⚠ ${u.license_valid_until} (${days}d)</span>`
+        : `<span class="expires-ok">${u.license_valid_until}</span>`;
+    return `<tr>
+      <td class="td-mono" style="color:var(--text-dim)">${u.id}</td>
+      <td><div class="td-name">${u.full_name}</div><div style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">${u.username} · ${u.email}</div></td>
+      <td style="font-size:12px">${u.company}</td>
+      <td>${roleBadge(u.role)}</td>
+      <td>${licenseBadge(u.license_type)}</td>
+      <td>${validDisplay}</td>
+      <td>${statusBadge(u)}</td>
+      <td><div class="action-btns">
+        <button class="btn-action" onclick="openEditUser(${u.id})">Upravit</button>
+        <button class="btn-action" onclick="toggleActive(${u.id})">${u.active?'Pozastavit':'Aktivovat'}</button>
+        <button class="btn-action danger" onclick="deleteUser(${u.id})">Smazat</button>
+      </div></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderLicenses(list) {
+  document.getElementById('licenses-tbody').innerHTML = list.map(u => {
+    const days=daysLeft(u.license_valid_until);
+    return `<tr>
+      <td><div class="td-name">${u.full_name}</div><div style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">${u.username}</div></td>
+      <td style="font-size:12px">${u.company}</td>
+      <td>${licenseBadge(u.license_type)}</td>
+      <td class="td-mono" style="font-size:11px">${u.license_valid_until}</td>
+      <td>${statusBadge(u)}</td>
+      <td><button class="btn-action" onclick="openEditUser(${u.id})">Prodloužit</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function filterUsers(q) {
+  const l=q.toLowerCase();
+  renderUsers(DB.filter(u=>u.username.includes(l)||u.full_name.toLowerCase().includes(l)||u.company.toLowerCase().includes(l)||u.email.toLowerCase().includes(l)));
+}
+
+function renderOverview() {
+  const total=DB.length, active=DB.filter(u=>licenseStatus(u)==='active').length;
+  const expired=DB.filter(u=>licenseStatus(u)==='expired').length;
+  const enterprise=DB.filter(u=>u.license_type==='enterprise').length;
+  document.getElementById('overview-stats').innerHTML=`
+    <div class="stat-card"><div class="stat-card-value" style="color:var(--pink-dark)">${total}</div><div class="stat-card-label">Celkem uživatelů</div></div>
+    <div class="stat-card"><div class="stat-card-value" style="color:var(--green)">${active}</div><div class="stat-card-label">Aktivní licence</div></div>
+    <div class="stat-card"><div class="stat-card-value" style="color:var(--red)">${expired}</div><div class="stat-card-label">Vypršelé licence</div></div>
+    <div class="stat-card"><div class="stat-card-value" style="color:var(--pink-dark)">${enterprise}</div><div class="stat-card-label">Enterprise účty</div></div>`;
+  const byRole={}, byLic={};
+  DB.forEach(u=>{ byRole[u.role]=(byRole[u.role]||0)+1; byLic[u.license_type]=(byLic[u.license_type]||0)+1; });
+  const rows=[
+    ['Databáze','isupply_users.db (SQLite)'],['Verze schématu','v1.0'],
+    ['Admin účtů',byRole['admin']||0],['Manager účtů',byRole['manager']||0],['Technician účtů',byRole['technician']||0],
+    ['Trial licencí',byLic['trial']||0],['Pro licencí',byLic['pro']||0],['Enterprise licencí',byLic['enterprise']||0],
+  ];
+  document.getElementById('overview-tbody').innerHTML=rows.map(([k,v])=>
+    `<tr><td style="color:var(--text-dim);font-family:var(--mono);font-size:12px">${k}</td><td style="font-family:var(--mono);font-size:12px;color:var(--text)">${v}</td></tr>`
+  ).join('');
+}
+
+// ── MODAL ─────────────────────────────────────────────────────
+function openNewUser() {
+  editingId=null;
+  document.getElementById('modal-title-text').textContent='Nový uživatel';
+  clearForm();
+  const d=new Date(); d.setFullYear(d.getFullYear()+1);
+  document.getElementById('f-valid-until').value=d.toISOString().slice(0,10);
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+function openEditUser(id) {
+  const u=DB.find(x=>x.id===id); if(!u) return;
+  editingId=id;
+  document.getElementById('modal-title-text').textContent='Upravit uživatele';
+  document.getElementById('f-username').value=u.username;
+  document.getElementById('f-password').value='';
+  document.getElementById('f-fullname').value=u.full_name;
+  document.getElementById('f-email').value=u.email;
+  document.getElementById('f-company').value=u.company;
+  document.getElementById('f-role').value=u.role;
+  document.getElementById('f-license').value=u.license_type;
+  document.getElementById('f-valid-until').value=u.license_valid_until;
+  document.getElementById('f-active').value=String(u.active);
+  document.getElementById('f-notes').value=u.notes;
+  document.getElementById('modal-overlay').classList.remove('hidden');
+}
+function closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); editingId=null; }
+function clearForm() {
+  ['f-username','f-password','f-fullname','f-email','f-company','f-notes'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-role').value='technician';
+  document.getElementById('f-license').value='pro';
+  document.getElementById('f-active').value='1';
+}
+async function saveUser() {
+  const username   = document.getElementById('f-username').value.trim();
+  const password   = document.getElementById('f-password').value;
+  const full_name  = document.getElementById('f-fullname').value.trim();
+  const email      = document.getElementById('f-email').value.trim();
+  if (!username||!full_name||!email) { alert('Vyplňte povinná pole: jméno, celé jméno, e-mail.'); return; }
+
+  const payload = {
+    username, full_name, email,
+    company:              document.getElementById('f-company').value.trim(),
+    role:                 document.getElementById('f-role').value,
+    license_type:         document.getElementById('f-license').value,
+    license_valid_until:  document.getElementById('f-valid-until').value,
+    active:               parseInt(document.getElementById('f-active').value),
+    notes:                document.getElementById('f-notes').value.trim(),
+  };
+  if (password) payload.password = password;
+
+  try {
+    let res;
+    if (editingId === null) {
+      if (!password) { alert('Pro nového uživatele je heslo povinné.'); return; }
+      res = await fetch('/api/users', { method:'POST', headers:adminHeaders(), body:JSON.stringify(payload) });
+    } else {
+      res = await fetch('/api/users/'+editingId, { method:'PUT', headers:adminHeaders(), body:JSON.stringify(payload) });
+    }
+    const data = await res.json();
+    if (data.ok) {
+      toast(editingId===null ? '✓ Uživatel '+username+' byl vytvořen' : '✓ Uživatel '+username+' byl uložen');
+      closeModal();
+      await loadUsers();
+    } else {
+      alert(data.error || 'Chyba při ukládání.');
+    }
+  } catch(e) { alert('Chyba připojení k serveru.'); }
+}
+
+async function toggleActive(id) {
+  const u = DB.find(x=>x.id===id); if(!u) return;
+  if (u.username===loggedInUser?.username) { alert('Nemůžete pozastavit vlastní účet.'); return; }
+  try {
+    const res = await fetch('/api/users/'+id, {
+      method:'PUT', headers:adminHeaders(),
+      body:JSON.stringify({ active: u.active ? 0 : 1 })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      toast(u.active ? '⚠ Účet pozastaven' : '✓ Účet aktivován');
+      await loadUsers();
+    }
+  } catch(e) { alert('Chyba připojení k serveru.'); }
+}
+
+async function deleteUser(id) {
+  const u = DB.find(x=>x.id===id); if(!u) return;
+  if (u.username===loggedInUser?.username) { alert('Nemůžete smazat vlastní účet.'); return; }
+  if (!confirm(`Smazat uživatele "${u.username}"? Tato akce je nevratná.`)) return;
+  try {
+    const res = await fetch('/api/users/'+id, { method:'DELETE', headers:adminHeaders() });
+    const data = await res.json();
+    if (data.ok) { toast('✓ Uživatel smazán'); await loadUsers(); }
+  } catch(e) { alert('Chyba připojení k serveru.'); }
+}
+document.getElementById('modal-overlay').addEventListener('click',function(e){if(e.target===this)closeModal();});
+</script>
+</body>
+</html>

@@ -1,0 +1,1154 @@
+"""
+iSupply Scan – Backend Server
+==============================
+pip install flask flask-cors pymobiledevice3
+python server.py
+"""
+
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import sqlite3
+import hashlib
+import datetime
+import os
+import threading
+import json
+import time
+import queue
+import asyncio
+import subprocess
+
+
+# ─── APPLE DRIVER CHECK ─────────────────────────────────────────────────────
+def _check_apple_driver():
+    """Zkontroluje Apple Mobile Device Support pri startu."""
+    try:
+        import winreg
+        reg_paths = [
+            "SOFTWARE\\Apple Inc.\\Apple Mobile Device Support",
+            "SOFTWARE\\WOW6432Node\\Apple Inc.\\Apple Mobile Device Support",
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Apple Mobile Device Support",
+        ]
+        for path in reg_paths:
+            try:
+                k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                winreg.CloseKey(k)
+                print("  ✅ Apple Mobile Device Support nalezen")
+                return True
+            except FileNotFoundError:
+                continue
+
+        # Zkontroluj driver soubor
+        driver_paths = [
+            "C:\\Windows\\System32\\drivers\\usbaapl64.sys",
+            "C:\\Windows\\System32\\drivers\\usbaapl.sys",
+        ]
+        for p in driver_paths:
+            if os.path.exists(p):
+                print("  ✅ Apple USB driver nalezen")
+                return True
+
+        # Driver nenalezen
+        print()
+        print("─" * 52)
+        print("  ⚠  Apple Mobile Device Support neni nainstalovan!")
+        print("─" * 52)
+        print("  iPhone detekce nebude fungovat bez tohoto driveru.")
+        print()
+        import webbrowser, threading
+        def _open_store():
+            import time; time.sleep(2)
+            webbrowser.open("ms-windows-store://pdp/?ProductId=9NP83LWLPZ9K")
+        threading.Thread(target=_open_store, daemon=True).start()
+        print("  Oteviran Microsoft Store - nainstalujte Apple Devices.")
+        print("  Po instalaci restartujte iSupply Scan.")
+        print("─" * 52)
+        print()
+        return False
+    except ImportError:
+        # Nejsme na Windows (vyvoj na Mac/Linux)
+        print("  ℹ  Kontrola driveru preskocena (non-Windows)")
+        return True
+
+app = Flask(__name__, static_folder='.')
+CORS(app)
+
+DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'isupply_users.db')
+LICENSE_API    = os.environ.get('ISUPPLY_API', 'https://isupply-scan.cz')
+LICENSE_KEY    = None   # nastaveno ze souboru licence.key
+SESSION_TOKEN  = None   # JWT token z Railway API
+TOKEN_FILE     = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.token_cache')
+LICENSE_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'licence.key')
+
+
+# ─── LICENCE VALIDACE ───────────────────────────────────────────────────────
+
+def get_hwid() -> str:
+    """Unikátní ID počítače – hash z MAC + hostname."""
+    import uuid, platform
+    raw = f"{uuid.getnode()}-{platform.node()}-{platform.processor()}"
+    return hashlib.sha256(raw.encode()).hexdigest()[:32]
+
+
+def load_license_key() -> str | None:
+    """Načte licenční klíč ze souboru licence.key."""
+    if os.path.exists(LICENSE_FILE):
+        with open(LICENSE_FILE, 'r') as f:
+            key = f.read().strip()
+            if key:
+                return key
+    return None
+
+
+def save_token_cache(token: str):
+    """Uloží JWT token pro offline použití."""
+    try:
+        with open(TOKEN_FILE, 'w') as f:
+            f.write(token)
+    except Exception:
+        pass
+
+
+def load_token_cache() -> str | None:
+    """Načte cached token."""
+    if os.path.exists(TOKEN_FILE):
+        with open(TOKEN_FILE, 'r') as f:
+            return f.read().strip()
+    return None
+
+
+def validate_license_online(license_key: str) -> dict:
+    """Ověří licenci na Railway API serveru."""
+    import socket
+    try:
+        import urllib.request, json as json_lib
+        hwid = get_hwid()
+        hostname = socket.gethostname()
+        payload = json_lib.dumps({
+            'license_key': license_key,
+            'hwid':        hwid,
+            'hostname':    hostname,
+        }).encode()
+        req = urllib.request.Request(
+            f"{LICENSE_API}/api/validate",
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return json_lib.loads(resp.read())
+    except Exception as e:
+        return {'ok': False, 'error': f'Cannot reach licence server: {e}'}
+
+
+def validate_token_offline(token: str) -> dict:
+    """Ověří cached JWT token offline (platný 24h)."""
+    try:
+        import base64, json as json_lib
+        parts = token.split('.')
+        if len(parts) != 3:
+            return {'ok': False}
+        payload_b64 = parts[1] + '=='
+        payload = json_lib.loads(base64.urlsafe_b64decode(payload_b64))
+        exp = payload.get('exp', 0)
+        if exp > datetime.datetime.utcnow().timestamp():
+            return {'ok': True, **payload}
+        return {'ok': False, 'error': 'Token expired'}
+    except Exception:
+        return {'ok': False}
+
+
+def check_license() -> tuple[bool, str]:
+    """
+    Hlavní validační funkce.
+    1. Pokud existuje platný cached token → OK (offline)
+    2. Pokud je online → ověř na Railway a obnov token
+    Vrací (ok, message)
+    """
+    global SESSION_TOKEN, LICENSE_KEY
+
+    LICENSE_KEY = load_license_key()
+    if not LICENSE_KEY:
+        return False, "❌ Licence nenalezena. Vytvořte soubor 'licence.key' s vaším licenčním klíčem."
+
+    # Zkus online validaci
+    print(f"  Ověřuji licenci: {LICENSE_KEY[:12]}...")
+    result = validate_license_online(LICENSE_KEY)
+
+    if result.get('ok'):
+        SESSION_TOKEN = result.get('token', '')
+        save_token_cache(SESSION_TOKEN)
+        plan     = result.get('plan', '?')
+        company  = result.get('company', '')
+        valid    = result.get('valid_until', '?')
+        seats_u  = result.get('seats_used', 1)
+        seats_t  = result.get('seats_total', 1)
+        print(f"  ✓ Licence OK: {company} | Plan: {plan} | Platnost: {valid} | Seats: {seats_u}/{seats_t}")
+        return True, f"✓ {company} · {plan.upper()} · platnost do {valid}"
+
+    # Online selhalo – zkus offline token
+    print(f"  Online validace selhala: {result.get('error', '?')}")
+    cached = load_token_cache()
+    if cached:
+        offline = validate_token_offline(cached)
+        if offline.get('ok'):
+            SESSION_TOKEN = cached
+            print(f"  ✓ Offline token platný (do {datetime.datetime.fromtimestamp(offline.get('exp',0))})")
+            return True, f"✓ Offline mode · token platný 24h"
+
+    # Pokud licence.key existuje ale server není dostupný → DEV MODE
+    # (dočasné chování do nasazení Railway API)
+    err = result.get('error', '')
+    if 'Cannot reach' in err or 'connect' in err.lower():
+        print(f"  ⚠ Licence server nedostupný – spouštím v DEV MODE")
+        print(f"  ⚠ Po nasazení Railway API bude vyžadována online validace")
+        return True, f"⚠ DEV MODE (licence server offline) · klíč: {LICENSE_KEY[:12]}..."
+
+    # Klíč je neplatný nebo vypršel
+    err = result.get('error', 'Neznámá chyba')
+    return False, f"❌ {err}"
+
+usb_event_queue = queue.Queue()
+connected_devices = {}
+
+# ─── DB ─────────────────────────────────────────────────────────────────────
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+def init_db():
+    conn = get_db()
+    c = conn.cursor()
+    c.executescript('''
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            full_name TEXT NOT NULL,
+            email TEXT NOT NULL,
+            company TEXT NOT NULL DEFAULT '',
+            role TEXT NOT NULL DEFAULT 'technician',
+            license_type TEXT NOT NULL DEFAULT 'pro',
+            license_valid_until TEXT NOT NULL DEFAULT '2099-12-31',
+            active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL,
+            last_login TEXT DEFAULT NULL,
+            notes TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS scan_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            imei TEXT,
+            serial TEXT,
+            model TEXT,
+            storage TEXT,
+            color TEXT,
+            ios_version TEXT,
+            battery_pct INTEGER,
+            grade TEXT,
+            result TEXT,
+            technician TEXT,
+            tests_json TEXT,
+            scanned_at TEXT NOT NULL
+        );
+    ''')
+    now = datetime.datetime.now().isoformat(timespec='seconds')
+    for (u, pw, fn, em, co, ro, li, va, no) in [
+        ('admin',    'admin',     'Administrator',   'admin@isupply.cz',    'iSupply s.r.o.',      'admin',      'enterprise', '2099-12-31', 'Hlavní admin'),
+        ('tester1',  'Test1234!', 'Jan Novák',       'jan@refurb.cz',       'Refurb Praha s.r.o.', 'technician', 'pro',        '2026-12-31', 'Technik Praha'),
+        ('tester2',  'Scan5678!', 'Petra Svobodová', 'petra@mobilezone.cz', 'MobileZone EU',       'technician', 'pro',        '2026-12-31', 'Technik Brno'),
+        ('manager1', 'Mgr9999!',  'Karel Dvořák',    'karel@mobilezone.cz', 'MobileZone EU',       'manager',    'enterprise', '2026-12-31', 'Vedoucí skladu'),
+    ]:
+        try:
+            c.execute('INSERT INTO users (username,password_hash,full_name,email,company,role,license_type,license_valid_until,active,created_at,notes) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
+                      (u, hash_pw(pw), fn, em, co, ro, li, va, now, no))
+        except sqlite3.IntegrityError:
+            pass
+    conn.commit()
+    conn.close()
+    print(f"✓ Databáze: {DB_PATH}")
+
+# ─── MODEL DATABÁZE ─────────────────────────────────────────────────────────
+# Překlad Apple ProductType → čitelný název + číslo modelu A-Series
+
+APPLE_MODELS = {
+    # iPhone 16 Series
+    'iPhone17,1': ('iPhone 16 Pro', 'A3293'),
+    'iPhone17,2': ('iPhone 16 Pro Max', 'A3292'),
+    'iPhone17,3': ('iPhone 16 Plus', 'A3291'),
+    'iPhone17,4': ('iPhone 16', 'A3290'),
+    # iPhone 15 Series
+    'iPhone16,1': ('iPhone 15', 'A3090'),
+    'iPhone16,2': ('iPhone 15 Plus', 'A3093'),
+    'iPhone16,3': ('iPhone 15 Pro', 'A3101'),
+    'iPhone16,4': ('iPhone 15 Pro Max', 'A3105'),
+    # iPhone 14 Series
+    'iPhone15,2': ('iPhone 14 Pro', 'A2890'),
+    'iPhone15,3': ('iPhone 14 Pro Max', 'A2893'),
+    'iPhone15,4': ('iPhone 14', 'A2882'),
+    'iPhone15,5': ('iPhone 14 Plus', 'A2886'),
+    # iPhone 13 Series
+    'iPhone14,4': ('iPhone 13 mini', 'A2628'),
+    'iPhone14,5': ('iPhone 13', 'A2633'),
+    'iPhone14,2': ('iPhone 13 Pro', 'A2636'),
+    'iPhone14,3': ('iPhone 13 Pro Max', 'A2641'),
+    # iPhone 12 Series
+    'iPhone13,1': ('iPhone 12 mini', 'A2399'),
+    'iPhone13,2': ('iPhone 12', 'A2403'),
+    'iPhone13,3': ('iPhone 12 Pro', 'A2407'),
+    'iPhone13,4': ('iPhone 12 Pro Max', 'A2411'),
+    # iPhone 11 Series
+    'iPhone12,1': ('iPhone 11', 'A2111'),
+    'iPhone12,3': ('iPhone 11 Pro', 'A2160'),
+    'iPhone12,5': ('iPhone 11 Pro Max', 'A2161'),
+    # iPhone XS/XR Series
+    'iPhone11,2': ('iPhone XS', 'A1920'),
+    'iPhone11,4': ('iPhone XS Max', 'A1921'),
+    'iPhone11,6': ('iPhone XS Max', 'A2104'),
+    'iPhone11,8': ('iPhone XR', 'A1984'),
+    # iPhone X Series
+    'iPhone10,3': ('iPhone X', 'A1865'),
+    'iPhone10,6': ('iPhone X', 'A1901'),
+    # iPhone 8 Series
+    'iPhone10,1': ('iPhone 8', 'A1863'),
+    'iPhone10,4': ('iPhone 8', 'A1905'),
+    'iPhone10,2': ('iPhone 8 Plus', 'A1864'),
+    'iPhone10,5': ('iPhone 8 Plus', 'A1897'),
+    # iPhone 7 Series
+    'iPhone9,1':  ('iPhone 7', 'A1660'),
+    'iPhone9,3':  ('iPhone 7', 'A1778'),
+    'iPhone9,2':  ('iPhone 7 Plus', 'A1661'),
+    'iPhone9,4':  ('iPhone 7 Plus', 'A1784'),
+    # iPhone SE Series
+    'iPhone14,6': ('iPhone SE (3. gen)', 'A2595'),
+    'iPhone12,8': ('iPhone SE (2. gen)', 'A2275'),
+    'iPhone8,4':  ('iPhone SE (1. gen)', 'A1662'),
+    # iPhone 6S Series
+    'iPhone8,1':  ('iPhone 6s', 'A1633'),
+    'iPhone8,2':  ('iPhone 6s Plus', 'A1634'),
+    # iPhone 6 Series
+    'iPhone7,2':  ('iPhone 6', 'A1549'),
+    'iPhone7,1':  ('iPhone 6 Plus', 'A1522'),
+}
+
+def resolve_model(product_type, sales_model=None):
+    """Vrátí (čitelný název, číslo modelu A-Series)"""
+    if product_type in APPLE_MODELS:
+        name, a_number = APPLE_MODELS[product_type]
+        return name, a_number
+    # Pokud není v databázi, použij SalesModel nebo ProductType
+    if sales_model and sales_model not in ('N/A', '', None):
+        return product_type, sales_model
+    return product_type, 'N/A'
+
+# ─── USB DETEKCE – vlastní event loop v separátním vlákně ───────────────────
+
+def get_device_info(udid):
+    """
+    Získá info o zařízení. Běží v samostatném vlákně s vlastním event loop.
+    """
+    async def _fetch():
+        from pymobiledevice3.lockdown import create_using_usbmux
+        import inspect
+
+        # Zjisti signaturu funkce
+        sig = inspect.signature(create_using_usbmux)
+        params = list(sig.parameters.keys())
+        print(f"  create_using_usbmux params: {params}")
+
+        # Zavolej správně podle parametrů
+        if 'serial' in params:
+            if inspect.iscoroutinefunction(create_using_usbmux):
+                ld = await create_using_usbmux(serial=udid)
+            else:
+                ld = create_using_usbmux(serial=udid)
+        elif 'udid' in params:
+            if inspect.iscoroutinefunction(create_using_usbmux):
+                ld = await create_using_usbmux(udid=udid)
+            else:
+                ld = create_using_usbmux(udid=udid)
+        else:
+            # Zkus pozicionálně
+            if inspect.iscoroutinefunction(create_using_usbmux):
+                ld = await create_using_usbmux(udid)
+            else:
+                ld = create_using_usbmux(udid)
+
+        vals = ld.all_values
+        if asyncio.iscoroutine(vals):
+            vals = await vals
+
+        # ── Kapacita z com.apple.disk_usage domény ───────────────
+        storage = 'N/A'
+        try:
+            disk_vals = ld.get_value(domain='com.apple.disk_usage')
+            if asyncio.iscoroutine(disk_vals):
+                disk_vals = await disk_vals
+            print(f"  disk_vals type: {type(disk_vals)}, keys: {list(disk_vals.keys()) if isinstance(disk_vals, dict) else 'N/A'}")
+            if isinstance(disk_vals, dict):
+                # AmountRestoreAvailable = celková kapacita flash storage
+                raw = disk_vals.get('AmountRestoreAvailable', 0)
+                if not raw:
+                    # Fallback: volné + rezervované
+                    raw = (disk_vals.get('AmountDataAvailable', 0) or 0) +                           (disk_vals.get('AmountDataReserved', 0) or 0)
+                if raw and int(raw) > 0:
+                    gb_raw = int(raw) / 1e9
+                    for std in [8, 16, 32, 64, 128, 256, 512, 1024]:
+                        if gb_raw <= std * 1.15:
+                            storage = f'{std} GB' if std < 1024 else '1 TB'
+                            break
+                    else:
+                        storage = f'{round(gb_raw)} GB'
+        except Exception as se:
+            print(f"  Storage chyba: {se}")
+            # Fallback na all_values
+            for key in ['TotalDiskCapacity', 'TotalDataCapacity']:
+                try:
+                    raw = vals.get(key, 0)
+                    if raw and int(raw) > 0:
+                        gb_raw = int(raw) / 1e9
+                        for std in [8, 16, 32, 64, 128, 256, 512, 1024]:
+                            if gb_raw <= std * 1.15:
+                                storage = f'{std} GB' if std < 1024 else '1 TB'
+                                break
+                        break
+                except Exception:
+                    continue
+
+        # ── Barva ─────────────────────────────────────────────────
+        color_raw = str(vals.get('DeviceColor') or '')
+        # Apple iPhone XS Space Gray = '1', Silver = '2', Gold = '3'
+        # Novější modely používají hex kódy
+        COLOR_MAP_NUM = {
+            '1': 'Space Gray', '2': 'Silver', '3': 'Gold',
+            '4': 'Space Black', '5': 'Rose Gold',
+        }
+        COLOR_MAP_HEX = {
+            '#1d1d1f': 'Black', '#f5f5f0': 'White', '#faf6f2': 'White',
+            '#e8e0d5': 'Starlight', '#3d3c3d': 'Space Gray',
+            '#f2f2f2': 'Silver', '#aec8e0': 'Blue', '#6e7a6e': 'Alpine Green',
+            '#354e49': 'Deep Purple', '#f9e5c8': 'Yellow', '#e8d1c4': 'Pink',
+            '#2c2c2e': 'Midnight', '#5b6a78': 'Blue Titanium',
+            '#4e4b46': 'Black Titanium', '#d4c5b0': 'Natural Titanium',
+            '#e8e3d8': 'White Titanium', '#c6c8ca': 'Silver', '#e8e1d5': 'Gold',
+        }
+        if color_raw.startswith('#'):
+            color = COLOR_MAP_HEX.get(color_raw.lower(), color_raw)
+        elif color_raw.isdigit():
+            color = COLOR_MAP_NUM.get(color_raw, f'Color {color_raw}')
+        else:
+            color = color_raw if color_raw else 'N/A'
+
+        # ── Baterie – kondice z com.apple.mobile.battery ──────────
+        battery_pct = vals.get('BatteryCurrentCapacity', 0) or 0
+        try:
+            batt_vals = ld.get_value(domain='com.apple.mobile.battery')
+            if asyncio.iscoroutine(batt_vals):
+                batt_vals = await batt_vals
+            if isinstance(batt_vals, dict):
+                # BatteryCurrentCapacity = aktuální nabití
+                battery_pct = batt_vals.get('BatteryCurrentCapacity', battery_pct) or battery_pct
+                print(f"  Battery domain keys: {list(batt_vals.keys())}")
+                print(f"  Battery vals: { {k:v for k,v in batt_vals.items()} }")
+        except Exception as be:
+            print(f"  Battery domain chyba: {be}")
+
+        # ── Model ─────────────────────────────────────────────────
+        product_type = vals.get('ProductType', 'N/A')
+        sales_model  = vals.get('SalesModel', vals.get('ModelNumber', 'N/A'))
+        model_name, a_number = resolve_model(product_type, sales_model)
+
+        # ── Kondice baterie – stejný výpočet jako 3uTools / Apple iOS ──
+        # Apple používá: MaximumCapacityPercent (přímá hodnota) nebo
+        # AppleRawMaxCapacity / DesignCapacity * 100 (výpočet)
+        # Zdroj: diagnostics_relay → ioregentry AppleSmartBattery
+        battery_health = 0
+        battery_cycles = 0
+        raw_max = 0
+        design_cap = 0
+
+        try:
+            from pymobiledevice3.services.diagnostics import DiagnosticsService
+            import inspect
+
+            # Vytvoř DiagnosticsService
+            if inspect.iscoroutinefunction(DiagnosticsService):
+                diag = await DiagnosticsService(ld)
+            else:
+                diag = DiagnosticsService(ld)
+
+            # Zkus ioregentry AppleSmartBattery (hlavní zdroj)
+            iokit = None
+            for entry_name in ['AppleSmartBattery', 'AppleARMPMUCharger']:
+                try:
+                    fn = getattr(diag, 'ioregistry_entry', None)
+                    if fn:
+                        iokit = fn(entry_name)
+                        if asyncio.iscoroutine(iokit):
+                            iokit = await iokit
+                        if iokit:
+                            print(f"  ✓ IOKit {entry_name} OK")
+                            break
+                except Exception as e:
+                    print(f"  IOKit {entry_name}: {e}")
+
+            if not iokit:
+                # Fallback: get_battery() metoda
+                for method in ['get_battery', 'battery']:
+                    fn = getattr(diag, method, None)
+                    if fn:
+                        try:
+                            iokit = fn()
+                            if asyncio.iscoroutine(iokit):
+                                iokit = await iokit
+                            if iokit:
+                                break
+                        except Exception:
+                            pass
+
+            if isinstance(iokit, dict):
+                # Vypiš klíče pro debug
+                cap_keys = {k:v for k,v in iokit.items()
+                            if any(x in k.lower() for x in ['cap','health','max','cycle','design','nominal'])}
+                print(f"  Battery IOKit keys: {cap_keys}")
+
+                # === METODA 1: MaximumCapacityPercent ===
+                # Přesná hodnota co zobrazuje iOS v Nastavení → Baterie
+                mcp = iokit.get('MaximumCapacityPercent')
+                if mcp is not None and 0 < int(mcp) <= 100:
+                    battery_health = int(mcp)
+                    print(f"  ✓ MaximumCapacityPercent = {battery_health}%")
+
+                # === METODA 2: AppleRawMaxCapacity / DesignCapacity ===
+                # Stejný výpočet jako 3uTools a idevicediagnostics
+                # health% = (AppleRawMaxCapacity / DesignCapacity) * 100
+                if not battery_health:
+                    raw_max    = iokit.get('AppleRawMaxCapacity', 0)
+                    design_cap = iokit.get('DesignCapacity', 0)
+                    if raw_max and design_cap and int(design_cap) > 0:
+                        battery_health = min(100, round(int(raw_max) / int(design_cap) * 100))
+                        print(f"  ✓ AppleRawMaxCapacity/DesignCapacity = {raw_max}/{design_cap} = {battery_health}%")
+
+                # === METODA 3: NominalChargeCapacity / DesignCapacity ===
+                if not battery_health:
+                    nominal    = iokit.get('NominalChargeCapacity', 0)
+                    design_cap = iokit.get('DesignCapacity', 0)
+                    if nominal and design_cap and int(design_cap) > 0:
+                        battery_health = min(100, round(int(nominal) / int(design_cap) * 100))
+                        print(f"  ✓ NominalChargeCapacity/DesignCapacity = {nominal}/{design_cap} = {battery_health}%")
+
+                # Počet nabíjecích cyklů (bonus info)
+                battery_cycles = iokit.get('CycleCount', 0) or iokit.get('AppleRawCycleCount', 0)
+                if battery_cycles:
+                    print(f"  ✓ CycleCount = {battery_cycles}")
+
+        except Exception as be:
+            print(f"  DiagnosticsService chyba: {be}")
+
+        # Sanitace – kondice musí být 1–100 %
+        if not battery_health or battery_health <= 0 or battery_health > 100:
+            print(f"  ⚠ battery_health={battery_health} neplatné, fallback na BatteryCurrentCapacity")
+            battery_health = battery_pct  # aktuální nabití jako poslední možnost
+
+        result = {
+            'udid':           udid,
+            'imei':           vals.get('InternationalMobileEquipmentIdentity', 'N/A'),
+            'serial':         vals.get('SerialNumber', 'N/A'),
+            'product_type':   product_type,
+            'model':          model_name,
+            'a_number':       a_number,
+            'name':           vals.get('DeviceName', 'iPhone'),
+            'ios':            vals.get('ProductVersion', 'N/A'),
+            'build':          vals.get('BuildVersion', 'N/A'),
+            'storage':        storage,
+            'color':          color,
+            'battery':        battery_pct,
+            'battery_health': battery_health,
+            'battery_cycles': battery_cycles,
+            'activation':     vals.get('ActivationState', 'N/A'),
+            'icloud_lock':    vals.get('FMiPActivationLockIsActivatable', False),
+        }
+        print(f"  ✓ VÝSLEDEK: model={result['model']} | storage={result['storage']} | color={result['color']} | battery={result['battery']} | health={result['battery_health']}")
+        return result
+
+    # Vlastní izolovaný event loop
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(_fetch())
+        print(f"  ✓ {result['name']} | IMEI: {result['imei']} | iOS: {result['ios']} | Baterie: {result['battery']}%")
+        return result
+    except Exception as e:
+        print(f"  ✗ get_device_info chyba: {e}")
+        # Vrátit alespoň UDID
+        return {
+            'udid': udid, 'imei': 'Načítání...', 'serial': udid[:12],
+            'model': 'iPhone', 'name': 'iPhone', 'ios': 'N/A',
+            'storage': 'N/A', 'color': 'N/A', 'battery': 0,
+        }
+    finally:
+        loop.close()
+
+
+def usb_monitor_thread():
+    """Sleduje USB připojení – běží v separátním vlákně s vlastním event loop."""
+    print("✓ USB monitor spuštěn")
+
+    try:
+        import pymobiledevice3
+        print(f"✓ pymobiledevice3 v{getattr(pymobiledevice3, '__version__', '?')} – USB detekce aktivní")
+    except ImportError:
+        print("⚠ pymobiledevice3 není – spusťte: pip install pymobiledevice3")
+        return
+
+    async def _monitor():
+        from pymobiledevice3.usbmux import select_devices_by_connection_type
+        import inspect
+        known = set()
+
+        while True:
+            try:
+                if inspect.iscoroutinefunction(select_devices_by_connection_type):
+                    devs = await select_devices_by_connection_type(connection_type='USB')
+                else:
+                    devs = select_devices_by_connection_type(connection_type='USB')
+
+                current = set()
+                for d in devs:
+                    uid = getattr(d, 'serial', None) or getattr(d, 'udid', None)
+                    if uid:
+                        current.add(uid)
+
+                # Nově připojená
+                for uid in current - known:
+                    print(f"  📱 Připojeno: {uid}")
+                    # Info načíst ve vlastním vlákně aby se nesmíchaly event loops
+                    info_thread = threading.Thread(
+                        target=lambda u=uid: _handle_connect(u),
+                        daemon=True
+                    )
+                    info_thread.start()
+                    known.add(uid)
+
+                # Odpojená
+                for uid in known - current:
+                    print(f"  📵 Odpojeno: {uid}")
+                    connected_devices.pop(uid, None)
+                    usb_event_queue.put({'event': 'disconnected', 'udid': uid})
+                    known.discard(uid)
+
+            except Exception as e:
+                print(f"  USB monitor chyba: {e}")
+
+            await asyncio.sleep(1)
+
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(_monitor())
+    finally:
+        loop.close()
+
+
+# Zámek aby se zabránilo dvojité detekci
+_connecting_lock = threading.Lock()
+_connecting_udids = set()
+
+def _handle_connect(udid):
+    """Načte info o zařízení a pošle event – v separátním vlákně."""
+    # Zabránit dvojitému zpracování stejného UDID
+    with _connecting_lock:
+        if udid in _connecting_udids:
+            print(f"  ⚠ {udid} již se zpracovává, přeskakuji")
+            return
+        _connecting_udids.add(udid)
+    try:
+        info = get_device_info(udid)
+        if info:
+            connected_devices[udid] = info
+            usb_event_queue.put({'event': 'connected', 'udid': udid, 'info': info})
+    finally:
+        with _connecting_lock:
+            _connecting_udids.discard(udid)
+
+
+# ─── STATIC ──────────────────────────────────────────────────────────────────
+
+@app.route('/')
+def index():
+    return send_from_directory('.', 'iphone-diagnostic.html')
+
+@app.route('/admin')
+def admin_page():
+    return send_from_directory('.', 'isupply_admin.html')
+
+@app.route('/support')
+def support_page():
+    return send_from_directory('.', 'support.html')
+
+@app.route('/api/detect-printer')
+def api_detect_printer():
+    """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
+    import subprocess, platform
+
+    printer_name = None
+    tape_size    = None
+
+    # Brother QL model → tape size mm
+    TAPE_MAP = {
+        'QL-500': '54x29', 'QL-550': '54x29',
+        'QL-570': '62',    'QL-580': '62',    'QL-600': '62',
+        'QL-700': '29',    'QL-710': '29',    'QL-720': '29',
+        'QL-800': '62',    'QL-810': '62',    'QL-820': '62',
+        'QL-1100': '102',  'QL-1110': '102',  'QL-1115': '102',
+    }
+
+    try:
+        system = platform.system()
+        if system == 'Windows':
+            # WMI přes wmic
+            result = subprocess.run(
+                ['wmic', 'printer', 'get', 'Name', '/format:csv'],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if 'Brother' in line or 'QL' in line:
+                    parts = line.strip().split(',')
+                    name = parts[-1].strip() if parts else ''
+                    if name:
+                        printer_name = name
+                        break
+        elif system in ('Darwin', 'Linux'):
+            result = subprocess.run(
+                ['lpstat', '-p'],
+                capture_output=True, text=True, timeout=5
+            )
+            for line in result.stdout.splitlines():
+                if 'Brother' in line or 'QL' in line:
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        printer_name = parts[1]
+                        break
+    except Exception as e:
+        print(f"  Printer detect error: {e}")
+
+    # Zjisti tape size z názvu tiskárny
+    if printer_name:
+        for model, tape in TAPE_MAP.items():
+            if model in (printer_name or ''):
+                tape_size = tape
+                break
+
+    return jsonify({
+        'ok':      True,
+        'printer': printer_name,
+        'tape':    tape_size,
+        'system':  platform.system(),
+    })
+
+@app.route('/<path:filename>')
+def static_files(filename):
+    return send_from_directory('.', filename)
+
+# ─── AUTH ────────────────────────────────────────────────────────────────────
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    data = request.get_json()
+    u = (data.get('username') or '').strip()
+    p = (data.get('password') or '')
+    if not u or not p:
+        return jsonify({'ok': False, 'error': 'Vyplňte jméno a heslo.'}), 400
+    conn = get_db()
+    user = conn.execute(
+        'SELECT * FROM users WHERE username=? AND password_hash=? AND active=1',
+        (u, hash_pw(p))
+    ).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Nesprávné jméno nebo heslo.'}), 401
+    if datetime.date.fromisoformat(user['license_valid_until']) < datetime.date.today():
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Platnost licence vypršela.'}), 403
+    conn.execute('UPDATE users SET last_login=? WHERE id=?',
+                 (datetime.datetime.now().isoformat(timespec='seconds'), user['id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True, 'user': {
+        'id': user['id'], 'username': user['username'],
+        'full_name': user['full_name'], 'company': user['company'],
+        'role': user['role'], 'license_type': user['license_type'],
+        'license_valid_until': user['license_valid_until'],
+    }})
+
+# ─── SSE ─────────────────────────────────────────────────────────────────────
+
+@app.route('/api/usb-events')
+def usb_events():
+    def generate():
+        # Aktuálně připojená
+        for uid, info in list(connected_devices.items()):
+            yield f"data: {json.dumps({'event': 'connected', 'udid': uid, 'info': info})}\n\n"
+        # Stream
+        while True:
+            try:
+                evt = usb_event_queue.get(timeout=25)
+                yield f"data: {json.dumps(evt)}\n\n"
+            except queue.Empty:
+                yield 'data: {"event":"ping"}\n\n'
+    return app.response_class(generate(), mimetype='text/event-stream',
+                               headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+@app.route('/api/devices')
+def api_devices():
+    return jsonify({'ok': True, 'devices': list(connected_devices.values())})
+
+@app.route('/api/device-vals/<udid>')
+def api_device_vals(udid):
+    """Vypíše hodnoty ze všech domén zařízení pro debugging."""
+    async def _fetch():
+        from pymobiledevice3.lockdown import create_using_usbmux
+        import inspect
+
+        sig = inspect.signature(create_using_usbmux)
+        params = list(sig.parameters.keys())
+        if inspect.iscoroutinefunction(create_using_usbmux):
+            ld = await create_using_usbmux(serial=udid) if 'serial' in params else await create_using_usbmux(udid)
+        else:
+            ld = create_using_usbmux(serial=udid) if 'serial' in params else create_using_usbmux(udid)
+
+        result = {}
+
+        # Dotaz na specifické domény kde jsou kapacita a baterie
+        domains = [
+            None,  # výchozí doména
+            'com.apple.disk_usage',
+            'com.apple.disk_usage.factory',
+            'com.apple.mobile.battery',
+            'com.apple.mobile.iTunes',
+            'com.apple.mobile.iTunes.store',
+            'com.apple.mobile.data_sync',
+            'com.apple.xcode.developerdomain',
+        ]
+
+        for domain in domains:
+            try:
+                if domain:
+                    vals = ld.get_value(domain=domain)
+                else:
+                    vals = ld.all_values
+                if asyncio.iscoroutine(vals):
+                    vals = await vals
+                if isinstance(vals, dict):
+                    key = domain or 'default'
+                    result[key] = {k: str(v) for k, v in vals.items()}
+            except Exception as e:
+                result[domain or 'default'] = {'error': str(e)}
+
+        return result
+
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(_fetch())
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)})
+    finally:
+        loop.close()
+
+
+@app.route('/api/debug')
+def api_debug():
+    info = {'connected': list(connected_devices.keys())}
+    try:
+        import pymobiledevice3
+        info['version'] = getattr(pymobiledevice3, '__version__', '?')
+        from pymobiledevice3.lockdown import create_using_usbmux
+        import inspect
+        info['create_using_usbmux_async'] = inspect.iscoroutinefunction(create_using_usbmux)
+        info['create_using_usbmux_params'] = list(inspect.signature(create_using_usbmux).parameters.keys())
+        from pymobiledevice3.usbmux import select_devices_by_connection_type
+        info['select_devices_async'] = inspect.iscoroutinefunction(select_devices_by_connection_type)
+    except Exception as e:
+        info['error'] = str(e)
+    return jsonify(info)
+
+# ─── USERS API ───────────────────────────────────────────────────────────────
+
+def require_admin(req):
+    u = req.headers.get('X-Username', '')
+    p = req.headers.get('X-Password', '')
+    conn = get_db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE username=? AND password_hash=? AND role='admin' AND active=1",
+        (u, hash_pw(p))
+    ).fetchone()
+    conn.close()
+    return user
+
+@app.route('/api/users', methods=['GET'])
+def api_users_list():
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    conn = get_db()
+    rows = conn.execute('SELECT id,username,full_name,email,company,role,license_type,license_valid_until,active,created_at,last_login,notes FROM users ORDER BY id').fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'users': [dict(r) for r in rows]})
+
+@app.route('/api/users', methods=['POST'])
+def api_users_create():
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    data = request.get_json()
+    for f in ['username', 'password', 'full_name', 'email']:
+        if not data.get(f):
+            return jsonify({'ok': False, 'error': f'Pole {f} je povinné.'}), 400
+    now = datetime.datetime.now().isoformat(timespec='seconds')
+    conn = get_db()
+    try:
+        conn.execute('INSERT INTO users (username,password_hash,full_name,email,company,role,license_type,license_valid_until,active,created_at,notes) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
+                     (data['username'], hash_pw(data['password']), data['full_name'], data['email'],
+                      data.get('company', ''), data.get('role', 'technician'), data.get('license_type', 'pro'),
+                      data.get('license_valid_until', '2026-12-31'), now, data.get('notes', '')))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return jsonify({'ok': False, 'error': 'Uživatelské jméno již existuje.'}), 409
+    uid = conn.execute('SELECT last_insert_rowid()').fetchone()[0]
+    conn.close()
+    return jsonify({'ok': True, 'id': uid}), 201
+
+@app.route('/api/users/<int:uid>', methods=['PUT'])
+def api_users_update(uid):
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    data = request.get_json()
+    conn = get_db()
+    fields, values = [], []
+    for f in ['full_name', 'email', 'company', 'role', 'license_type', 'license_valid_until', 'notes']:
+        if f in data:
+            fields.append(f'{f}=?')
+            values.append(data[f])
+    if 'active' in data:
+        fields.append('active=?')
+        values.append(int(data['active']))
+    if data.get('password'):
+        fields.append('password_hash=?')
+        values.append(hash_pw(data['password']))
+    if fields:
+        values.append(uid)
+        conn.execute(f"UPDATE users SET {','.join(fields)} WHERE id=?", values)
+        conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/users/<int:uid>', methods=['DELETE'])
+def api_users_delete(uid):
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    conn = get_db()
+    conn.execute('DELETE FROM users WHERE id=?', (uid,))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+
+# ─── RESET PASSWORD API ─────────────────────────────────────────────────────
+
+@app.route('/api/reset-password', methods=['POST'])
+def api_reset_password():
+    data        = request.get_json() or {}
+    license_key = (data.get('license_key') or '').strip().upper()
+    username    = (data.get('username') or '').strip()
+    new_password= (data.get('new_password') or '')
+
+    if not license_key or not username or not new_password:
+        return jsonify({'ok': False, 'error': 'Missing fields'}), 400
+    if not license_key.startswith('ISUP-'):
+        return jsonify({'ok': False, 'error': 'Invalid licence key format'}), 400
+    if len(new_password) < 4:
+        return jsonify({'ok': False, 'error': 'Password too short'}), 400
+
+    # Ověř klíč na Railway API
+    import urllib.request, json as json_lib, socket
+    try:
+        hwid     = get_hwid()
+        hostname = socket.gethostname()
+        payload  = json_lib.dumps({
+            'license_key': license_key,
+            'hwid':        hwid,
+            'hostname':    hostname,
+        }).encode()
+        req = urllib.request.Request(
+            f"{LICENSE_API}/api/validate",
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            result = json_lib.loads(resp.read())
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Cannot reach licence server: {e}'}), 503
+
+    if not result.get('ok'):
+        return jsonify({'ok': False, 'error': 'Invalid or expired licence key'}), 403
+
+    # Zkontroluj jestli uživatel existuje
+    conn = get_db()
+    user = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+    if not user:
+        conn.close()
+        return jsonify({'ok': False, 'error': f'Username "{username}" not found on this device'}), 404
+
+    # Resetuj heslo
+    conn.execute(
+        'UPDATE users SET password_hash=?, last_login=? WHERE username=?',
+        (hash_pw(new_password), datetime.datetime.now().isoformat(timespec='seconds'), username)
+    )
+    conn.commit()
+    conn.close()
+    print(f"  ✓ Heslo resetováno pro: {username}")
+    return jsonify({'ok': True, 'username': username})
+
+
+# ─── ACTIVATION API ──────────────────────────────────────────────────────────
+
+@app.route('/api/licence-status', methods=['GET'])
+def api_licence_status():
+    """Vrátí jestli je licence už aktivována na tomto PC."""
+    key = load_license_key()
+    return jsonify({
+        'activated': key is not None,
+        'key_preview': key[:12] + '...' if key else None
+    })
+
+
+@app.route('/api/activate', methods=['POST'])
+def api_activate():
+    data        = request.get_json() or {}
+    license_key = (data.get('license_key') or '').strip().upper()
+    username    = (data.get('username') or '').strip()
+    password    = (data.get('password') or '')
+
+    if not license_key or not username or not password:
+        return jsonify({'ok': False, 'error': 'Missing fields'}), 400
+    if not license_key.startswith('ISUP-'):
+        return jsonify({'ok': False, 'error': 'Invalid licence key format'}), 400
+
+    # Overeni klice na Railway API
+    import urllib.request, json as json_lib, socket
+    try:
+        hwid     = get_hwid()
+        hostname = socket.gethostname()
+        payload  = json_lib.dumps({
+            'license_key': license_key,
+            'hwid':        hwid,
+            'hostname':    hostname,
+        }).encode()
+        req = urllib.request.Request(
+            f"{LICENSE_API}/api/validate",
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            result = json_lib.loads(resp.read())
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Cannot reach licence server: {e}'}), 503
+
+    if not result.get('ok'):
+        return jsonify({'ok': False, 'error': result.get('error', 'Invalid licence key')}), 403
+
+    # Uloz licencni klic
+    try:
+        with open(LICENSE_FILE, 'w') as lf:
+            lf.write(license_key)
+        if result.get('token'):
+            save_token_cache(result['token'])
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'Cannot save licence: {e}'}), 500
+
+    # Vytvor nebo aktualizuj lokalniho uzivatele
+    conn = get_db()
+    try:
+        existing = conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone()
+        now = datetime.datetime.now().isoformat(timespec='seconds')
+        plan = result.get('plan', 'pro')
+        valid_until = result.get('valid_until', '2099-12-31')
+        if existing:
+            conn.execute(
+                'UPDATE users SET password_hash=?, license_type=?, license_valid_until=?, last_login=? WHERE username=?',
+                (hash_pw(password), plan, valid_until, now, username)
+            )
+        else:
+            conn.execute(
+                'INSERT INTO users (username, password_hash, full_name, email, company, role, license_type, license_valid_until, active, created_at) VALUES (?,?,?,?,?,?,?,?,1,?)',
+                (username, hash_pw(password), username, result.get('email',''), result.get('company',''), 'technician', plan, valid_until, now)
+            )
+        conn.commit()
+    except Exception as e:
+        conn.close()
+        return jsonify({'ok': False, 'error': f'DB error: {e}'}), 500
+    conn.close()
+
+    return jsonify({'ok': True, 'username': username, 'plan': plan, 'valid_until': valid_until, 'company': result.get('company','')})
+
+# ─── SCANS ───────────────────────────────────────────────────────────────────
+
+@app.route('/api/scans', methods=['POST'])
+def api_save_scan():
+    data = request.get_json()
+    conn = get_db()
+    conn.execute('''INSERT INTO scan_results
+        (imei,serial,model,storage,color,ios_version,battery_pct,grade,result,technician,tests_json,scanned_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (data.get('imei'), data.get('serial'), data.get('model'), data.get('storage'),
+         data.get('color'), data.get('ios'), data.get('battery'), data.get('grade'),
+         data.get('result'), data.get('technician'),
+         json.dumps(data.get('tests', {})),
+         datetime.datetime.now().isoformat(timespec='seconds')))
+    conn.commit()
+    conn.close()
+    return jsonify({'ok': True})
+
+@app.route('/api/scans', methods=['GET'])
+def api_get_scans():
+    conn = get_db()
+    rows = conn.execute('SELECT * FROM scan_results ORDER BY scanned_at DESC LIMIT 500').fetchall()
+    conn.close()
+    return jsonify({'ok': True, 'scans': [dict(r) for r in rows]})
+
+# ─── START ───────────────────────────────────────────────────────────────────
+
+if __name__ == '__main__':
+    print("─" * 52)
+    print("  iSupply Scan Server")
+    print("─" * 52)
+
+    # ── KONTROLA LICENCE ──
+    lic_ok, lic_msg = check_license()
+    print(f"  Licence: {lic_msg}")
+    if not lic_ok:
+        print("  ⚠ Licence nenalezena – server poběží v aktivačním módu")
+        print("  ⚠ Otevři prohlížeč a zadej licenční klíč")
+
+    _check_apple_driver()
+    init_db()
+    t = threading.Thread(target=usb_monitor_thread, daemon=True)
+    t.start()
+
+    print("  Diagnostika:  http://localhost:5000")
+    print("  Admin panel:  http://localhost:5000/admin")
+    print("─" * 52)
+
+    # Automaticky otevri prohlizec po startu
+    import threading, webbrowser
+    def _open():
+        import time; time.sleep(2.5)
+        webbrowser.open('http://localhost:5000')
+    threading.Thread(target=_open, daemon=True).start()
+
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
