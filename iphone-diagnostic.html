@@ -2132,9 +2132,10 @@ function swRenderVersions() {
     const sizeMB = fw.filesize ? Math.round(fw.filesize / 1024 / 1024) : '?';
     const signed = fw.signed;
     const selected = swSelectedVersion && swSelectedVersion.identifier === fw.identifier;
+    const idx = swIpsw.indexOf(fw);
     return `
       <div class="sw-version-card ${signed ? 'signed' : ''} ${selected ? 'selected' : ''}"
-           onclick="swSelectVersion(${JSON.stringify(JSON.stringify(fw))})">
+           data-idx="${idx}" onclick="swSelectVersion(this.dataset.idx)">
         <div class="sw-version-label">iOS ${fw.version}</div>
         <div class="sw-version-build">${fw.buildid || ''}</div>
         <div class="sw-version-size">${sizeMB} MB</div>
@@ -2143,8 +2144,9 @@ function swRenderVersions() {
   }).join('');
 }
 
-function swSelectVersion(fwJson) {
-  swSelectedVersion = JSON.parse(fwJson);
+function swSelectVersion(idx) {
+  swSelectedVersion = swIpsw[parseInt(idx)];
+  if (!swSelectedVersion) return;
   const info = document.getElementById('sw-selected-info');
   info.innerHTML = `<strong>iOS ${swSelectedVersion.version}</strong> (${swSelectedVersion.buildid || ''}) · ${Math.round((swSelectedVersion.filesize||0)/1024/1024)} MB
     <span class="sw-badge ${swSelectedVersion.signed ? 'signed' : 'unsigned'}" style="margin-left:8px">${swSelectedVersion.signed ? t('sw_signed') : t('sw_unsigned')}</span>`;
