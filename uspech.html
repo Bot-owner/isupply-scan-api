@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Objednávka přijata — iSupply.cz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--pink:#FB91D1;--ink:#0A0A0C;--gray:#6B6B75;--line:#E4E4EC;--bg:#FAFAFC;--disp:'Archivo',sans-serif;--r:14px}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--disp);color:var(--ink);background:var(--bg);display:flex;align-items:center;justify-content:center;min-height:100vh;padding:20px}
+a{text-decoration:none}
+.box{text-align:center;padding:60px 40px;background:#fff;border:1.5px solid var(--line);border-radius:var(--r);max-width:480px;width:100%}
+.emoji{font-size:52px;margin-bottom:16px}
+h1{font-size:24px;margin-bottom:10px}
+p{color:var(--gray);margin-bottom:8px}
+.btn{display:inline-block;margin-top:22px;background:var(--ink);color:#fff;border-radius:8px;padding:13px 28px;font-weight:700}
+.err{color:#D92D20}
+</style>
+</head>
+<body>
+<div class="box" id="box">
+  <div class="emoji">⏳</div>
+  <h1>Ověřuji platbu…</h1>
+</div>
+
+<script src="cart.js"></script>
+<script>
+const params = new URLSearchParams(window.location.search);
+const sessionId = params.get("session_id");
+const box = document.getElementById("box");
+
+if (!sessionId) {
+  box.innerHTML = `<div class="emoji">❓</div><h1>Chybí informace o platbě</h1><p>Zkus se prosím vrátit do košíku a zaplatit znovu.</p><a class="btn" href="kosik.html">Zpět do košíku</a>`;
+} else {
+  fetch(`/session-status?session_id=${encodeURIComponent(sessionId)}&sid=${encodeURIComponent(params.get("sid") || "")}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.status === "paid") {
+        Cart.clear();
+        box.innerHTML = `
+          <div class="emoji">🎉</div>
+          <h1>Objednávka byla přijata!</h1>
+          <p>Potvrzení jsme poslali na ${data.email || "tvůj e-mail"}.</p>
+          <p>Ozveme se s podrobnostmi o doručení.</p>
+          <a class="btn" href="produkty.html">Zpět na produkty</a>`;
+      } else {
+        box.innerHTML = `<div class="emoji err">⚠️</div><h1>Platba se nezdařila</h1><p>Stav: ${data.status}</p><a class="btn" href="kosik.html">Zpět do košíku</a>`;
+      }
+    })
+    .catch(() => {
+      box.innerHTML = `<div class="emoji err">⚠️</div><h1>Nepodařilo se ověřit platbu</h1><a class="btn" href="kosik.html">Zpět do košíku</a>`;
+    });
+}
+</script>
+</body>
+</html>

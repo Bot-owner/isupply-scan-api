@@ -3,474 +3,455 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>iSupply Scan – Licence Admin</title>
+<title>Admin přehled — iSupply.cz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;600;700&display=swap');
-  :root{--bg:#f5f5f5;--surface:#fff;--border:#e8e8e8;--pink:#ec4899;--pink-dim:rgba(236,72,153,.1);--green:#16a34a;--red:#dc2626;--yellow:#d97706;--text:#0a0a0a;--text-dim:#6b7280;--mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{background:var(--bg);font-family:var(--sans);color:var(--text);min-height:100vh}
-  header{background:var(--surface);border-bottom:1.5px solid var(--border);padding:12px 32px;display:flex;align-items:center;justify-content:space-between}
-  .logo{font-size:16px;font-weight:700}.logo span{color:var(--pink)}
-  .admin-badge{font-family:var(--mono);font-size:10px;background:var(--pink-dim);color:var(--pink);border:1px solid var(--pink);padding:3px 10px;border-radius:4px;letter-spacing:.1em}
-  #login-screen{position:fixed;inset:0;background:#fff;display:flex;align-items:center;justify-content:center;z-index:100}
-  #login-screen.hidden{display:none}
-  .login-box{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:40px;width:360px;display:flex;flex-direction:column;gap:18px;box-shadow:0 4px 24px rgba(0,0,0,.07)}
-  .login-box h2{font-size:18px;font-weight:700}.login-box h2 span{color:var(--pink)}
-  .field{display:flex;flex-direction:column;gap:6px}
-  .field label{font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase}
-  .field input,.field select{background:#f9f9f9;border:1.5px solid var(--border);border-radius:7px;padding:10px 12px;font-family:var(--mono);font-size:13px;outline:none;transition:border-color .2s;width:100%}
-  .field input:focus,.field select:focus{border-color:var(--pink)}
-  .err{font-family:var(--mono);font-size:11px;color:var(--red);min-height:16px}
-  .btn-primary{background:var(--text);color:#fff;border:none;border-radius:7px;padding:11px;font-family:var(--mono);font-size:13px;font-weight:600;cursor:pointer;transition:opacity .2s}
-  .btn-primary:hover{opacity:.8}
-  .btn-pink{background:var(--pink);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:opacity .2s}
-  .btn-pink:hover{opacity:.85}
-  .btn-green{background:var(--green);color:#fff;border:none;border-radius:7px;padding:8px 16px;font-family:var(--mono);font-size:12px;font-weight:600;cursor:pointer;transition:opacity .2s}
-  .btn-green:hover{opacity:.85}
-  .btn-red{background:var(--red);color:#fff;border:none;border-radius:7px;padding:6px 12px;font-family:var(--mono);font-size:11px;font-weight:600;cursor:pointer;transition:opacity .2s}
-  .btn-red:hover{opacity:.85}
-  .btn-sm{background:none;border:1.5px solid var(--border);color:var(--text-dim);border-radius:5px;padding:3px 10px;font-family:var(--mono);font-size:10px;cursor:pointer;transition:all .2s;white-space:nowrap}
-  .btn-sm:hover{border-color:var(--pink);color:var(--pink)}
-  .btn-sm.danger{border-color:rgba(220,38,38,.3);color:var(--red)}
-  .btn-sm.danger:hover{border-color:var(--red);background:rgba(220,38,38,.05)}
-  .btn-sm.success:hover{border-color:var(--green);color:var(--green)}
-  main{max-width:1200px;margin:0 auto;padding:32px 24px}
-  .stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:28px}
-  .stat-card{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;padding:16px 20px}
-  .stat-val{font-family:var(--mono);font-size:26px;font-weight:700}
-  .stat-lbl{font-family:var(--mono);font-size:9px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
-  .toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px}
-  .toolbar-left{display:flex;gap:8px;align-items:center}
-  .section-title{font-size:16px;font-weight:700;display:flex;align-items:center;gap:8px;margin-bottom:14px}
-  .section-title::after{content:'';flex:1;height:1px;background:var(--border)}
-  .table-wrap{background:var(--surface);border:1.5px solid var(--border);border-radius:12px;overflow:hidden;margin-bottom:32px}
-  table{width:100%;border-collapse:collapse}
-  thead{background:#fdf0f7;position:sticky;top:0;z-index:1}
-  th{font-family:var(--mono);font-size:10px;color:var(--text-dim);letter-spacing:.1em;text-transform:uppercase;padding:9px 14px;text-align:left;border-bottom:1.5px solid var(--border);white-space:nowrap}
-  td{padding:9px 14px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
-  tr:last-child td{border-bottom:none}
-  tr:hover td{background:#fdf8fc}
-  .badge{font-family:var(--mono);font-size:9px;padding:2px 8px;border-radius:4px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
-  .badge-pro{background:rgba(22,163,74,.1);color:var(--green);border:1px solid rgba(22,163,74,.25)}
-  .badge-trial{background:rgba(217,119,6,.1);color:var(--yellow);border:1px solid rgba(217,119,6,.25)}
-  .badge-enterprise{background:var(--pink-dim);color:var(--pink);border:1px solid rgba(236,72,153,.3)}
-  .badge-active{background:rgba(22,163,74,.1);color:var(--green);border:1px solid rgba(22,163,74,.25)}
-  .badge-suspended{background:rgba(220,38,38,.1);color:var(--red);border:1px solid rgba(220,38,38,.25)}
-  .badge-expired{background:rgba(217,119,6,.1);color:var(--yellow);border:1px solid rgba(217,119,6,.25)}
-  .key-display{font-family:var(--mono);font-size:12px;letter-spacing:.05em;color:var(--pink);cursor:pointer}
-  .key-display:hover{text-decoration:underline}
-  .actions{display:flex;gap:5px;flex-wrap:wrap}
-  /* MODAL */
-  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.3);display:flex;align-items:center;justify-content:center;z-index:50}
-  .modal-overlay.hidden{display:none}
-  .modal-box{background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:28px 32px;width:500px;display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 40px rgba(0,0,0,.1);max-height:90vh;overflow-y:auto}
-  .modal-title{font-weight:700;font-size:15px;display:flex;justify-content:space-between;align-items:center}
-  .modal-close{background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-dim);line-height:1}
-  .modal-close:hover{color:var(--text)}
-  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .form-grid .full{grid-column:1/-1}
-  .modal-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:4px}
-  .btn-cancel{background:#f9f9f9;color:var(--text-dim);border:1.5px solid var(--border);border-radius:7px;padding:8px 16px;font-family:var(--mono);font-size:12px;cursor:pointer}
-  /* NEW KEY BOX */
-  .new-key-box{background:#f0fdf4;border:1.5px solid #86efac;border-radius:8px;padding:16px;text-align:center}
-  .new-key-val{font-family:var(--mono);font-size:18px;font-weight:700;color:#15803d;letter-spacing:.08em;margin:8px 0;cursor:pointer;user-select:all}
-  .new-key-val:hover{text-decoration:underline}
-  .new-key-hint{font-size:11px;color:var(--text-dim)}
-  /* DEVICES PANEL */
-  .devices-list{display:flex;flex-direction:column;gap:8px}
-  .device-row{display:flex;align-items:center;justify-content:space-between;background:#f9f9f9;border:1px solid var(--border);border-radius:8px;padding:10px 14px}
-  .device-info{display:flex;flex-direction:column;gap:2px}
-  .device-hostname{font-weight:600;font-size:13px}
-  .device-meta{font-family:var(--mono);font-size:10px;color:var(--text-dim)}
-  .empty-devices{font-family:var(--mono);font-size:12px;color:var(--text-dim);text-align:center;padding:20px}
-  /* TOAST */
-  #toast{position:fixed;bottom:24px;right:24px;background:var(--surface);border:1.5px solid var(--green);color:var(--green);font-family:var(--mono);font-size:12px;padding:10px 18px;border-radius:8px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:200}
-  #toast.show{opacity:1}
-  #toast.err{border-color:var(--red);color:var(--red)}
-  .search-input{background:var(--surface);border:1.5px solid var(--border);border-radius:7px;padding:7px 12px;font-family:var(--mono);font-size:12px;outline:none;width:220px;transition:border-color .2s}
-  .search-input:focus{border-color:var(--pink)}
+:root{
+  --pink:#FB91D1;--pink-d:#F05CB6;
+  --ink:#0A0A0C;--gray:#6B6B75;--line:#E4E4EC;
+  --bg:#FAFAFC;--disp:'Archivo',sans-serif;--r:14px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:var(--disp);color:var(--ink);background:var(--bg);font-size:14.5px;line-height:1.5}
+button,input{font-family:var(--disp)}
+button{cursor:pointer;border:none}
+
+/* LOGIN */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.login-box{background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:36px;max-width:340px;width:100%}
+.login-box h1{font-size:20px;margin-bottom:6px}
+.login-box p{color:var(--gray);font-size:13.5px;margin-bottom:20px}
+.login-box input{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:11px 12px;font-size:14.5px;margin-bottom:12px}
+.login-box button{width:100%;background:var(--ink);color:#fff;border-radius:8px;padding:12px;font-weight:700}
+.login-err{color:#D92D20;font-size:13px;margin-top:8px;display:none}
+
+/* DASHBOARD */
+.dash{display:none;max-width:1200px;margin:0 auto;padding:28px 24px 60px}
+.dash-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.dash-head h1{font-size:24px;font-weight:800}
+.btn-logout{background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:8px 16px;font-size:13.5px;font-weight:600}
+
+.stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px}
+@media (max-width:1000px){.stat-grid{grid-template-columns:repeat(3,1fr)}}
+@media (max-width:600px){.stat-grid{grid-template-columns:repeat(2,1fr)}}
+.stat-card{background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:18px}
+.stat-card .label{color:var(--gray);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px}
+.stat-card .value{font-size:26px;font-weight:800}
+.stat-card .sub{color:var(--gray);font-size:12px;margin-top:4px}
+
+.panel{background:#fff;border:1.5px solid var(--line);border-radius:var(--r);padding:22px;margin-bottom:20px}
+.panel h2{font-size:16px;margin-bottom:16px}
+.chart-wrap{height:260px}
+
+table{width:100%;border-collapse:collapse;font-size:13.5px}
+th{text-align:left;color:var(--gray);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.03em;padding:8px 10px;border-bottom:1.5px solid var(--line)}
+td{padding:10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.empty-row{color:var(--gray);text-align:center;padding:24px}
+.tag{display:inline-block;background:var(--bg);border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:600}
+.tag.paid{background:#DCFCE7;color:#16A34A}
+.tag.open{background:#FFF7ED;color:#C2410C}
+.refresh-note{color:var(--gray);font-size:12px;margin-top:10px}
 </style>
 </head>
 <body>
 
-<!-- LOGIN -->
-<div id="login-screen">
+<div class="login-wrap" id="login-wrap">
   <div class="login-box">
-    <h2>iSupply <span>Scan</span></h2>
-    <p style="font-size:13px;color:var(--text-dim)">Licence Admin Panel</p>
-    <div class="field"><label>Admin heslo</label><input type="password" id="admin-pass" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()" /></div>
-    <div class="err" id="login-err"></div>
-    <button class="btn-primary" onclick="doLogin()">Přihlásit se</button>
+    <h1>Admin přehled</h1>
+    <p>Zadej heslo pro přístup k datům iSupply.cz</p>
+    <input type="password" id="pw" placeholder="Heslo" autofocus>
+    <button id="btn-login">Přihlásit</button>
+    <div class="login-err" id="login-err">Nesprávné heslo.</div>
   </div>
 </div>
 
-<!-- MODAL: NOVÁ / UPRAVIT LICENCE -->
-<div class="modal-overlay hidden" id="lic-modal">
-  <div class="modal-box">
-    <div class="modal-title">
-      <span id="lic-modal-title">Nová licence</span>
-      <button class="modal-close" onclick="closeLicModal()">✕</button>
-    </div>
-    <div id="new-key-result" class="hidden"></div>
-    <div class="form-grid">
-      <div class="field full"><label>Email</label><input type="email" id="f-email" placeholder="klient@firma.cz" /></div>
-      <div class="field full"><label>Firma</label><input type="text" id="f-company" placeholder="Firma s.r.o." /></div>
-      <div class="field"><label>Plán</label>
-        <select id="f-plan">
-          <option value="trial">Trial (30 dní)</option>
-          <option value="pro" selected>Pro</option>
-          <option value="enterprise">Enterprise</option>
-        </select>
-      </div>
-      <div class="field"><label>Max. zařízení (Seats)</label><input type="number" id="f-seats" value="1" min="1" max="100" /></div>
-      <div class="field"><label>Platnost do</label><input type="date" id="f-valid" /></div>
-      <div class="field"><label>Stav</label>
-        <select id="f-active">
-          <option value="1">Aktivní</option>
-          <option value="0">Pozastavena</option>
-        </select>
-      </div>
-      <div class="field full"><label>Poznámka</label><input type="text" id="f-notes" placeholder="Interní poznámka..." /></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeLicModal()">Zrušit</button>
-      <button class="btn-pink" onclick="saveLicense()">Uložit</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL: SPRÁVA ZAŘÍZENÍ -->
-<div class="modal-overlay hidden" id="dev-modal">
-  <div class="modal-box" style="width:560px">
-    <div class="modal-title">
-      <span id="dev-modal-title">Aktivovaná zařízení</span>
-      <button class="modal-close" onclick="closeDevModal()">✕</button>
-    </div>
-    <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);margin-bottom:8px">
-      Zařízení lze odebrat – uživatel se pak bude moci aktivovat na jiném PC.
-    </div>
-    <div class="devices-list" id="devices-list"></div>
-    <div class="modal-actions">
-      <button class="btn-cancel" onclick="closeDevModal()">Zavřít</button>
-    </div>
-  </div>
-</div>
-
-<div id="toast"></div>
-
-<!-- HEADER -->
-<header>
-  <div class="logo">iSupply <span>Scan</span></div>
-  <div class="admin-badge">LICENCE ADMIN</div>
-  <button class="btn-sm" onclick="doLogout()">Odhlásit</button>
-</header>
-
-<main>
-  <!-- STATS -->
-  <div class="stats-row">
-    <div class="stat-card"><div class="stat-val" id="s-total" style="color:var(--pink)">—</div><div class="stat-lbl">Celkem licencí</div></div>
-    <div class="stat-card"><div class="stat-val" id="s-active" style="color:var(--green)">—</div><div class="stat-lbl">Aktivní</div></div>
-    <div class="stat-card"><div class="stat-val" id="s-expired" style="color:var(--red)">—</div><div class="stat-lbl">Vypršelé</div></div>
-    <div class="stat-card"><div class="stat-val" id="s-seats" style="color:var(--text)">—</div><div class="stat-lbl">Aktivních PC</div></div>
+<div class="dash" id="dash">
+  <div class="dash-head">
+    <h1>📊 Přehled iSupply.cz</h1>
+    <button class="btn-logout" id="btn-logout">Odhlásit</button>
   </div>
 
-  <!-- LICENCE TABLE -->
-  <div class="toolbar">
-    <div class="toolbar-left">
-      <div class="section-title" style="margin:0;font-size:15px">Licence</div>
-      <input class="search-input" type="text" placeholder="Hledat..." oninput="filterTable(this.value)" />
+  <div class="stat-grid">
+    <div class="stat-card">
+      <div class="label">Návštěvy celkem</div>
+      <div class="value" id="s-visits">–</div>
     </div>
-    <button class="btn-pink" onclick="openNewLic()">+ Nová licence</button>
+    <div class="stat-card">
+      <div class="label">Unikátní za 30 dní</div>
+      <div class="value" id="s-unique">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Prodáno kusů</div>
+      <div class="value" id="s-units">–</div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Otevřené košíky</div>
+      <div class="value" id="s-carts">–</div>
+      <div class="sub" id="s-carts-value"></div>
+    </div>
+    <div class="stat-card">
+      <div class="label">Tržby celkem</div>
+      <div class="value" id="s-revenue">–</div>
+      <div class="sub" id="s-conversion"></div>
+    </div>
   </div>
 
-  <div class="table-wrap">
+  <div class="panel">
+    <h2>Návštěvnost — posledních 30 dní</h2>
+    <div class="chart-wrap"><canvas id="chart-visits"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <h2>Otevřené košíky (nedokončené nákupy)</h2>
     <table>
-      <thead>
-        <tr>
-          <th>Licenční klíč</th>
-          <th>Firma</th>
-          <th>Email</th>
-          <th>Plán</th>
-          <th>Zařízení</th>
-          <th>Platnost</th>
-          <th>Stav</th>
-          <th>Akce</th>
-        </tr>
-      </thead>
-      <tbody id="lic-tbody"></tbody>
+      <thead><tr><th>Kdy naposled upraveno</th><th>Obsah</th><th>Hodnota</th></tr></thead>
+      <tbody id="carts-body"></tbody>
     </table>
   </div>
 
-  <!-- AUDIT LOG -->
-  <div class="section-title">Audit log</div>
-  <div class="table-wrap">
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 style="margin:0">Prodeje podle produktu</h2>
+      <button id="btn-export-products" style="background:var(--ink);color:#fff;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700">⬇ Export do Excelu (CSV)</button>
+    </div>
     <table>
-      <thead><tr><th>Čas</th><th>Licence</th><th>Akce</th><th>Detail</th><th>IP</th></tr></thead>
-      <tbody id="log-tbody"></tbody>
+      <thead><tr><th>Produkt</th><th>Prodáno ks</th><th>Tržba</th></tr></thead>
+      <tbody id="product-sales-body"></tbody>
     </table>
   </div>
-</main>
+
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div>
+        <h2 style="margin:0">Ceny konkurence</h2>
+        <p style="color:var(--gray);font-size:12.5px;margin-top:4px">Automaticky denně: naše cena = cena konkurence × 0,95, zaokrouhleno na "...90". Změny hlásí Telegram bot.</p>
+      </div>
+      <button id="btn-check-all-prices" style="background:var(--ink);color:#fff;border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700">🔄 Zkontrolovat vše teď</button>
+    </div>
+
+    <div style="background:var(--bg);border-radius:12px;padding:16px;margin-bottom:16px">
+      <h3 style="font-size:14px;margin-bottom:12px">Přidat nové párování</h3>
+      <div style="display:grid;grid-template-columns:2fr 1fr 1fr 2fr auto;gap:8px;align-items:end">
+        <div>
+          <label style="font-size:11px;color:var(--gray);font-weight:600">Produkt</label>
+          <select id="map-product" style="width:100%;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:13.5px"></select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--gray);font-weight:600">Stav</label>
+          <select id="map-stav" style="width:100%;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:13.5px"></select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--gray);font-weight:600">Kapacita</label>
+          <select id="map-cap" style="width:100%;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:13.5px"></select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--gray);font-weight:600">Odkaz na jabkolevne.cz</label>
+          <input id="map-url" type="text" placeholder="https://www.jabkolevne.cz/..." style="width:100%;border:1.5px solid var(--line);border-radius:8px;padding:9px;font-size:13.5px;box-sizing:border-box">
+        </div>
+        <button id="btn-add-mapping" style="background:var(--ink);color:#fff;border-radius:8px;padding:9px 16px;font-size:13px;font-weight:700;white-space:nowrap">+ Přidat</button>
+      </div>
+    </div>
+
+    <table>
+      <thead><tr><th>Produkt</th><th>Stav / Kapacita</th><th>Cena konkurence</th><th>Naše cena (auto)</th><th>Naposledy</th><th></th></tr></thead>
+      <tbody id="mappings-body"></tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h2 style="margin:0">Poslední objednávky</h2>
+      <button id="btn-export-orders" style="background:#fff;border:1.5px solid var(--line);border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700">⬇ Export objednávek (CSV)</button>
+    </div>
+    <table>
+      <thead><tr><th>Datum</th><th>Zákazník</th><th>Doručení</th><th>Obsah</th><th>Částka</th></tr></thead>
+      <tbody id="orders-body"></tbody>
+    </table>
+  </div>
+
+  <div class="refresh-note">Data se aktualizují při každém načtení stránky. <button id="btn-refresh" style="background:none;color:var(--pink-d);font-weight:700;text-decoration:underline">Obnovit teď</button></div>
+</div>
 
 <script>
-const API = window.location.origin;
-let adminPass = '';
-let allLicenses = [];
-let editingLicId = null;
-let currentDevLicId = null;
+const czk = n => Math.round(n).toLocaleString("cs-CZ") + " Kč";
+const ADMIN_KEY_STORAGE = "isupply_admin_key";
 
-// ── AUTH ──
-async function apiFetch(path, method='GET', body=null) {
-  const opts = { method, headers: { 'Content-Type':'application/json', 'X-Admin-Password': adminPass } };
-  if (body) opts.body = JSON.stringify(body);
-  const r = await fetch(API + path, opts);
-  return r.json();
+function getStoredKey() { return sessionStorage.getItem(ADMIN_KEY_STORAGE); }
+
+async function tryLogin(password) {
+  const res = await fetch("/api/admin/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password })
+  });
+  const data = await res.json();
+  return data.ok === true;
 }
 
-async function doLogin() {
-  adminPass = document.getElementById('admin-pass').value;
-  const r = await apiFetch('/api/admin/licenses');
-  if (r.ok) {
-    document.getElementById('login-screen').classList.add('hidden');
-    load();
-  } else {
-    document.getElementById('login-err').textContent = 'Nesprávné heslo';
-    adminPass = '';
-  }
-}
-
-function doLogout() {
-  adminPass = '';
-  document.getElementById('login-screen').classList.remove('hidden');
-  document.getElementById('admin-pass').value = '';
-}
-
-// ── HELPERS ──
-function licStatus(l) {
-  if (!l.active) return 'suspended';
-  if (new Date(l.valid_until) < new Date()) return 'expired';
-  return 'active';
-}
-const STATUS_LABELS = { active:'Aktivní', suspended:'Pozastavena', expired:'Vypršela' };
-
-function toast(msg, isErr=false) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'show' + (isErr?' err':'');
-  setTimeout(() => t.className = '', 3000);
-}
-
-function copyText(text) {
-  navigator.clipboard.writeText(text).then(() => toast('✓ Zkopírováno: ' + text));
-}
-
-// ── LOAD ──
-async function load() {
-  const r = await apiFetch('/api/admin/licenses');
-  if (!r.ok) return;
-  allLicenses = r.licenses;
-  renderTable(allLicenses);
-
-  document.getElementById('s-total').textContent   = allLicenses.length;
-  document.getElementById('s-active').textContent  = allLicenses.filter(l=>licStatus(l)==='active').length;
-  document.getElementById('s-expired').textContent = allLicenses.filter(l=>licStatus(l)==='expired'||licStatus(l)==='suspended').length;
-  document.getElementById('s-seats').textContent   = allLicenses.reduce((a,l)=>a+(parseInt(l.seats_used)||0),0);
-
-  // Audit log
-  const lr = await apiFetch('/api/admin/log');
-  if (lr.ok) {
-    document.getElementById('log-tbody').innerHTML = lr.log.slice(0,100).map(e => `<tr>
-      <td style="font-family:var(--mono);font-size:10px;color:var(--text-dim);white-space:nowrap">${new Date(e.created_at).toLocaleString('cs-CZ')}</td>
-      <td><span class="key-display" onclick="copyText('${e.license_key}')">${e.license_key}</span></td>
-      <td><span class="badge badge-${e.action.includes('VALID')||e.action==='CREATED'?'active':e.action.includes('EXPIRE')||e.action.includes('SUSPEND')||e.action.includes('INVALID')?'suspended':'trial'}">${e.action}</span></td>
-      <td style="font-size:12px;color:var(--text-dim)">${e.detail||'—'}</td>
-      <td style="font-family:var(--mono);font-size:10px;color:var(--text-dim)">${e.ip||'—'}</td>
-    </tr>`).join('');
-  }
-}
-
-function renderTable(list) {
-  document.getElementById('lic-tbody').innerHTML = list.map(l => {
-    const st   = licStatus(l);
-    const days = Math.ceil((new Date(l.valid_until)-new Date())/(1000*60*60*24));
-    const validStr = st==='expired'
-      ? `<span style="color:var(--red);font-family:var(--mono);font-size:11px">${l.valid_until}</span>`
-      : days < 30
-        ? `<span style="color:var(--yellow);font-family:var(--mono);font-size:11px">⚠ ${l.valid_until} (${days}d)</span>`
-        : `<span style="font-family:var(--mono);font-size:11px">${l.valid_until}</span>`;
-    const seatsUsed = parseInt(l.seats_used)||0;
-    const seatsTotal = parseInt(l.seats)||1;
-    const seatsColor = seatsUsed >= seatsTotal ? 'color:var(--red)' : seatsUsed > 0 ? 'color:var(--green)' : '';
-    return `<tr>
-      <td><span class="key-display" onclick="copyText('${l.license_key}')" title="Klikni pro kopírování">${l.license_key}</span></td>
-      <td style="font-weight:600">${l.company||'—'}</td>
-      <td style="font-size:12px;color:var(--text-dim)">${l.email||'—'}</td>
-      <td><span class="badge badge-${l.plan}">${l.plan}</span></td>
-      <td>
-        <button class="btn-sm" onclick="openDevices(${l.id},'${l.license_key}')" style="${seatsColor}">
-          💻 ${seatsUsed}/${seatsTotal}
-        </button>
-      </td>
-      <td>${validStr}</td>
-      <td><span class="badge badge-${st}">${STATUS_LABELS[st]}</span></td>
-      <td>
-        <div class="actions">
-          <button class="btn-sm" onclick="openEditLic(${l.id})">✏ Upravit</button>
-          <button class="btn-sm success" onclick="extendYear(${l.id},'${l.valid_until}')">+1 rok</button>
-          <button class="btn-sm" onclick="toggleActive(${l.id},${l.active})">${l.active?'⏸ Pozastavit':'▶ Aktivovat'}</button>
-          <button class="btn-sm danger" onclick="deleteLicense(${l.id},'${l.license_key}')">🗑 Smazat</button>
-        </div>
-      </td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:var(--mono)">Žádné licence</td></tr>';
-}
-
-function filterTable(q) {
-  const lo = q.toLowerCase();
-  renderTable(allLicenses.filter(l =>
-    (l.license_key||'').toLowerCase().includes(lo) ||
-    (l.company||'').toLowerCase().includes(lo) ||
-    (l.email||'').toLowerCase().includes(lo)
-  ));
-}
-
-// ── LICENCE MODAL ──
-function openNewLic() {
-  editingLicId = null;
-  document.getElementById('lic-modal-title').textContent = 'Nová licence';
-  document.getElementById('new-key-result').classList.add('hidden');
-  document.getElementById('new-key-result').innerHTML = '';
-  ['f-email','f-company','f-notes'].forEach(id => document.getElementById(id).value='');
-  document.getElementById('f-plan').value = 'pro';
-  document.getElementById('f-seats').value = '1';
-  document.getElementById('f-active').value = '1';
-  const d = new Date(); d.setFullYear(d.getFullYear()+1);
-  document.getElementById('f-valid').value = d.toISOString().slice(0,10);
-  document.getElementById('lic-modal').classList.remove('hidden');
-}
-
-function openEditLic(id) {
-  const l = allLicenses.find(x=>x.id===id);
-  if (!l) return;
-  editingLicId = id;
-  document.getElementById('lic-modal-title').textContent = 'Upravit licenci';
-  document.getElementById('new-key-result').classList.add('hidden');
-  document.getElementById('f-email').value   = l.email||'';
-  document.getElementById('f-company').value = l.company||'';
-  document.getElementById('f-notes').value   = l.notes||'';
-  document.getElementById('f-plan').value    = l.plan||'pro';
-  document.getElementById('f-seats').value   = l.seats||1;
-  document.getElementById('f-active').value  = l.active?'1':'0';
-  document.getElementById('f-valid').value   = l.valid_until?.slice(0,10)||'';
-  document.getElementById('lic-modal').classList.remove('hidden');
-}
-
-function closeLicModal() {
-  document.getElementById('lic-modal').classList.add('hidden');
-  editingLicId = null;
-  load();
-}
-
-async function saveLicense() {
-  const body = {
-    email:       document.getElementById('f-email').value,
-    company:     document.getElementById('f-company').value,
-    plan:        document.getElementById('f-plan').value,
-    seats:       parseInt(document.getElementById('f-seats').value),
-    valid_until: document.getElementById('f-valid').value,
-    active:      document.getElementById('f-active').value === '1',
-    notes:       document.getElementById('f-notes').value,
-  };
-
-  if (editingLicId) {
-    // Úprava
-    const r = await apiFetch(`/api/admin/licenses/${editingLicId}`, 'PUT', body);
-    if (r.ok) { toast('✓ Licence uložena'); closeLicModal(); }
-    else toast('Chyba: ' + r.error, true);
-  } else {
-    // Nová
-    const r = await apiFetch('/api/admin/licenses', 'POST', body);
-    if (r.ok) {
-      const el = document.getElementById('new-key-result');
-      el.classList.remove('hidden');
-      el.innerHTML = `<div class="new-key-box">
-        <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);letter-spacing:.1em">NOVÝ LICENČNÍ KLÍČ – klikni pro kopírování</div>
-        <div class="new-key-val" onclick="copyText('${r.license_key}')">${r.license_key}</div>
-        <div class="new-key-hint">Pošli tento klíč klientovi. Zobrazí se jen jednou.</div>
-      </div>`;
-      toast('✓ Licence vytvořena: ' + r.license_key);
-      load();
-    } else {
-      toast('Chyba: ' + r.error, true);
-    }
-  }
-}
-
-// ── DEVICES MODAL ──
-async function openDevices(licId, licKey) {
-  currentDevLicId = licId;
-  document.getElementById('dev-modal-title').textContent = `Zařízení · ${licKey}`;
-  document.getElementById('dev-modal').classList.remove('hidden');
-  await refreshDevices();
-}
-
-async function refreshDevices() {
-  const r = await apiFetch(`/api/admin/licenses/${currentDevLicId}/activations`);
-  const list = document.getElementById('devices-list');
-  if (!r.ok || !r.activations.length) {
-    list.innerHTML = '<div class="empty-devices">Žádná aktivovaná zařízení</div>';
+async function loadStats() {
+  const key = getStoredKey();
+  const res = await fetch("/api/admin/stats", { headers: { "x-admin-key": key } });
+  if (res.status === 401) {
+    sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+    showLogin();
     return;
   }
-  list.innerHTML = r.activations.map(a => `
-    <div class="device-row">
-      <div class="device-info">
-        <div class="device-hostname">💻 ${a.hostname||'Neznámé PC'}</div>
-        <div class="device-meta">
-          Aktivováno: ${new Date(a.activated_at).toLocaleDateString('cs-CZ')} &nbsp;·&nbsp;
-          Naposledy: ${new Date(a.last_seen).toLocaleDateString('cs-CZ')}
-        </div>
-      </div>
-      <button class="btn-red" onclick="removeDevice(${a.id})">Odebrat</button>
-    </div>
-  `).join('');
+  const data = await res.json();
+  renderStats(data);
 }
 
-async function removeDevice(aid) {
-  if (!confirm('Odebrat toto zařízení?\n\nUživatel se bude moci aktivovat na jiném PC.')) return;
-  const r = await apiFetch(`/api/admin/activations/${aid}`, 'DELETE');
-  if (r.ok) { toast('✓ Zařízení odebráno'); await refreshDevices(); load(); }
-  else toast('Chyba', true);
+function renderStats(data) {
+  document.getElementById("s-visits").textContent = data.totalVisits;
+  document.getElementById("s-unique").textContent = data.uniqueVisitors30d;
+  document.getElementById("s-units").textContent = data.totalUnitsSold || 0;
+  document.getElementById("s-carts").textContent = data.openCarts.length;
+  document.getElementById("s-carts-value").textContent = data.openCarts.length ? czk(data.openCartsValue) + " v hodnotě" : "";
+  document.getElementById("s-revenue").textContent = czk(data.totalRevenue);
+  document.getElementById("s-conversion").textContent = data.orders.length + " objednávek · " + data.conversionRate.toFixed(1) + "% konverze";
+
+  // Prodeje podle produktu
+  const productBody = document.getElementById("product-sales-body");
+  const productSales = data.productSales || [];
+  productBody.innerHTML = productSales.length === 0
+    ? `<tr><td colspan="3" class="empty-row">Zatím žádné prodeje</td></tr>`
+    : productSales.map(p => `
+      <tr>
+        <td>${p.name}</td>
+        <td>${p.qty}</td>
+        <td><strong>${czk(p.revenue)}</strong></td>
+      </tr>`).join("");
+  window._productSales = productSales;
+  window._orders = data.orders;
+
+  // Graf návštěvnosti
+  const ctx = document.getElementById("chart-visits");
+  if (window._chart) window._chart.destroy();
+  window._chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: data.visitsByDay.map(d => d.label),
+      datasets: [
+        {
+          label: "Zobrazení stránek",
+          data: data.visitsByDay.map(d => d.count),
+          borderColor: "#FB91D1", backgroundColor: "rgba(251,145,209,.15)",
+          tension: .3, fill: true, pointRadius: 2
+        },
+        {
+          label: "Unikátní návštěvníci",
+          data: data.visitsByDay.map(d => d.uniqueSessions),
+          borderColor: "#0A0A0C", backgroundColor: "rgba(10,10,12,.05)",
+          tension: .3, fill: true, pointRadius: 2
+        }
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+      plugins: { legend: { position: "bottom" } }
+    }
+  });
+
+  // Otevřené košíky
+  const cartsBody = document.getElementById("carts-body");
+  cartsBody.innerHTML = data.openCarts.length === 0
+    ? `<tr><td colspan="3" class="empty-row">Žádné otevřené košíky</td></tr>`
+    : data.openCarts.map(c => `
+      <tr>
+        <td>${new Date(c.updatedAt).toLocaleString("cs-CZ")}</td>
+        <td>${c.items.map(i => `${i.name}${i.color && i.color !== "—" ? " · " + i.color : ""} ${i.qty > 1 ? "×" + i.qty : ""}`).join("<br>")}</td>
+        <td><strong>${czk(c.total)}</strong></td>
+      </tr>`).join("");
+
+  // Objednávky
+  const ordersBody = document.getElementById("orders-body");
+  ordersBody.innerHTML = data.orders.length === 0
+    ? `<tr><td colspan="5" class="empty-row">Zatím žádné objednávky</td></tr>`
+    : data.orders.map(o => `
+      <tr>
+        <td>${new Date(o.ts).toLocaleString("cs-CZ")}</td>
+        <td>${o.customer ? `<strong>${o.customer.name}</strong><br>${o.email || "—"}<br>${o.customer.phone || ""}` : (o.email || "—")}</td>
+        <td>${o.customer ? `${o.customer.address}${o.customer.psc ? ", " + o.customer.psc : ""}` : "—"}${o.shippingLabel ? `<br><span class="tag open">${o.shippingLabel}</span>` : ""}</td>
+        <td>${(o.items || []).map(i => `${i.name} ${i.qty > 1 ? "×" + i.qty : ""}`).join("<br>") || "—"}</td>
+        <td><strong>${czk(o.amount)}</strong> <span class="tag paid">zaplaceno</span> ${o.shipped ? '<span class="tag paid">📦 odesláno</span>' : '<span class="tag open">čeká na odeslání</span>'}</td>
+      </tr>`).join("");
 }
 
-function closeDevModal() {
-  document.getElementById('dev-modal').classList.add('hidden');
-  currentDevLicId = null;
+function showLogin() {
+  document.getElementById("login-wrap").style.display = "flex";
+  document.getElementById("dash").style.display = "none";
+}
+function showDash() {
+  document.getElementById("login-wrap").style.display = "none";
+  document.getElementById("dash").style.display = "block";
+  loadStats();
+  loadProductsList();
+  loadMappings();
 }
 
-// ── QUICK ACTIONS ──
-async function extendYear(id, currentDate) {
-  const d = new Date(currentDate); d.setFullYear(d.getFullYear()+1);
-  const r = await apiFetch(`/api/admin/licenses/${id}`, 'PUT', { valid_until: d.toISOString().slice(0,10) });
-  if (r.ok) { toast('✓ Prodlouženo o 1 rok'); load(); }
-  else toast('Chyba', true);
+document.getElementById("btn-login").addEventListener("click", async () => {
+  const pw = document.getElementById("pw").value;
+  const ok = await tryLogin(pw);
+  if (ok) {
+    sessionStorage.setItem(ADMIN_KEY_STORAGE, pw);
+    showDash();
+  } else {
+    document.getElementById("login-err").style.display = "block";
+  }
+});
+document.getElementById("pw").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("btn-login").click();
+});
+document.getElementById("btn-logout").addEventListener("click", () => {
+  sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+  showLogin();
+});
+document.getElementById("btn-refresh").addEventListener("click", () => { loadStats(); loadMappings(); });
+
+// ===== Export do CSV (otevře se v Excelu) =====
+function downloadCsv(filename, rows) {
+  // BOM na začátku, ať Excel správně pozná diakritiku (UTF-8)
+  const bom = "\uFEFF";
+  const csv = bom + rows.map(row =>
+    row.map(cell => {
+      const s = String(cell ?? "");
+      return /[";\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(";")
+  ).join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
-async function toggleActive(id, active) {
-  if (!confirm(active ? 'Pozastavit licenci?' : 'Aktivovat licenci?')) return;
-  const r = await apiFetch(`/api/admin/licenses/${id}`, 'PUT', { active: !active });
-  if (r.ok) { toast(active ? '⚠ Licence pozastavena' : '✓ Licence aktivována'); load(); }
-  else toast('Chyba', true);
+document.getElementById("btn-export-products").addEventListener("click", () => {
+  const rows = [["Produkt", "Prodáno ks", "Tržba (Kč)"]];
+  (window._productSales || []).forEach(p => rows.push([p.name, p.qty, Math.round(p.revenue)]));
+  downloadCsv("isupply-prodeje-podle-produktu.csv", rows);
+});
+
+// ===== Ceny konkurence =====
+let PRODUCTS_LIST = [];
+
+async function loadProductsList() {
+  try {
+    const html = await (await fetch("/produkty.html")).text();
+    const start = html.indexOf("const PRODUCTS = [");
+    const end = html.indexOf("const VARIANTS");
+    const code = html.slice(start, end).replace("const PRODUCTS", "var PRODUCTS_LIST_TMP");
+    // eslint-disable-next-line no-eval
+    eval(code);
+    PRODUCTS_LIST = PRODUCTS_LIST_TMP;
+    const sel = document.getElementById("map-product");
+    sel.innerHTML = PRODUCTS_LIST.map(p => `<option value="${p.id}">${p.name}</option>`).join("");
+    updateStavCapOptions();
+  } catch (e) {
+    console.error("Nepodařilo se načíst seznam produktů:", e);
+  }
 }
 
-async function deleteLicense(id, key) {
-  if (!confirm(`Smazat licenci ${key}?\n\nTato akce je nevratná!`)) return;
-  const r = await apiFetch(`/api/admin/licenses/${id}`, 'DELETE');
-  if (r.ok) { toast('🗑 Licence smazána'); load(); }
-  else toast('Chyba: ' + (r.error||''), true);
+function updateStavCapOptions() {
+  const productId = +document.getElementById("map-product").value;
+  const p = PRODUCTS_LIST.find(x => x.id === productId);
+  if (!p) return;
+  document.getElementById("map-stav").innerHTML = Object.keys(p.stavPrices).map(s => `<option value="${s}">${s}</option>`).join("");
+  const stav = document.getElementById("map-stav").value;
+  document.getElementById("map-cap").innerHTML = Object.keys(p.stavPrices[stav] || {}).map(c => `<option value="${c}">${c}</option>`).join("");
 }
 
-// ── CLOSE MODALS ON BACKDROP ──
-document.getElementById('lic-modal').addEventListener('click', e => { if(e.target===document.getElementById('lic-modal')) closeLicModal(); });
-document.getElementById('dev-modal').addEventListener('click', e => { if(e.target===document.getElementById('dev-modal')) closeDevModal(); });
+document.getElementById("map-product").addEventListener("change", updateStavCapOptions);
+document.getElementById("map-stav").addEventListener("change", updateStavCapOptions);
+
+async function loadMappings() {
+  const key = getStoredKey();
+  const res = await fetch("/api/admin/competitor-mappings", { headers: { "x-admin-key": key } });
+  const mappings = await res.json();
+  const body = document.getElementById("mappings-body");
+  const entries = Object.entries(mappings);
+  body.innerHTML = entries.length === 0
+    ? `<tr><td colspan="6" class="empty-row">Zatím žádné párování</td></tr>`
+    : entries.map(([id, m]) => `
+      <tr>
+        <td><strong>${m.productName || m.productId}</strong><br><a href="${m.url}" target="_blank" style="color:var(--pink-d);font-size:11px">${m.url.slice(0,40)}…</a></td>
+        <td>${m.stav} / ${m.cap}</td>
+        <td>${m.lastCompetitorPrice ? czk(m.lastCompetitorPrice) : "—"}${m.lastError ? `<br><span style="color:#D92D20;font-size:11px">${m.lastError}</span>` : ""}</td>
+        <td><strong>${m.ourPrice ? czk(m.ourPrice) : "—"}</strong></td>
+        <td>${m.lastChecked ? new Date(m.lastChecked).toLocaleString("cs-CZ") : "nikdy"}</td>
+        <td>
+          <button data-check="${id}" style="color:var(--pink-d);font-weight:700;font-size:12px">Zkontrolovat</button><br>
+          <button data-del="${id}" style="color:#D92D20;font-size:12px">Smazat</button>
+        </td>
+      </tr>`).join("");
+}
+
+document.getElementById("btn-add-mapping").addEventListener("click", async () => {
+  const productId = +document.getElementById("map-product").value;
+  const p = PRODUCTS_LIST.find(x => x.id === productId);
+  const stav = document.getElementById("map-stav").value;
+  const cap = document.getElementById("map-cap").value;
+  const url = document.getElementById("map-url").value.trim();
+  if (!url) { alert("Vlož odkaz na produkt konkurence."); return; }
+  const key = getStoredKey();
+  await fetch("/api/admin/competitor-mappings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-admin-key": key },
+    body: JSON.stringify({ productId, productName: p.name, stav, cap, url })
+  });
+  document.getElementById("map-url").value = "";
+  loadMappings();
+});
+
+document.getElementById("mappings-body").addEventListener("click", async (e) => {
+  const key = getStoredKey();
+  if (e.target.dataset.check) {
+    e.target.textContent = "…";
+    await fetch(`/api/admin/competitor-mappings/${e.target.dataset.check}/check`, { method: "POST", headers: { "x-admin-key": key } });
+    loadMappings();
+  }
+  if (e.target.dataset.del) {
+    if (!confirm("Smazat toto párování?")) return;
+    await fetch(`/api/admin/competitor-mappings/${e.target.dataset.del}`, { method: "DELETE", headers: { "x-admin-key": key } });
+    loadMappings();
+  }
+});
+
+document.getElementById("btn-check-all-prices").addEventListener("click", async () => {
+  const key = getStoredKey();
+  const btn = document.getElementById("btn-check-all-prices");
+  btn.textContent = "Kontroluji…";
+  await fetch("/api/admin/check-all-prices", { method: "POST", headers: { "x-admin-key": key } });
+  setTimeout(() => { loadMappings(); btn.textContent = "🔄 Zkontrolovat vše teď"; }, 5000);
+});
+
+document.getElementById("btn-export-orders").addEventListener("click", () => {
+  const rows = [["Datum", "Jméno", "E-mail", "Telefon", "Adresa", "Doprava", "Produkty", "Částka (Kč)"]];
+  (window._orders || []).forEach(o => {
+    const itemsStr = (o.items || []).map(i => `${i.name}${i.color && i.color !== "—" ? " - " + i.color : ""} x${i.qty || 1}`).join(" | ");
+    const addr = o.customer ? `${o.customer.address}${o.customer.psc ? ", " + o.customer.psc : ""}` : "";
+    rows.push([
+      new Date(o.ts).toLocaleString("cs-CZ"),
+      o.customer?.name || "",
+      o.email || "",
+      o.customer?.phone || "",
+      addr,
+      o.shippingLabel || "",
+      itemsStr,
+      Math.round(o.amount)
+    ]);
+  });
+  downloadCsv("isupply-objednavky.csv", rows);
+});
+
+if (getStoredKey()) {
+  showDash();
+} else {
+  showLogin();
+}
 </script>
 </body>
 </html>
