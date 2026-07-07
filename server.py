@@ -70,15 +70,26 @@ def _check_apple_driver():
         print("  ℹ  Kontrola driveru preskocena (non-Windows)")
         return True
 
-app = Flask(__name__, static_folder='.')
+import sys as _sys
+
+def _get_base_dir():
+    """Vrátí správnou složku - vedle .exe nebo vedle server.py"""
+    if getattr(_sys, 'frozen', False):
+        # Běžíme jako PyInstaller .exe - použij složku vedle .exe
+        return os.path.dirname(_sys.executable)
+    # Běžíme jako script
+    return os.path.dirname(os.path.abspath(__file__))
+
+BASE_DIR = _get_base_dir()
+app = Flask(__name__, static_folder=BASE_DIR)
 CORS(app)
 
-DB_PATH        = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'isupply_users.db')
+DB_PATH        = os.path.join(_get_base_dir(), 'isupply_users.db')
 LICENSE_API    = os.environ.get('ISUPPLY_API', 'https://isupply-scan.cz')
 LICENSE_KEY    = None   # nastaveno ze souboru licence.key
 SESSION_TOKEN  = None   # JWT token z Railway API
-TOKEN_FILE     = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.token_cache')
-LICENSE_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'licence.key')
+TOKEN_FILE     = os.path.join(_get_base_dir(), '.token_cache')
+LICENSE_FILE   = os.path.join(_get_base_dir(), 'licence.key')
 
 
 # ─── LICENCE VALIDACE ───────────────────────────────────────────────────────
@@ -679,15 +690,15 @@ def _handle_connect(udid):
 
 @app.route('/')
 def index():
-    return send_from_directory('.', 'iphone-diagnostic.html')
+    return send_from_directory(BASE_DIR, 'iphone-diagnostic.html')
 
 @app.route('/admin')
 def admin_page():
-    return send_from_directory('.', 'isupply_admin.html')
+    return send_from_directory(BASE_DIR, 'isupply_admin.html')
 
 @app.route('/support')
 def support_page():
-    return send_from_directory('.', 'support.html')
+    return send_from_directory(BASE_DIR, 'support.html')
 
 @app.route('/api/detect-printer')
 def api_detect_printer():
@@ -751,7 +762,7 @@ def api_detect_printer():
 
 @app.route('/<path:filename>')
 def static_files(filename):
-    return send_from_directory('.', filename)
+    return send_from_directory(BASE_DIR, filename)
 
 # ─── AUTH ────────────────────────────────────────────────────────────────────
 
