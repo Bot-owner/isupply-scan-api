@@ -688,17 +688,48 @@ def _handle_connect(udid):
 
 # ─── STATIC ──────────────────────────────────────────────────────────────────
 
+def _resource_dir(filename):
+    """Kde soubor hledat: 1) vedle EXE (override HTML bez rebuildu),
+    2) fallback na zabalenou kopii uvnitř onefile EXE (_MEIPASS)."""
+    if os.path.exists(os.path.join(BASE_DIR, filename)):
+        return BASE_DIR
+    mp = getattr(_sys, '_MEIPASS', None)
+    if mp and os.path.exists(os.path.join(mp, filename)):
+        return mp
+    return BASE_DIR
+
 @app.route('/')
 def index():
-    return send_from_directory(BASE_DIR, 'iphone-diagnostic.html')
+    return send_from_directory(_resource_dir('iphone-diagnostic.html'), 'iphone-diagnostic.html')
 
 @app.route('/admin')
 def admin_page():
-    return send_from_directory(BASE_DIR, 'isupply_admin.html')
+    return send_from_directory(_resource_dir('isupply_admin.html'), 'isupply_admin.html')
 
 @app.route('/support')
 def support_page():
-    return send_from_directory(BASE_DIR, 'support.html')
+    return send_from_directory(_resource_dir('support.html'), 'support.html')
+
+@app.route('/api/driver-check')
+def api_driver_check():
+    """Zjisti, zda jsou na Windows nainstalovane Apple ovladace (Apple Mobile Device Support)."""
+    import subprocess, platform
+    if platform.system() != 'Windows':
+        return jsonify({'installed': True, 'platform': platform.system()})
+    installed = False
+    try:
+        r = subprocess.run(['sc', 'query', 'Apple Mobile Device Service'],
+                           capture_output=True, text=True, timeout=6)
+        if r.returncode == 0:
+            installed = True
+    except Exception:
+        pass
+    if not installed:
+        for base in (os.environ.get('ProgramFiles',''), os.environ.get('ProgramFiles(x86)','')):
+            if base and os.path.isdir(os.path.join(base, 'Common Files', 'Apple', 'Mobile Device Support')):
+                installed = True
+                break
+    return jsonify({'installed': installed})
 
 @app.route('/api/detect-printer')
 def api_detect_printer():
@@ -762,7 +793,7 @@ def api_detect_printer():
 
 @app.route('/<path:filename>')
 def static_files(filename):
-    return send_from_directory(BASE_DIR, filename)
+    return send_from_directory(_resource_dir(filename), filename)
 
 # ─── AUTH ────────────────────────────────────────────────────────────────────
 

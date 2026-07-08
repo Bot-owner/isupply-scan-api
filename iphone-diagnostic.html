@@ -2309,5 +2309,32 @@ async function swStreamLogs() {
 }
 
 </script>
+<!-- DRIVER CHECK MODAL -->
+<div id="driver-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--surface,#fff);color:var(--text,#0a0a0a);max-width:440px;width:92%;border-radius:14px;padding:28px;box-shadow:0 10px 40px rgba(0,0,0,.3);font-family:var(--sans,sans-serif)">
+    <div style="font-size:34px;text-align:center;margin-bottom:6px">🔌</div>
+    <div style="font-size:19px;font-weight:700;text-align:center;margin:0 0 10px">Chybí Apple ovladače</div>
+    <p style="font-size:13px;line-height:1.6;color:var(--text-dim,#6b7280);text-align:center;margin:0 0 18px">
+      Aby iSupply Scan viděl připojený iPhone přes USB, musí být na tomto počítači nainstalované Apple ovladače (Apple Mobile Device Support). Nainstaluj jednu z aplikací níže, jednou ji spusť, pak připoj telefon a ťukni „Trust“.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <a href="https://www.apple.com/itunes/" target="_blank" style="text-align:center;background:var(--pink-dark,#ec4899);color:#fff;text-decoration:none;padding:11px;border-radius:8px;font-weight:600;font-size:14px">⬇ Stáhnout iTunes (Apple.com) – doporučeno</a>
+      <a href="https://apps.microsoft.com/detail/9np83lwlpz9k" target="_blank" style="text-align:center;background:var(--pink-dim,#fce7f3);color:var(--pink-dark,#ec4899);text-decoration:none;padding:11px;border-radius:8px;font-weight:600;font-size:14px;border:1.5px solid var(--pink,#f9a8d4)">Apple Devices (Microsoft Store)</a>
+    </div>
+    <div style="text-align:center;margin-top:16px">
+      <button onclick="recheckDrivers()" style="background:none;border:1.5px solid var(--border,#e8e8e8);color:var(--text-dim,#6b7280);padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer;font-family:var(--mono,monospace)">Už mám nainstalováno – zkontrolovat znovu</button>
+    </div>
+  </div>
+</div>
+<script>
+async function checkDrivers(){
+  try{
+    const r=await fetch('/api/driver-check'); const j=await r.json();
+    document.getElementById('driver-modal').style.display=(j&&j.installed===false)?'flex':'none';
+  }catch(e){}
+}
+function recheckDrivers(){ checkDrivers(); }
+window.addEventListener('load',()=>setTimeout(checkDrivers,400));
+</script>
 </body>
 </html>
