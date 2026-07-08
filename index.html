@@ -51,21 +51,38 @@
   .btn-secondary{border:1.5px solid var(--gray-200);color:var(--black);font-weight:600;font-size:15px;padding:13px 24px;border-radius:10px}
   .btn-secondary:hover{border-color:var(--gray-400)}
   .hero-note{font-family:var(--mono);font-size:11px;color:var(--gray-400);margin-top:16px}
-  .mock{background:var(--black);border-radius:16px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.22)}
-  .mock-bar{display:flex;gap:6px;margin-bottom:14px}
-  .mock-bar i{width:11px;height:11px;border-radius:50%}
-  .mock-slots{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  .slot{border:1.5px solid rgba(255,255,255,.1);border-radius:10px;padding:12px;font-family:var(--mono);font-size:10px;color:#d4d4d8}
-  .slot.ok{border-color:rgba(22,163,74,.5)}
-  .slot.test{border-color:var(--pink)}
-  .slot-head{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.1em;color:#71717a;margin-bottom:8px}
-  .slot-head .ok-tag{color:var(--green)}
-  .slot-head .test-tag{color:var(--pink)}
-  .slot .imei{background:rgba(251,145,209,.12);color:var(--pink);border-radius:4px;padding:3px 6px;font-size:9px;margin-bottom:8px;display:flex;justify-content:space-between}
-  .slot .model{color:#fff;font-size:12px;font-weight:600;font-family:var(--sans)}
-  .slot .sub{color:#71717a;font-size:9px;margin-bottom:8px}
-  .slot .row{display:flex;gap:5px;padding:2px 0;color:#a1a1aa}
-  .slot .row b{color:var(--green);font-weight:500}
+  .hero-visual{position:relative}
+  .demo-window{background:var(--black);border-radius:16px;padding:20px;box-shadow:0 32px 80px rgba(0,0,0,.2);overflow:hidden}
+  .demo-bar{display:flex;gap:6px;margin-bottom:16px}
+  .demo-bar span{width:12px;height:12px;border-radius:50%}
+  .demo-bar span:nth-child(1){background:#ff5f57}
+  .demo-bar span:nth-child(2){background:#ffbd2e}
+  .demo-bar span:nth-child(3){background:#28ca41}
+  .demo-slots{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .demo-slot{background:#111;border:1px solid #222;border-radius:8px;padding:13px;font-family:var(--mono);font-size:10px;min-height:120px;position:relative;overflow:hidden;transition:border-color .3s}
+  .demo-slot.active{border-color:var(--pink)}
+  .demo-slot.done{border-color:#16a34a}
+  .demo-slot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e1e1e}
+  .demo-slot-num{color:#444;font-size:8px;letter-spacing:.08em}
+  .demo-badge{font-size:7px;padding:1px 6px;border-radius:3px;font-weight:600;letter-spacing:.06em}
+  .badge-testing{background:rgba(236,72,153,.15);color:var(--pink);animation:blink 1s infinite}
+  .badge-done{background:rgba(22,163,74,.15);color:#4ade80}
+  .demo-imei{background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.2);border-radius:4px;padding:4px 6px;margin-bottom:6px;display:flex;justify-content:space-between}
+  .demo-imei-lbl{color:var(--pink);font-size:7px;letter-spacing:.08em}
+  .demo-imei-val{color:#e2e8f0;font-size:8px;font-weight:600}
+  .demo-model{color:#e2e8f0;font-size:11px;font-weight:600;margin-bottom:2px}
+  .demo-ios{color:#666;font-size:7px}
+  .demo-tests{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+  .demo-test{display:flex;justify-content:space-between;padding:3px 5px;border-radius:2px;font-size:8px}
+  .demo-test.pass{background:rgba(22,163,74,.08);color:#4ade80}
+  .demo-test.warn{background:rgba(251,191,36,.08);color:#fbbf24}
+  .demo-test.scanning{background:rgba(236,72,153,.08);color:var(--pink)}
+  .demo-test.pending{color:#333}
+  .demo-grade{text-align:center;margin-top:6px;padding:4px;border-radius:4px;font-weight:700;font-size:12px}
+  .demo-grade.A{background:rgba(22,163,74,.15);color:#4ade80;border:1px solid rgba(22,163,74,.2)}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+  @keyframes scanLine{0%{transform:translateY(-100%)}100%{transform:translateY(400%)}}
+  .scan-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--pink),transparent);animation:scanLine 3s linear infinite;opacity:.4}
 
   section{padding:80px 0}
   .sec-head{max-width:640px;margin-bottom:44px}
@@ -191,26 +208,44 @@
       </div>
       <div class="hero-note" data-i18n="hero_note">No credit card required · Works on Windows · USB connection</div>
     </div>
-    <div class="mock" aria-hidden="true">
-      <div class="mock-bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
-      <div class="mock-slots">
-        <div class="slot ok">
-          <div class="slot-head"><span>SLOT 01</span><span class="ok-tag">OK ✓</span></div>
-          <div class="imei"><span>IMEI</span><span>35224095658</span></div>
-          <div class="model">iPhone 15 Pro</div>
-          <div class="sub">A2650 · 256 GB · iOS 17.5.1</div>
-          <div class="row"><span>🔋</span><span>Battery · <b>94% · Excellent</b></span></div>
-          <div class="row"><span>📱</span><span>Display · <b>Original</b></span></div>
-          <div class="row"><span>👆</span><span>Touch ID · <b>Original</b></span></div>
-        </div>
-        <div class="slot test">
-          <div class="slot-head"><span>SLOT 02</span><span class="test-tag">Testing •</span></div>
-          <div class="imei"><span>IMEI</span><span>35722409365</span></div>
-          <div class="model">iPhone XS</div>
-          <div class="sub">A1920 · 64 GB · iOS 18.7.9</div>
-          <div class="row"><span>🔋</span><span>Battery · <b>91% · Excellent</b></span></div>
-          <div class="row"><span>📷</span><span>Rear camera · <b>Original</b></span></div>
-          <div class="row"><span>🎤</span><span>Microphone · <b>Original</b></span></div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="demo-window">
+        <div class="demo-bar"><span></span><span></span><span></span></div>
+        <div class="demo-slots">
+          <div class="demo-slot done">
+            <div class="demo-slot-header"><span class="demo-slot-num">SLOT 01</span><span class="demo-badge badge-done">OK ✓</span></div>
+            <div class="demo-imei"><span class="demo-imei-lbl">IMEI</span><span class="demo-imei-val">35722409365</span></div>
+            <div class="demo-model">iPhone XS</div>
+            <div class="demo-ios">A1920 · 256 GB · iOS 18.7.9</div>
+            <div class="demo-tests">
+              <div class="demo-test pass">🔋 Battery · 91% · Excellent</div>
+              <div class="demo-test pass">📱 Display · Original</div>
+              <div class="demo-test pass">🙂 Face ID · Original</div>
+              <div class="demo-test pass">📷 Rear camera · Original</div>
+              <div class="demo-test pass">🤳 Front camera · Original</div>
+              <div class="demo-test pass">🎤 Microphone · Original</div>
+              <div class="demo-test pass">🔊 Speaker · Original</div>
+              <div class="demo-test pass">📶 Wi-Fi · Original</div>
+            </div>
+            <div class="demo-grade A">A</div>
+          </div>
+          <div class="demo-slot active" id="demo-slot2">
+            <div class="scan-line"></div>
+            <div class="demo-slot-header"><span class="demo-slot-num">SLOT 02</span><span class="demo-badge badge-testing">Testing ●</span></div>
+            <div class="demo-imei"><span class="demo-imei-lbl">IMEI</span><span class="demo-imei-val">35224093658</span></div>
+            <div class="demo-model">iPhone 15 Pro</div>
+            <div class="demo-ios">A2650 · 256 GB · iOS 17.5.1</div>
+            <div class="demo-tests" id="demo-tests2">
+              <div class="demo-test pass">🔋 Battery · 89% · Good</div>
+              <div class="demo-test pass">📱 Display · Original</div>
+              <div class="demo-test pass">🙂 Face ID · Original</div>
+              <div class="demo-test pass">📷 Rear camera · Original</div>
+              <div class="demo-test scanning">🤳 Front camera · scanning...</div>
+              <div class="demo-test pending">🎤 Microphone</div>
+              <div class="demo-test pending">🔊 Speaker</div>
+              <div class="demo-test pending">📶 Wi-Fi</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -561,6 +596,61 @@ function toggleBilling(){
   try{ saved = localStorage.getItem('isupply_lang') || 'en'; }catch(e){}
   setLang(saved);
 })();
+
+/* ---------- hero demo animation ---------- */
+var demoTests=[
+  {icon:'🔋',label:'Battery · 89% · Good',cls:'pass'},
+  {icon:'📱',label:'Display · Original',cls:'pass'},
+  {icon:'🙂',label:'Face ID · Original',cls:'pass'},
+  {icon:'📷',label:'Rear camera · Original',cls:'pass'},
+  {icon:'🤳',label:'Front camera · Original',cls:'pass'},
+  {icon:'🎤',label:'Microphone · Original',cls:'pass'},
+  {icon:'🔊',label:'Speaker · Original',cls:'pass'},
+  {icon:'📶',label:'Wi-Fi · Original',cls:'pass'}
+];
+var demoIdx=4;
+var demoTestsEl=document.getElementById('demo-tests2');
+function demoNext(){
+  if(!demoTestsEl) return;
+  if(demoIdx>=demoTests.length) return;
+  var t=demoTests[demoIdx];
+  var rows=demoTestsEl.querySelectorAll('.demo-test');
+  if(rows[demoIdx]){ rows[demoIdx].className='demo-test '+t.cls; rows[demoIdx].textContent=t.icon+' '+t.label; }
+  demoIdx++;
+  if(demoIdx<demoTests.length){
+    var nx=demoTests[demoIdx];
+    if(rows[demoIdx]){ rows[demoIdx].className='demo-test scanning'; rows[demoIdx].textContent=nx.icon+' '+nx.label.split('·')[0]+'· scanning...'; }
+  }
+  if(demoIdx<demoTests.length){ setTimeout(demoNext,900); }
+  else{
+    var slot=document.getElementById('demo-slot2');
+    slot.className='demo-slot done';
+    slot.querySelector('.demo-badge').className='demo-badge badge-done';
+    slot.querySelector('.demo-badge').textContent='OK ✓';
+    var sl=slot.querySelector('.scan-line'); if(sl) sl.style.display='none';
+    var g=document.createElement('div'); g.className='demo-grade A'; g.textContent='A'; slot.appendChild(g);
+    setTimeout(demoReset,3000);
+  }
+}
+function demoReset(){
+  demoIdx=4;
+  var slot=document.getElementById('demo-slot2'); if(!slot) return;
+  slot.className='demo-slot active';
+  slot.querySelector('.demo-badge').className='demo-badge badge-testing';
+  slot.querySelector('.demo-badge').textContent='Testing ●';
+  var sl=slot.querySelector('.scan-line'); if(sl) sl.style.display='';
+  var g=slot.querySelector('.demo-grade'); if(g) g.remove();
+  demoTestsEl.innerHTML='<div class="demo-test pass">🔋 Battery · 89% · Good</div>'+
+    '<div class="demo-test pass">📱 Display · Original</div>'+
+    '<div class="demo-test pass">🙂 Face ID · Original</div>'+
+    '<div class="demo-test pass">📷 Rear camera · Original</div>'+
+    '<div class="demo-test scanning">🤳 Front camera · scanning...</div>'+
+    '<div class="demo-test pending">🎤 Microphone</div>'+
+    '<div class="demo-test pending">🔊 Speaker</div>'+
+    '<div class="demo-test pending">📶 Wi-Fi</div>';
+  setTimeout(demoNext,1000);
+}
+if(demoTestsEl){ setTimeout(demoNext,1200); }
 </script>
 </body>
 </html>
