@@ -1325,10 +1325,12 @@ function renderSlot(slot) {
   const isDone = slot.state==='done-pass'||slot.state==='done-fail';
   const printBtn = isDone ? `<button class="btn-icon" onclick="event.stopPropagation();openPrintModal(${slot.id})" title="Tisk štítku">🖨️</button>` : '';
   const excelBtn = isDone ? `<button class="btn-icon excel" onclick="event.stopPropagation();exportSlotToExcel(${slot.id})" title="Export do Excelu">📊</button>` : '';
+  const hasDev = slot.state!=='empty' && slot.device;
+  const activateBtn = hasDev ? `<button class="btn-icon" onclick="event.stopPropagation();activateDevice(${slot.id})" title="Aktivovat zařízení">⚡</button>` : '';
   return `<div class="slot ${slot.state}" id="slot-${slot.id}">
     <div class="slot-header">
       <span class="slot-num">SLOT ${String(slot.id+1).padStart(2,'0')}</span>
-      <div class="slot-header-right">${printBtn}${excelBtn}${renderBadge(slot)}</div>
+      <div class="slot-header-right">${printBtn}${excelBtn}${activateBtn}${renderBadge(slot)}</div>
     </div>
     <div class="slot-body">${renderBody(slot)}</div>
   </div>`;
@@ -1880,6 +1882,55 @@ function setManualTape(size) {
   if (dot) dot.style.background = 'var(--pink-dark)';
   if (name) name.textContent = 'Manual: ' + size.replace('x','×') + ' mm';
   if (printSlotId !== null) renderLabelPreview(slots[printSlotId], currentTapeSize);
+}
+
+// ═══ AKTIVACE ZARIZENI ═══
+// Cista aktivace pro telefony BEZ Find My. U zamcenych jen nasmerujeme na Apple.
+async function activateDevice(id) {
+  const slot = slots[id];
+  if (!slot || !slot.device) return;
+  try {
+    const st = await (await fetch('/api/device-activation-state')).json();
+    if (st && st.find_my_associated) { showActivationLockModal(); return; }
+    if (st && String(st.state||'').toLowerCase().startsWith('activ')) {
+      showToast('Zařízení je již aktivované'); return;
+    }
+    showToast('Aktivuji zařízení…');
+    const r = await (await fetch('/api/device-activate', {method:'POST'})).json();
+    if (r && r.ok && (r.activated || r.already)) {
+      showToast('✅ Zařízení aktivováno');
+    } else if (r && r.locked) {
+      showActivationLockModal();
+    } else {
+      showToast('❌ Aktivace selhala: ' + ((r && r.error) || 'chyba'));
+    }
+  } catch (e) {
+    showToast('❌ Aktivaci nelze provést: ' + e.message);
+  }
+}
+
+function showActivationLockModal() {
+  let m = document.getElementById('activation-lock-modal');
+  if (m) { m.style.display = 'flex'; return; }
+  m = document.createElement('div');
+  m.id = 'activation-lock-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center';
+  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:460px;width:92%;border-radius:14px;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.3)">
+      <div style="font-size:34px;text-align:center;margin-bottom:6px">🔒</div>
+      <div style="font-size:19px;font-weight:700;text-align:center;margin-bottom:10px">Zařízení je stále na iCloudu</div>
+      <p style="font-size:13px;line-height:1.6;color:#6b7280;text-align:center;margin-bottom:18px">
+        Telefon je přihlášený k Find My (Activation Lock). Aktivovat ani prodat ho nelze, dokud ho původní majitel neodhlásí. Heslo se zadává u Applu, ne zde.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <a href="https://www.icloud.com/find" target="_blank" style="text-align:center;background:#ec4899;color:#fff;text-decoration:none;padding:11px;border-radius:8px;font-weight:600;font-size:14px">Otevřít iCloud.com/find (odebrat zařízení)</a>
+        <a href="https://appleid.apple.com" target="_blank" style="text-align:center;background:#fce7f3;color:#ec4899;text-decoration:none;padding:11px;border-radius:8px;font-weight:600;font-size:14px;border:1.5px solid #f9a8d4">Otevřít appleid.apple.com</a>
+      </div>
+      <p style="font-size:11px;color:#9ca3af;text-align:center;margin-top:14px">Nebo přímo na telefonu: Nastavení → [jméno] → Odhlásit se.</p>
+      <div style="text-align:center;margin-top:14px">
+        <button onclick="document.getElementById('activation-lock-modal').remove()" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 function openPrintModal(id) {
