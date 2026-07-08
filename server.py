@@ -712,24 +712,44 @@ def support_page():
 
 @app.route('/api/driver-check')
 def api_driver_check():
-    """Zjisti, zda jsou na Windows nainstalovane Apple ovladace (Apple Mobile Device Support)."""
-    import subprocess, platform
+    """Zjisti, zda appka vidi Apple ovladace. Primarne testuje realne spojeni pres usbmux."""
+    import platform
     if platform.system() != 'Windows':
         return jsonify({'installed': True, 'platform': platform.system()})
-    installed = False
+    # 1) Nejspolehlivejsi: zkusit spojeni pres usbmux (to, co appka realne potrebuje)
+    try:
+        from pymobiledevice3 import usbmux
+        usbmux.list_devices()
+        return jsonify({'installed': True, 'method': 'usbmux'})
+    except Exception:
+        pass
+    # 2) Windows sluzba (klasicky iTunes standalone)
+    import subprocess, os
     try:
         r = subprocess.run(['sc', 'query', 'Apple Mobile Device Service'],
                            capture_output=True, text=True, timeout=6)
         if r.returncode == 0:
-            installed = True
+            return jsonify({'installed': True, 'method': 'service'})
     except Exception:
         pass
-    if not installed:
-        for base in (os.environ.get('ProgramFiles',''), os.environ.get('ProgramFiles(x86)','')):
-            if base and os.path.isdir(os.path.join(base, 'Common Files', 'Apple', 'Mobile Device Support')):
-                installed = True
-                break
-    return jsonify({'installed': installed})
+    # 3) Slozka s ovladaci
+    for base in (os.environ.get('ProgramFiles',''), os.environ.get('ProgramFiles(x86)','')):
+        if base and os.path.isdir(os.path.join(base, 'Common Files', 'Apple', 'Mobile Device Support')):
+            return jsonify({'installed': True, 'method': 'folder'})
+    # 4) Registr
+    try:
+        import winreg
+        for path in (r'SOFTWARE\Apple Inc.\Apple Mobile Device Support',
+                     r'SOFTWARE\WOW6432Node\Apple Inc.\Apple Mobile Device Support',
+                     r'SOFTWARE\Apple Inc.\Apple Application Support'):
+            try:
+                winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                return jsonify({'installed': True, 'method': 'registry'})
+            except OSError:
+                pass
+    except Exception:
+        pass
+    return jsonify({'installed': False})
 
 @app.route('/api/detect-printer')
 def api_detect_printer():

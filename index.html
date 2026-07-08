@@ -1,1210 +1,566 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>iSupply Scan – Professional iPhone Diagnostics</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>iSupply Scan — Professional iPhone diagnostics</title>
+<link rel="icon" href="/icon.ico" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --pink:#ec4899;--pink-light:#f9a8d4;--pink-dim:rgba(236,72,153,.08);
-  --black:#09090b;--white:#ffffff;--gray-50:#fafafa;--gray-100:#f4f4f5;
-  --gray-200:#e4e4e7;--gray-400:#a1a1aa;--gray-600:#52525b;--gray-800:#27272a;
-  --green:#16a34a;--mono:'IBM Plex Mono',monospace;--sans:'Inter',sans-serif;
-  --radius:12px;--shadow:0 4px 24px rgba(0,0,0,.07);
-}
-html{scroll-behavior:smooth}
-html,body{overflow-x:hidden;width:100%}
-body{font-family:var(--sans);color:var(--black);background:var(--white);-webkit-font-smoothing:antialiased}
+  :root{
+    --black:#0a0a0c; --white:#ffffff;
+    --pink:#FB91D1; --pink-dark:#ec4899; --pink-dim:rgba(251,145,209,.14);
+    --gray-100:#f5f5f6; --gray-200:#e8e8ea; --gray-400:#9ca3af; --gray-600:#52525b; --gray-700:#3f3f46;
+    --green:#16a34a;
+    --sans:'Inter',sans-serif; --mono:'IBM Plex Mono',monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{font-family:var(--sans);color:var(--black);background:var(--white);line-height:1.5;-webkit-font-smoothing:antialiased}
+  a{color:inherit;text-decoration:none}
+  .wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+  .eyebrow{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--pink-dark)}
 
-/* ── NAV ── */
-nav{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(255,255,255,.85);backdrop-filter:blur(12px);border-bottom:1px solid var(--gray-200)}
-.nav-inner{max-width:1200px;margin:0 auto;padding:0 32px;height:64px;display:flex;align-items:center;justify-content:space-between}
-.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none}
-.nav-logo-img{width:36px;height:36px;object-fit:contain}
-.nav-logo-text{font-size:17px;font-weight:700;color:var(--black);letter-spacing:-0.02em}
-.nav-logo-text span{color:var(--pink)}
-.nav-links{display:flex;align-items:center;gap:32px}
-.nav-links a{font-size:14px;font-weight:500;color:var(--gray-600);text-decoration:none;transition:color .15s}
-.nav-links a:hover{color:var(--black)}
-.nav-right{display:flex;align-items:center;gap:12px}
-.btn-nav-admin{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gray-600);background:var(--gray-100);border:1.5px solid var(--gray-200);padding:6px 14px;border-radius:7px;text-decoration:none;transition:all .15s;letter-spacing:0.04em}
-.btn-nav-admin:hover{color:var(--black);border-color:var(--gray-400)}
-.btn-nav-cta{font-size:14px;font-weight:600;color:var(--white);background:var(--pink);border:none;padding:8px 20px;border-radius:8px;text-decoration:none;transition:all .15s}
-.btn-nav-cta:hover{opacity:.88;transform:translateY(-1px)}
+  header.nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.9);backdrop-filter:blur(10px);border-bottom:1px solid var(--gray-200)}
+  .nav-inner{display:flex;align-items:center;justify-content:space-between;height:60px}
+  .logo{display:flex;align-items:center;gap:9px;font-weight:800;font-size:18px}
+  .logo .iS{width:26px;height:26px;border-radius:6px;background:var(--black);color:var(--pink);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:800}
+  .logo span{color:var(--pink-dark)}
+  .nav-links{display:flex;align-items:center;gap:26px}
+  .nav-links a.nlink{font-size:14px;font-weight:500;color:var(--gray-700)}
+  .nav-links a.nlink:hover{color:var(--black)}
+  .nav-right{display:flex;align-items:center;gap:12px}
+  .lang{display:flex;border:1.5px solid var(--gray-200);border-radius:7px;overflow:hidden;font-family:var(--mono);font-size:11px;font-weight:600}
+  .lang button{border:none;background:none;padding:5px 9px;cursor:pointer;color:var(--gray-600)}
+  .lang button.active{background:var(--black);color:#fff}
+  .btn-admin{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gray-600);background:var(--gray-100);border:1.5px solid var(--gray-200);padding:6px 12px;border-radius:7px}
+  .btn-admin:hover{border-color:var(--pink);color:var(--pink-dark)}
+  .btn-cta{background:var(--pink-dark);color:#fff;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px}
+  .btn-cta:hover{background:#db2777}
+  .nav-toggle{display:none;background:none;border:none;font-size:22px;cursor:pointer}
 
-/* ── HERO ── */
-.hero{padding:140px 32px 100px;max-width:1200px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:center}
-.hero-eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--pink);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:20px;display:flex;align-items:center;gap:8px}
-.hero-eyebrow::before{content:'';width:24px;height:2px;background:var(--pink)}
-.hero h1{font-size:56px;font-weight:800;line-height:1.08;letter-spacing:-0.03em;color:var(--black);margin-bottom:24px}
-.hero h1 em{font-style:normal;color:var(--pink)}
-.hero-sub{font-size:18px;color:var(--gray-600);line-height:1.6;margin-bottom:40px;max-width:460px}
-.hero-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
-.btn-primary{font-size:15px;font-weight:600;color:var(--white);background:var(--pink);border:none;padding:14px 28px;border-radius:10px;text-decoration:none;transition:all .2s;display:inline-flex;align-items:center;gap:8px}
-.btn-primary:hover{opacity:.88;transform:translateY(-2px);box-shadow:0 8px 24px rgba(236,72,153,.3)}
-.btn-secondary{font-size:15px;font-weight:500;color:var(--black);background:transparent;border:1.5px solid var(--gray-200);padding:14px 28px;border-radius:10px;text-decoration:none;transition:all .2s}
-.btn-secondary:hover{border-color:var(--gray-400);background:var(--gray-50)}
-.hero-note{font-family:var(--mono);font-size:11px;color:var(--gray-400);margin-top:16px;letter-spacing:0.04em}
+  .hero{padding:88px 0 72px}
+  .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
+  .hero h1{font-size:60px;line-height:1.02;font-weight:800;letter-spacing:-.03em;margin:16px 0 22px}
+  .hero h1 .accent{color:var(--pink-dark)}
+  .hero p.lead{font-size:18px;color:var(--gray-700);max-width:520px;margin-bottom:28px}
+  .hero-actions{display:flex;gap:12px;flex-wrap:wrap}
+  .btn-primary{background:var(--pink-dark);color:#fff;font-weight:600;font-size:15px;padding:13px 24px;border-radius:10px;display:inline-flex;align-items:center;gap:8px}
+  .btn-primary:hover{background:#db2777}
+  .btn-secondary{border:1.5px solid var(--gray-200);color:var(--black);font-weight:600;font-size:15px;padding:13px 24px;border-radius:10px}
+  .btn-secondary:hover{border-color:var(--gray-400)}
+  .hero-note{font-family:var(--mono);font-size:11px;color:var(--gray-400);margin-top:16px}
+  .mock{background:var(--black);border-radius:16px;padding:18px;box-shadow:0 24px 60px rgba(0,0,0,.22)}
+  .mock-bar{display:flex;gap:6px;margin-bottom:14px}
+  .mock-bar i{width:11px;height:11px;border-radius:50%}
+  .mock-slots{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .slot{border:1.5px solid rgba(255,255,255,.1);border-radius:10px;padding:12px;font-family:var(--mono);font-size:10px;color:#d4d4d8}
+  .slot.ok{border-color:rgba(22,163,74,.5)}
+  .slot.test{border-color:var(--pink)}
+  .slot-head{display:flex;justify-content:space-between;font-size:9px;letter-spacing:.1em;color:#71717a;margin-bottom:8px}
+  .slot-head .ok-tag{color:var(--green)}
+  .slot-head .test-tag{color:var(--pink)}
+  .slot .imei{background:rgba(251,145,209,.12);color:var(--pink);border-radius:4px;padding:3px 6px;font-size:9px;margin-bottom:8px;display:flex;justify-content:space-between}
+  .slot .model{color:#fff;font-size:12px;font-weight:600;font-family:var(--sans)}
+  .slot .sub{color:#71717a;font-size:9px;margin-bottom:8px}
+  .slot .row{display:flex;gap:5px;padding:2px 0;color:#a1a1aa}
+  .slot .row b{color:var(--green);font-weight:500}
 
-/* ── HERO VISUAL – LIVE DEMO ── */
-.hero-visual{position:relative}
-.demo-window{background:var(--black);border-radius:16px;padding:20px;box-shadow:0 32px 80px rgba(0,0,0,.2);overflow:hidden}
-.demo-bar{display:flex;gap:6px;margin-bottom:16px}
-.demo-bar span{width:12px;height:12px;border-radius:50%}
-.demo-bar span:nth-child(1){background:#ff5f57}
-.demo-bar span:nth-child(2){background:#ffbd2e}
-.demo-bar span:nth-child(3){background:#28ca41}
-.demo-slots{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.demo-slot{background:#111;border:1px solid #222;border-radius:8px;padding:10px;font-family:var(--mono);font-size:9px;min-height:120px;position:relative;overflow:hidden;transition:border-color .3s}
-.demo-slot.active{border-color:var(--pink)}
-.demo-slot.done{border-color:#16a34a}
-.demo-slot-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e1e1e}
-.demo-slot-num{color:#444;font-size:8px;letter-spacing:.08em}
-.demo-badge{font-size:7px;padding:1px 6px;border-radius:3px;font-weight:600;letter-spacing:.06em}
-.badge-empty{background:#1a1a1a;color:#444}
-.badge-testing{background:rgba(236,72,153,.15);color:var(--pink);animation:blink 1s infinite}
-.badge-done{background:rgba(22,163,74,.15);color:#4ade80}
-.demo-imei{background:rgba(236,72,153,.08);border:1px solid rgba(236,72,153,.2);border-radius:4px;padding:4px 6px;margin-bottom:6px;display:flex;justify-content:space-between}
-.demo-imei-lbl{color:var(--pink);font-size:7px;letter-spacing:.08em}
-.demo-imei-val{color:#e2e8f0;font-size:8px;font-weight:600}
-.demo-model{color:#e2e8f0;font-size:9px;font-weight:600;margin-bottom:2px}
-.demo-ios{color:#666;font-size:7px}
-.demo-tests{display:flex;flex-direction:column;gap:2px;margin-top:6px}
-.demo-test{display:flex;justify-content:space-between;padding:2px 4px;border-radius:2px;font-size:7px}
-.demo-test.pass{background:rgba(22,163,74,.08);color:#4ade80}
-.demo-test.warn{background:rgba(251,191,36,.08);color:#fbbf24}
-.demo-test.scanning{background:rgba(236,72,153,.08);color:var(--pink)}
-.demo-test.pending{color:#333}
-.demo-grade{text-align:center;margin-top:6px;padding:4px;border-radius:4px;font-weight:700;font-size:12px}
-.demo-grade.A{background:rgba(22,163,74,.15);color:#4ade80;border:1px solid rgba(22,163,74,.2)}
+  section{padding:80px 0}
+  .sec-head{max-width:640px;margin-bottom:44px}
+  .sec-head h2{font-size:38px;font-weight:800;letter-spacing:-.02em;margin:12px 0 12px}
+  .sec-head p{font-size:17px;color:var(--gray-600)}
+  .bg-soft{background:var(--gray-100)}
 
-/* ── STATS BAR ── */
-.stats-bar{background:var(--gray-50);border-top:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200);padding:32px}
-.stats-inner{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:repeat(4,1fr);gap:0}
-.stat-item{text-align:center;padding:0 32px;border-right:1px solid var(--gray-200)}
-.stat-item:last-child{border-right:none}
-.stat-num{font-size:36px;font-weight:800;color:var(--black);letter-spacing:-0.03em;line-height:1}
-.stat-num span{color:var(--pink)}
-.stat-desc{font-size:13px;color:var(--gray-600);margin-top:6px;line-height:1.4}
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .feat{background:var(--white);border:1.5px solid var(--gray-200);border-radius:14px;padding:26px}
+  .feat .ic{width:44px;height:44px;border-radius:11px;background:var(--pink-dim);display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:16px}
+  .feat h3{font-size:17px;font-weight:700;margin-bottom:7px}
+  .feat p{font-size:14px;color:var(--gray-600)}
 
-/* ── SECTIONS ── */
-section{padding:96px 32px}
-.section-inner{max-width:1200px;margin:0 auto}
-.section-eyebrow{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--pink);letter-spacing:0.12em;text-transform:uppercase;margin-bottom:16px}
-.section-title{font-size:40px;font-weight:800;letter-spacing:-0.025em;line-height:1.15;margin-bottom:16px}
-.section-sub{font-size:17px;color:var(--gray-600);line-height:1.6;max-width:520px}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:22px}
+  .step{padding-top:14px}
+  .step .num{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--pink-dark);border-top:2px solid var(--pink);padding-top:12px;display:inline-block;margin-bottom:14px}
+  .step h3{font-size:18px;font-weight:700;margin-bottom:8px}
+  .step p{font-size:14px;color:var(--gray-600)}
 
-/* ── FEATURES ── */
-.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px}
-.feature-card{background:var(--white);border:1.5px solid var(--gray-200);border-radius:var(--radius);padding:32px;transition:all .2s}
-.feature-card:hover{border-color:var(--pink-light);box-shadow:0 8px 32px rgba(236,72,153,.08);transform:translateY(-2px)}
-.feature-icon{width:48px;height:48px;background:var(--pink-dim);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;margin-bottom:20px}
-.feature-title{font-size:17px;font-weight:700;margin-bottom:8px;letter-spacing:-0.01em}
-.feature-desc{font-size:14px;color:var(--gray-600);line-height:1.65}
-.feature-tag{display:inline-block;font-family:var(--mono);font-size:10px;color:var(--pink);background:var(--pink-dim);padding:3px 8px;border-radius:4px;margin-top:14px;font-weight:600}
+  .price-toggle{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:36px;font-size:14px;font-weight:600;color:var(--gray-600)}
+  .switch{width:46px;height:26px;border-radius:20px;background:var(--pink-dark);position:relative;cursor:pointer;border:none}
+  .switch .dot{position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:left .18s}
+  .switch.yearly .dot{left:23px}
+  .badge-save{background:rgba(22,163,74,.12);color:var(--green);font-family:var(--mono);font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px}
+  .plans{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;align-items:stretch}
+  .plan{background:var(--white);border:1.5px solid var(--gray-200);border-radius:16px;padding:26px 22px;display:flex;flex-direction:column;position:relative}
+  .plan.pop{background:var(--black);color:#fff;border-color:var(--black)}
+  .plan .pop-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--pink-dark);color:#fff;font-family:var(--mono);font-size:10px;font-weight:600;padding:3px 12px;border-radius:20px}
+  .plan .tier{font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.1em;color:var(--gray-600);margin-bottom:14px}
+  .plan.pop .tier{color:var(--pink)}
+  .plan .price{font-size:44px;font-weight:800;letter-spacing:-.02em;line-height:1}
+  .plan .price .cur{font-size:22px;font-weight:600;vertical-align:top;margin-right:2px}
+  .plan .per{font-size:12px;color:var(--gray-600);margin:6px 0 16px}
+  .plan.pop .per{color:var(--gray-400)}
+  .plan .tag{font-size:13px;color:var(--gray-600);margin-bottom:18px;min-height:38px}
+  .plan.pop .tag{color:#d4d4d8}
+  .plan ul{list-style:none;display:flex;flex-direction:column;gap:9px;margin-bottom:22px;flex:1}
+  .plan li{font-size:13.5px;display:flex;gap:8px;align-items:flex-start}
+  .plan li .ck{color:var(--green);font-weight:700}
+  .plan li .x{color:var(--gray-400)}
+  .plan.pop li{color:#e4e4e7}
+  .btn-plan{text-align:center;padding:11px;border-radius:9px;font-weight:600;font-size:14px;border:1.5px solid var(--gray-200);color:var(--black)}
+  .btn-plan:hover{border-color:var(--gray-400)}
+  .btn-plan.fill{background:var(--pink-dark);color:#fff;border-color:var(--pink-dark)}
+  .btn-plan.fill:hover{background:#db2777}
 
-/* ── HOW IT WORKS ── */
-.how-section{background:var(--gray-50);border-top:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200)}
-.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:56px;position:relative}
-.steps::before{content:'';position:absolute;top:28px;left:14%;right:14%;height:1px;background:var(--gray-200);z-index:0}
-.step{text-align:center;padding:0 20px;position:relative;z-index:1}
-.step-num{width:56px;height:56px;border-radius:50%;background:var(--white);border:2px solid var(--gray-200);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-family:var(--mono);font-size:16px;font-weight:700;color:var(--black);transition:all .2s}
-.step:hover .step-num{border-color:var(--pink);color:var(--pink);background:var(--pink-dim)}
-.step-title{font-size:15px;font-weight:700;margin-bottom:8px}
-.step-desc{font-size:13px;color:var(--gray-600);line-height:1.6}
+  .compat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+  .compat{border:1.5px solid var(--gray-200);border-radius:14px;padding:24px}
+  .compat h3{font-size:16px;font-weight:700;margin-bottom:6px;display:flex;align-items:center;gap:8px}
+  .compat p{font-size:13.5px;color:var(--gray-600)}
 
-/* ── PRICING ── */
-.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:56px;align-items:start}
-.pricing-card{border:1.5px solid var(--gray-200);border-radius:16px;padding:36px;background:var(--white);position:relative;transition:all .2s}
-.pricing-card:hover{box-shadow:var(--shadow)}
-.pricing-card.featured{border-color:var(--pink);background:var(--black);color:var(--white)}
-.pricing-card.featured .pricing-desc{color:#a1a1aa}
-.pricing-card.featured .pricing-feature{color:#e4e4e7}
-.pricing-card.featured .pricing-feature::before{color:var(--pink)}
-.popular-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--pink);color:var(--white);font-family:var(--mono);font-size:10px;font-weight:700;padding:4px 14px;border-radius:20px;letter-spacing:.08em;white-space:nowrap}
-.pricing-plan{font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--gray-400);margin-bottom:12px}
-.pricing-card.featured .pricing-plan{color:var(--pink)}
-.pricing-price{font-size:48px;font-weight:800;letter-spacing:-0.03em;line-height:1;margin-bottom:4px}
-.pricing-price sup{font-size:20px;font-weight:600;vertical-align:top;margin-top:10px;margin-right:2px}
-.pricing-period{font-size:13px;color:var(--gray-400);margin-bottom:16px}
-.pricing-desc{font-size:14px;color:var(--gray-600);line-height:1.5;margin-bottom:28px;padding-bottom:28px;border-bottom:1px solid var(--gray-200)}
-.pricing-card.featured .pricing-desc{border-bottom-color:#27272a}
-.pricing-features{display:flex;flex-direction:column;gap:12px;margin-bottom:32px}
-.pricing-feature{font-size:14px;color:var(--gray-800);display:flex;align-items:flex-start;gap:8px;line-height:1.4}
-.pricing-feature::before{content:'✓';color:var(--green);font-weight:700;flex-shrink:0}
-.pricing-feature.no::before{content:'✗';color:var(--gray-400)}
-.pricing-feature.no{color:var(--gray-400)}
-.btn-pricing{width:100%;padding:13px;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .2s;text-align:center;text-decoration:none;display:block}
-.btn-pricing-white{background:var(--white);color:var(--black);border:1.5px solid var(--gray-200)}
-.btn-pricing-white:hover{border-color:var(--pink);color:var(--pink)}
-.btn-pricing-pink{background:var(--pink);color:var(--white)}
-.btn-pricing-pink:hover{opacity:.88;transform:translateY(-1px);box-shadow:0 6px 20px rgba(236,72,153,.3)}
-.btn-pricing-outline{background:transparent;color:var(--white);border:1.5px solid #3f3f46}
-.btn-pricing-outline:hover{border-color:var(--white);background:rgba(255,255,255,.05)}
+  .dl-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:8px}
+  .dl-card{background:#111114;color:#fff;border:1.5px solid #26262b;border-radius:16px;padding:30px;position:relative}
+  .dl-card .os-ic{font-size:30px;margin-bottom:14px}
+  .dl-card h3{font-size:22px;font-weight:700;margin-bottom:8px}
+  .dl-card p{font-size:14px;color:#a1a1aa;margin-bottom:18px}
+  .dl-card ul{list-style:none;display:flex;flex-direction:column;gap:8px;margin-bottom:22px}
+  .dl-card li{font-size:13px;color:#d4d4d8;display:flex;gap:8px}
+  .dl-card li .ck{color:var(--pink)}
+  .btn-dl{display:flex;flex-direction:column;align-items:center;gap:1px;background:#fff;color:var(--black);border-radius:10px;padding:12px;font-weight:700;font-size:15px}
+  .btn-dl:hover{background:#f4f4f5}
+  .btn-dl small{font-family:var(--mono);font-size:11px;font-weight:400;opacity:.6}
+  .btn-dl.disabled{background:#26262b;color:#71717a;pointer-events:none}
+  .dl-ver{font-family:var(--mono);font-size:11px;color:#52525b;margin-top:12px;text-align:center}
+  .soon{position:absolute;top:20px;right:20px;background:rgba(217,119,6,.15);color:#f59e0b;font-family:var(--mono);font-size:10px;font-weight:600;padding:3px 10px;border-radius:20px;border:1px solid rgba(217,119,6,.3)}
+  .dl-foot{text-align:center;font-family:var(--mono);font-size:12px;color:var(--gray-600);margin-top:28px}
+  .dl-foot a{color:var(--pink-dark);text-decoration:underline}
 
-/* ── COMPATIBILITY ── */
-.compat-section{background:var(--black);color:var(--white)}
-.compat-section .section-title{color:var(--white)}
-.compat-section .section-sub{color:#a1a1aa}
-.compat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:56px}
-.compat-card{background:#111;border:1px solid #1e1e1e;border-radius:var(--radius);padding:24px;text-align:center;transition:border-color .2s}
-.compat-card:hover{border-color:#333}
-.compat-model{font-size:14px;font-weight:600;color:var(--white);margin-bottom:4px}
-.compat-gen{font-family:var(--mono);font-size:11px;color:#666}
-.compat-more{grid-column:1/-1;text-align:center;font-family:var(--mono);font-size:12px;color:#666;padding:16px;border:1px dashed #1e1e1e;border-radius:var(--radius)}
+  .cta{background:var(--black);color:#fff;border-radius:22px;padding:56px;text-align:center}
+  .cta h2{font-size:34px;font-weight:800;margin-bottom:12px;letter-spacing:-.02em}
+  .cta p{color:#a1a1aa;font-size:16px;margin-bottom:24px}
+  .btn-cta-white{background:#fff;color:var(--black);font-weight:700;font-size:15px;padding:13px 26px;border-radius:10px;display:inline-block}
 
-/* ── DOWNLOAD ── */
-.download-section{background:var(--black);color:var(--white);padding:96px 32px}
-.download-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:48px}
-.download-card{border:1.5px solid #27272a;border-radius:16px;padding:32px;transition:border-color .2s;position:relative;overflow:hidden}
-.download-card:hover{border-color:#52525b}
-.download-card.windows{background:linear-gradient(135deg,#0f0f11 0%,#1a1a2e 100%)}
-.download-card.mac{background:linear-gradient(135deg,#0f0f11 0%,#1a1f0f 100%)}
-.download-os{font-size:40px;margin-bottom:16px}
-.download-name{font-size:22px;font-weight:700;color:var(--white);margin-bottom:6px}
-.download-desc{font-size:14px;color:#71717a;line-height:1.6;margin-bottom:24px}
-.download-specs{display:flex;flex-direction:column;gap:8px;margin-bottom:28px}
-.download-spec{display:flex;align-items:center;gap:8px;font-size:13px;color:#a1a1aa}
-.download-spec::before{content:'✓';color:var(--pink);font-weight:700;flex-shrink:0}
-.btn-download{display:flex;align-items:center;gap:10px;background:var(--white);color:var(--black);border:none;border-radius:10px;padding:14px 24px;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;transition:all .2s;width:fit-content}
-.btn-download:hover{background:#f0f0f0;transform:translateY(-2px);box-shadow:0 8px 24px rgba(255,255,255,.1)}
-.btn-download.disabled{background:#27272a;color:#52525b;cursor:not-allowed;pointer-events:none}
-.btn-download-icon{font-size:20px}
-.download-version{font-family:var(--mono);font-size:11px;color:#52525b;margin-top:12px}
-.coming-soon-badge{position:absolute;top:16px;right:16px;background:rgba(251,191,36,.15);color:#fbbf24;border:1px solid rgba(251,191,36,.3);font-family:var(--mono);font-size:10px;padding:3px 10px;border-radius:20px;font-weight:600;letter-spacing:.08em}
-.download-note{text-align:center;margin-top:32px;font-size:13px;color:#52525b;font-family:var(--mono)}
-.download-note a{color:#71717a;text-decoration:underline}
+  footer.ft{border-top:1px solid var(--gray-200);padding:48px 0 30px}
+  .ft-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:32px;margin-bottom:36px}
+  .ft-col h4{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--gray-400);margin-bottom:14px}
+  .ft-col a,.ft-col p{display:block;font-size:14px;color:var(--gray-700);margin-bottom:9px}
+  .ft-col a:hover{color:var(--pink-dark)}
+  .ft-company{font-size:13px;color:var(--gray-600);line-height:1.7}
+  .ft-bottom{border-top:1px solid var(--gray-200);padding-top:22px;display:flex;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--gray-400);flex-wrap:wrap;gap:8px}
 
-/* ── CTA ── */
-.cta-section{background:linear-gradient(135deg, var(--pink) 0%, #be185d 100%);color:var(--white);text-align:center;padding:96px 32px}
-.cta-section h2{font-size:44px;font-weight:800;letter-spacing:-0.025em;margin-bottom:16px}
-.cta-section p{font-size:18px;opacity:.85;margin-bottom:40px;max-width:480px;margin-left:auto;margin-right:auto;line-height:1.6}
-.btn-cta-white{font-size:16px;font-weight:700;color:var(--pink);background:var(--white);border:none;padding:16px 36px;border-radius:10px;text-decoration:none;transition:all .2s;display:inline-block}
-.btn-cta-white:hover{transform:translateY(-2px);box-shadow:0 8px 32px rgba(0,0,0,.2)}
-
-/* ── FOOTER ── */
-footer{background:var(--black);color:#71717a;padding:56px 32px 32px}
-.footer-inner{max-width:1200px;margin:0 auto}
-.footer-top{display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:48px;margin-bottom:48px}
-.footer-brand-text{font-size:17px;font-weight:700;color:var(--white);margin-bottom:12px}
-.footer-brand-text span{color:var(--pink)}
-.footer-brand-desc{font-size:13px;line-height:1.7;color:#71717a;max-width:240px}
-.footer-col-title{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--white);letter-spacing:.1em;text-transform:uppercase;margin-bottom:16px}
-.footer-links{display:flex;flex-direction:column;gap:10px}
-.footer-links a{font-size:13px;color:#71717a;text-decoration:none;transition:color .15s}
-.footer-links a:hover{color:var(--white)}
-.footer-bottom{border-top:1px solid #18181b;padding-top:24px;display:flex;justify-content:space-between;align-items:center}
-.footer-copy{font-size:12px;font-family:var(--mono)}
-.footer-legal{display:flex;gap:24px}
-.footer-legal a{font-size:12px;color:#71717a;text-decoration:none;font-family:var(--mono)}
-.footer-legal a:hover{color:var(--white)}
-
-/* ── ANIMATIONS ── */
-@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
-@keyframes fadeUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
-@keyframes scanLine{0%{transform:translateY(-100%)}100%{transform:translateY(400%)}}
-
-.scan-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--pink),transparent);animation:scanLine 3s linear infinite;opacity:.4}
-
-/* ── RESPONSIVE ── */
-@media(max-width:900px){
-  .hero{grid-template-columns:1fr;gap:40px;padding:100px 24px 60px}
-  .hero h1{font-size:38px}
-  .hero-visual{order:-1}
-  .features-grid,.pricing-grid{grid-template-columns:1fr}
-  .steps{grid-template-columns:1fr 1fr;gap:32px}
-  .steps::before{display:none}
-  .compat-grid{grid-template-columns:1fr 1fr}
-  .stats-inner{grid-template-columns:1fr 1fr;gap:24px}
-  .stat-item{border-right:none;border-bottom:1px solid var(--gray-200);padding-bottom:24px}
-  .footer-top{grid-template-columns:1fr 1fr;gap:32px}
-  .download-grid{grid-template-columns:1fr}
-}
-
-@media(max-width:600px){
-  /* NAV */
-  .nav-inner{padding:0 16px;height:56px}
-  .nav-links{display:none}
-  .btn-nav-admin{display:none}
-  .btn-nav-cta{font-size:13px;padding:7px 16px}
-
-  /* HERO */
-  .hero{padding:80px 16px 48px;gap:32px}
-  .hero h1{font-size:30px;line-height:1.1}
-  .hero-sub{font-size:15px;margin-bottom:28px}
-  .hero-actions{flex-direction:column;align-items:stretch}
-  .btn-primary,.btn-secondary{text-align:center;justify-content:center;padding:13px 20px;font-size:14px}
-  .hero-note{font-size:10px}
-
-  /* DEMO WINDOW */
-  .demo-window{padding:14px}
-  .demo-slots{grid-template-columns:1fr 1fr;gap:6px}
-  .demo-slot{min-height:100px;padding:8px}
-
-  /* STATS */
-  .stats-bar{padding:24px 16px}
-  .stats-inner{grid-template-columns:1fr 1fr;gap:0}
-  .stat-item{padding:16px;border-right:1px solid var(--gray-200);border-bottom:1px solid var(--gray-200)}
-  .stat-item:nth-child(2n){border-right:none}
-  .stat-item:nth-child(3),.stat-item:nth-child(4){border-bottom:none}
-  .stat-num{font-size:28px}
-  .stat-desc{font-size:12px}
-
-  /* SECTIONS */
-  section{padding:60px 16px}
-  .section-title{font-size:28px}
-  .section-sub{font-size:15px}
-
-  /* FEATURES */
-  .features-grid{grid-template-columns:1fr;gap:16px;margin-top:36px}
-  .feature-card{padding:24px}
-  .feature-icon{width:40px;height:40px;font-size:18px;margin-bottom:14px}
-  .feature-title{font-size:15px}
-  .feature-desc{font-size:13px}
-
-  /* HOW IT WORKS */
-  .steps{grid-template-columns:1fr;gap:24px;margin-top:36px}
-  .step{text-align:left;display:flex;align-items:flex-start;gap:16px;padding:0}
-  .step-num{margin:0;flex-shrink:0;width:44px;height:44px;font-size:14px}
-  .step-title{font-size:14px;margin-bottom:4px}
-  .step-desc{font-size:13px}
-
-  /* PRICING */
-  .pricing-grid,#pricing-grid{grid-template-columns:1fr !important;gap:16px;margin-top:36px !important;width:100%}
-  .pricing-card{padding:20px;width:100%;box-sizing:border-box;min-width:0}
-  .pricing-price{font-size:36px}
-  .pricing-card.featured{margin:0}
-
-  /* COMPATIBILITY */
-  .compat-grid{grid-template-columns:1fr 1fr;gap:10px;margin-top:36px}
-  .compat-card{padding:16px}
-  .compat-model{font-size:13px}
-
-  /* DOWNLOAD */
-  .download-section{padding:60px 16px}
-  .download-grid{grid-template-columns:1fr;gap:16px;margin-top:32px}
-  .download-card{padding:24px}
-  .download-name{font-size:18px}
-  .download-desc{font-size:13px}
-  .btn-download{width:100%;justify-content:center}
-
-  /* CTA */
-  .cta-section{padding:60px 16px}
-  .cta-section h2{font-size:28px}
-  .cta-section p{font-size:15px}
-  .btn-cta-white{padding:13px 28px;font-size:15px}
-
-  /* FOOTER */
-  footer{padding:40px 16px 24px}
-  .footer-top{grid-template-columns:1fr;gap:32px}
-  .footer-bottom{flex-direction:column;gap:12px;text-align:center}
-  .footer-legal{gap:16px}
-
-  /* MODAL */
-  div[style*="position:fixed"] > div{padding:24px 20px !important;margin:16px !important;width:calc(100% - 32px) !important;max-width:none !important}
-}
-
-/* ── LANGUAGE SWITCHER ── */
-.lang-switcher{position:relative;display:flex;align-items:center}
-.lang-current{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--gray-600);background:var(--gray-100);border:1.5px solid var(--gray-200);padding:5px 10px;border-radius:7px;cursor:pointer;display:flex;align-items:center;gap:5px;transition:all .15s;letter-spacing:.04em;user-select:none}
-.lang-current:hover{color:var(--black);border-color:var(--gray-400)}
-.lang-current::after{content:'▾';font-size:9px;opacity:.6}
-.lang-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:var(--white);border:1.5px solid var(--gray-200);border-radius:10px;padding:6px;min-width:130px;box-shadow:0 8px 24px rgba(0,0,0,.1);z-index:200;display:none;flex-direction:column;gap:2px}
-.lang-switcher.open .lang-dropdown{display:flex}
-.lang-option{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gray-600);padding:7px 10px;border-radius:6px;cursor:pointer;transition:all .15s;display:flex;align-items:center;gap:8px;letter-spacing:.04em}
-.lang-option:hover{background:var(--gray-50);color:var(--black)}
-.lang-option.active{background:var(--pink-dim);color:var(--pink)}
-@media(max-width:600px){.lang-switcher{margin-left:auto}}
+  @media(max-width:900px){
+    .hero-grid{grid-template-columns:1fr;gap:36px}.hero h1{font-size:44px}
+    .nav-links{display:none}.nav-toggle{display:block}
+    .feat-grid,.steps,.compat-grid,.plans,.dl-grid,.ft-grid{grid-template-columns:1fr}
+    .cta{padding:40px 24px}.cta h2{font-size:26px}
+  }
 </style>
 </head>
 <body>
 
-<!-- NAV -->
-<nav>
-  <div class="nav-inner">
-    <a class="nav-logo" href="/">
-      <img class="nav-logo-img" src="photo_2026-07-01_01-43-29.jpg" alt="iS" onerror="this.style.display='none'" style="border-radius:8px" />
-      <span class="nav-logo-text">iSupply <span>Scan</span></span>
-    </a>
-    <div class="nav-links">
-      <a href="#features" data-i18n="nav_features">Features</a>
-      <a href="#how-it-works" data-i18n="nav_how">How it works</a>
-      <a href="#pricing" data-i18n="nav_pricing">Pricing</a>
-      <a href="#compatibility" data-i18n="nav_compat">Compatibility</a>
-      <a href="#download" style="color:var(--pink);font-weight:600" data-i18n="nav_download">⬇ Download</a>
-    </div>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a href="/" class="logo"><span class="iS">iS</span> iSupply <span>Scan</span></a>
+    <nav class="nav-links">
+      <a class="nlink" href="#features" data-i18n="nav_features">Features</a>
+      <a class="nlink" href="#how" data-i18n="nav_how">How it works</a>
+      <a class="nlink" href="#pricing" data-i18n="nav_pricing">Pricing</a>
+      <a class="nlink" href="#compat" data-i18n="nav_compat">Compatibility</a>
+      <a class="nlink" href="#download" style="color:var(--pink-dark);font-weight:600" data-i18n="nav_download">⬇ Download</a>
+    </nav>
     <div class="nav-right">
-      <div class="lang-switcher" id="langSwitcher">
-        <div class="lang-current" id="langCurrent" onclick="toggleLangDropdown()">EN</div>
-        <div class="lang-dropdown" id="langDropdown">
-          <div class="lang-option active" onclick="setLang('EN')">🇬🇧 English</div>
-          <div class="lang-option" onclick="setLang('CZ')">🇨🇿 Čeština</div>
-          <div class="lang-option" onclick="setLang('PL')">🇵🇱 Polski</div>
-          <div class="lang-option" onclick="setLang('RU')">🇷🇺 Русский</div>
-          <div class="lang-option" onclick="setLang('FR')">🇫🇷 Français</div>
-          <div class="lang-option" onclick="setLang('IT')">🇮🇹 Italiano</div>
-        </div>
+      <div class="lang">
+        <button data-lang="en" class="active" onclick="setLang('en')">EN</button>
+        <button data-lang="cs" onclick="setLang('cs')">CZ</button>
       </div>
-      <a class="btn-nav-admin" href="https://isupply-scan.cz/admin-panel" target="_blank">data-i18n="nav_admin">Admin Panel →</a>
-      <a class="btn-nav-cta" href="#pricing" data-i18n="nav_cta">Get started</a>
+      <a class="btn-admin" href="/admin" data-i18n="nav_admin">Admin Panel →</a>
+      <a class="btn-cta" href="#pricing" data-i18n="nav_get">Get started</a>
     </div>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').style.display='flex'">☰</button>
   </div>
-</nav>
+</header>
 
-<!-- HERO -->
-<section style="padding:0">
-  <div class="hero">
-    <div class="hero-content">
-      <div class="hero-eyebrow" data-i18n="hero_eyebrow">Professional iPhone Diagnostics</div>
-      <h1><span data-i18n="hero_h1a">Know exactly what's</span><br><em data-i18n="hero_h1b">inside every iPhone</em></h1>
-      <p class="hero-sub" data-i18n="hero_sub">iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.</p>
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="eyebrow" data-i18n="hero_eyebrow">Professional iPhone diagnostics</div>
+      <h1><span data-i18n="hero_h1a">Know exactly what's</span> <span class="accent" data-i18n="hero_h1b">inside every iPhone</span></h1>
+      <p class="lead" data-i18n="hero_lead">iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.</p>
       <div class="hero-actions">
-        <a href="#download" class="btn-primary">
-          <span data-i18n="hero_btn1">Download free trial</span>
-          <span>→</span>
-        </a>
-        <a href="#how-it-works" class="btn-secondary" data-i18n="hero_btn2">See how it works</a>
+        <a class="btn-primary" href="#download"><span data-i18n="hero_cta1">Download free trial</span> →</a>
+        <a class="btn-secondary" href="#how" data-i18n="hero_cta2">See how it works</a>
       </div>
-      <p class="hero-note" data-i18n="hero_note">No credit card required · Works on Windows · USB connection</p>
+      <div class="hero-note" data-i18n="hero_note">No credit card required · Works on Windows · USB connection</div>
     </div>
-
-    <!-- LIVE DEMO ANIMATION -->
-    <div class="hero-visual">
-      <div class="demo-window">
-        <div class="demo-bar">
-          <span></span><span></span><span></span>
+    <div class="mock" aria-hidden="true">
+      <div class="mock-bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div class="mock-slots">
+        <div class="slot ok">
+          <div class="slot-head"><span>SLOT 01</span><span class="ok-tag">OK ✓</span></div>
+          <div class="imei"><span>IMEI</span><span>35224095658</span></div>
+          <div class="model">iPhone 15 Pro</div>
+          <div class="sub">A2650 · 256 GB · iOS 17.5.1</div>
+          <div class="row"><span>🔋</span><span>Battery · <b>94% · Excellent</b></span></div>
+          <div class="row"><span>📱</span><span>Display · <b>Original</b></span></div>
+          <div class="row"><span>👆</span><span>Touch ID · <b>Original</b></span></div>
         </div>
-        <div class="demo-slots">
-          <!-- SLOT 1 – Done -->
-          <div class="demo-slot done">
-            <div class="demo-slot-header">
-              <span class="demo-slot-num">SLOT 01</span>
-              <span class="demo-badge badge-done">OK ✓</span>
-            </div>
-            <div class="demo-imei">
-              <span class="demo-imei-lbl">IMEI</span>
-              <span class="demo-imei-val">35224093658</span>
-            </div>
-            <div class="demo-model">iPhone 15 Pro</div>
-            <div class="demo-ios">A2650 · 256 GB · iOS 17.5.1</div>
-            <div class="demo-tests">
-              <div class="demo-test pass">🔋 Battery · 94% · Excellent</div>
-              <div class="demo-test pass">📱 Display · Original</div>
-              <div class="demo-test pass">👆 Touch ID · Original</div>
-            </div>
-            <div class="demo-grade A">A</div>
-          </div>
-          <!-- SLOT 2 – Scanning -->
-          <div class="demo-slot active" id="demo-slot2">
-            <div class="scan-line"></div>
-            <div class="demo-slot-header">
-              <span class="demo-slot-num">SLOT 02</span>
-              <span class="demo-badge badge-testing">Testing ●</span>
-            </div>
-            <div class="demo-imei">
-              <span class="demo-imei-lbl">IMEI</span>
-              <span class="demo-imei-val">35722409365</span>
-            </div>
-            <div class="demo-model">iPhone XS</div>
-            <div class="demo-ios">A1920 · 256 GB · iOS 18.7.9</div>
-            <div class="demo-tests" id="demo-tests2">
-              <div class="demo-test pass">🔋 Battery · 91% · Excellent</div>
-              <div class="demo-test pass">📱 Display · Original</div>
-              <div class="demo-test scanning" id="scanning-row">📷 Rear camera · scanning...</div>
-              <div class="demo-test pending">🤳 Front camera</div>
-              <div class="demo-test pending">🎤 Microphone</div>
-            </div>
-          </div>
-          <!-- SLOT 3 – Empty -->
-          <div class="demo-slot" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
-            <div style="width:32px;height:32px;border:1px dashed #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">📲</div>
-            <div style="color:#333;font-size:8px;text-align:center">Connect iPhone<br>via USB</div>
-          </div>
-          <!-- SLOT 4 – Empty -->
-          <div class="demo-slot" style="display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px">
-            <div style="width:32px;height:32px;border:1px dashed #333;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px">📲</div>
-            <div style="color:#333;font-size:8px;text-align:center">Connect iPhone<br>via USB</div>
-          </div>
+        <div class="slot test">
+          <div class="slot-head"><span>SLOT 02</span><span class="test-tag">Testing •</span></div>
+          <div class="imei"><span>IMEI</span><span>35722409365</span></div>
+          <div class="model">iPhone XS</div>
+          <div class="sub">A1920 · 64 GB · iOS 18.7.9</div>
+          <div class="row"><span>🔋</span><span>Battery · <b>91% · Excellent</b></span></div>
+          <div class="row"><span>📷</span><span>Rear camera · <b>Original</b></span></div>
+          <div class="row"><span>🎤</span><span>Microphone · <b>Original</b></span></div>
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- STATS -->
-<div class="stats-bar">
-  <div class="stats-inner">
-    <div class="stat-item">
-      <div class="stat-num">12<span>+</span></div>
-      <div class="stat-desc"><span data-i18n="stats_comp">Components tested<br>per device</span></div>
+<section id="features" class="bg-soft">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow" data-i18n="feat_eyebrow">What it checks</div>
+      <h2 data-i18n="feat_h2">12 tests, one click</h2>
+      <p data-i18n="feat_p">Every component that affects resale value, verified against Apple's own diagnostic data — not guesswork.</p>
     </div>
-    <div class="stat-item">
-      <div class="stat-num">8</div>
-      <div class="stat-desc"><span data-i18n="stats_slots">Simultaneous slots<br>per workstation</span></div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-num">&lt;60<span>s</span></div>
-      <div class="stat-desc"><span data-i18n="stats_time">Average full<br>diagnostic time</span></div>
-    </div>
-    <div class="stat-item">
-      <div class="stat-num">A–D</div>
-      <div class="stat-desc"><span data-i18n="stats_grade">Automatic grading<br>with label printing</span></div>
-    </div>
-  </div>
-</div>
-
-<!-- FEATURES -->
-<section id="features">
-  <div class="section-inner">
-    <div class="section-eyebrow" data-i18n="feat_eyebrow">What you get</div>
-    <h2 class="section-title" data-i18n="feat_title">Everything a refurbisher needs</h2>
-    <p class="section-sub" data-i18n="feat_sub">From USB detection to label printing, iSupply Scan handles the full workflow.</p>
-    <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon">🔌</div>
-        <div class="feature-title">Automatic USB Detection</div>
-        <div class="feature-desc">Connect an iPhone and diagnostics start instantly. No clicks, no setup. Supports up to 8 devices simultaneously on one workstation.</div>
-        <span class="feature-tag">Plug & play</span>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">🔋</div>
-        <div class="feature-title">Real Battery Health</div>
-        <div class="feature-desc">Reads MaximumCapacityPercent directly from Apple's IOKit, the same value iOS shows in Settings. Not just charge level, but actual degradation.</div>
-        <span class="feature-tag">Apple IOKit</span>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">📱</div>
-        <div class="feature-title">Original Parts Detection</div>
-        <div class="feature-desc">Detects replaced displays, Touch ID sensors, cameras, mainboards and more. Instantly flags non-original components with red indicators.</div>
-        <span class="feature-tag">12 components</span>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">🖨️</div>
-        <div class="feature-title">Label Printing</div>
-        <div class="feature-desc">One click prints a label with IMEI, model, grade, battery health and status. Compatible with a wide range of label printers.</div>
-        <span class="feature-tag">62mm tape</span>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">📊</div>
-        <div class="feature-title">Excel Export & Database</div>
-        <div class="feature-desc">Every tested device is logged automatically. Export to Excel with custom column selection: model, IMEI, capacity, color, battery. Ready for your ERP.</div>
-        <span class="feature-tag">Custom columns</span>
-      </div>
-      <div class="feature-card">
-        <div class="feature-icon">🌍</div>
-        <div class="feature-title">6 Languages</div>
-        <div class="feature-desc">Full UI in English, Czech, Polish, Russian, Italian and French. Switch instantly from the header. Ideal for multi-national warehouses.</div>
-        <span class="feature-tag">EN · CZ · PL · RU · IT · FR</span>
-      </div>
+    <div class="feat-grid">
+      <div class="feat"><div class="ic">🔋</div><h3 data-i18n="feat1_h">Battery health</h3><p data-i18n="feat1_p">True battery capacity and cycle count read straight from the device, so you grade honestly.</p></div>
+      <div class="feat"><div class="ic">📱</div><h3 data-i18n="feat2_h">Display & Touch ID</h3><p data-i18n="feat2_p">Detects original vs. aftermarket screens and whether Touch ID / Face ID is genuine.</p></div>
+      <div class="feat"><div class="ic">📷</div><h3 data-i18n="feat3_h">Cameras & sensors</h3><p data-i18n="feat3_p">Front and rear cameras, microphones and key sensors checked in a single pass.</p></div>
+      <div class="feat"><div class="ic">🔒</div><h3 data-i18n="feat4_h">iCloud & activation</h3><p data-i18n="feat4_p">Instantly see activation lock status so you never buy a locked device by mistake.</p></div>
+      <div class="feat"><div class="ic">🏷️</div><h3 data-i18n="feat5_h">Label printing</h3><p data-i18n="feat5_p">Print a clean spec label straight to a Brother QL printer after every scan.</p></div>
+      <div class="feat"><div class="ic">📊</div><h3 data-i18n="feat6_h">Excel export</h3><p data-i18n="feat6_p">Export every scan to Excel for your stock, accounting or resale listings.</p></div>
     </div>
   </div>
 </section>
 
-<!-- HOW IT WORKS -->
-<section id="how-it-works" class="how-section">
-  <div class="section-inner">
-    <div class="section-eyebrow" data-i18n="how_eyebrow">Setup in minutes</div>
-    <h2 class="section-title" data-i18n="how_title">From purchase to first scan</h2>
-    <p class="section-sub" data-i18n="how_sub">No technical knowledge required. If you can plug in a USB cable, you can run iSupply Scan.</p>
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow" data-i18n="how_eyebrow">How it works</div>
+      <h2 data-i18n="how_h2">From box to graded in under a minute</h2>
+    </div>
     <div class="steps">
-      <div class="step">
-        <div class="step-num">1</div>
-        <div class="step-title">Buy a licence</div>
-        <div class="step-desc">Choose a plan below and complete the purchase. Your licence key arrives instantly.</div>
+      <div class="step"><span class="num">01</span><h3 data-i18n="how1_h">Connect</h3><p data-i18n="how1_p">Plug the iPhone into any USB port. iSupply Scan detects it automatically — up to 10 at once.</p></div>
+      <div class="step"><span class="num">02</span><h3 data-i18n="how2_h">Scan</h3><p data-i18n="how2_p">12 components are tested in seconds and results appear live on screen.</p></div>
+      <div class="step"><span class="num">03</span><h3 data-i18n="how3_h">Grade & print</h3><p data-i18n="how3_p">Pick a condition, print the label, and the unit can flow straight into your e-shop stock.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="pricing" class="bg-soft">
+  <div class="wrap">
+    <div class="sec-head" style="margin:0 auto 32px;text-align:center">
+      <div class="eyebrow" data-i18n="price_eyebrow">Pricing</div>
+      <h2 data-i18n="price_h2">Simple, transparent pricing</h2>
+      <p data-i18n="price_p">All plans include the full diagnostic suite. Pay by scan volume, not by workstation.</p>
+    </div>
+    <div class="price-toggle">
+      <span data-i18n="price_monthly">Monthly</span>
+      <button class="switch" id="billing-switch" onclick="toggleBilling()"><span class="dot"></span></button>
+      <span data-i18n="price_yearly">Yearly</span>
+      <span class="badge-save">−25%</span>
+    </div>
+    <div class="plans">
+      <div class="plan">
+        <div class="tier">BASIC</div>
+        <div class="price"><span class="cur">€</span><span class="amt" data-m="35" data-y="26">35</span></div>
+        <div class="per" data-i18n="price_per">per month</div>
+        <div class="tag" data-i18n="p_basic_tag">For small shops and repair centers.</div>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="p_basic_1">Up to 200 scans / month</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="x">✕</span><span data-i18n="p_priority">Priority support</span></li>
+        </ul>
+        <a class="btn-plan" href="mailto:info@isupply.cz?subject=Basic%20licence" data-i18n="p_buy_basic">Get Basic</a>
       </div>
-      <div class="step">
-        <div class="step-num">2</div>
-        <div class="step-title">Download & install</div>
-        <div class="step-desc">Download the Windows installer. Double-click, follow the setup wizard. Done in under 2 minutes.</div>
+      <div class="plan pop">
+        <div class="pop-badge" data-i18n="p_popular">Most popular</div>
+        <div class="tier">PRO</div>
+        <div class="price"><span class="cur">€</span><span class="amt" data-m="49" data-y="37">49</span></div>
+        <div class="per" data-i18n="price_per">per month</div>
+        <div class="tag" data-i18n="p_pro_tag">For mid-size buyers and refurbishers.</div>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="p_pro_1">Up to 500 scans / month</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_email">Email support</span></li>
+        </ul>
+        <a class="btn-plan fill" href="mailto:info@isupply.cz?subject=Pro%20licence" data-i18n="p_buy_pro">Get Pro</a>
       </div>
-      <div class="step">
-        <div class="step-num">3</div>
-        <div class="step-title">Activate</div>
-        <div class="step-desc">Enter your licence key, choose a username and password. One-time setup per device.</div>
+      <div class="plan">
+        <div class="tier">BUSINESS</div>
+        <div class="price"><span class="cur">€</span><span class="amt" data-m="79" data-y="59">79</span></div>
+        <div class="per" data-i18n="price_per">per month</div>
+        <div class="tag" data-i18n="p_biz_tag">For large wholesalers and ITAD.</div>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="p_biz_1">Up to 1000 scans / month</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_priority">Priority support</span></li>
+        </ul>
+        <a class="btn-plan" href="mailto:info@isupply.cz?subject=Business%20licence" data-i18n="p_buy_biz">Get Business</a>
       </div>
-      <div class="step">
-        <div class="step-num">4</div>
-        <div class="step-title">Start scanning</div>
-        <div class="step-desc">Plug in an iPhone. Diagnostics start automatically. Grade, print label, export. Repeat.</div>
+      <div class="plan">
+        <div class="tier">ENTERPRISE</div>
+        <div class="price" style="font-size:30px" data-i18n="p_custom">Custom</div>
+        <div class="per" data-i18n="p_custom_sub">tailored pricing</div>
+        <div class="tag" data-i18n="p_ent_tag">For operations over 1000 units / month.</div>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="p_ent_1">Unlimited scans</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_ent_2">Dedicated support + API</span></li>
+        </ul>
+        <a class="btn-plan" href="mailto:info@isupply.cz?subject=Enterprise%20enquiry" data-i18n="p_buy_ent">Contact us</a>
       </div>
     </div>
   </div>
 </section>
 
-<!-- PRICING -->
-<section id="pricing">
-  <div class="section-inner">
-    <div class="section-eyebrow" data-i18n="pricing_eyebrow">Pricing</div>
-    <h2 class="section-title" data-i18n="pricing_title">Simple, transparent pricing</h2>
-    <p class="section-sub" data-i18n="pricing_sub">All plans include the full diagnostic suite. Pay by scan volume, not by workstation.</p>
-
-    <!-- BILLING TOGGLE -->
-    <div style="display:flex;align-items:center;justify-content:center;gap:12px;margin:32px 0 0">
-      <span id="toggle-monthly-lbl" style="font-size:14px;font-weight:600;color:var(--black)">Monthly</span>
-      <div id="billing-toggle" onclick="toggleBilling()" style="width:48px;height:26px;background:var(--pink);border-radius:13px;cursor:pointer;position:relative;transition:background .2s">
-        <div id="toggle-knob" style="position:absolute;top:3px;left:3px;width:20px;height:20px;background:#fff;border-radius:50%;transition:transform .2s"></div>
-      </div>
-      <span id="toggle-yearly-lbl" style="font-size:14px;font-weight:500;color:var(--gray-400)">Yearly <span style="font-size:11px;background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:20px;font-weight:600;margin-left:4px">–25%</span></span>
+<section id="compat">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow" data-i18n="compat_eyebrow">Compatibility</div>
+      <h2 data-i18n="compat_h2">What you need to run it</h2>
     </div>
-
-    <div class="pricing-grid" style="grid-template-columns:repeat(4,1fr);margin-top:40px" id="pricing-grid">
-
-      <!-- BASIC -->
-      <div class="pricing-card">
-        <div class="pricing-plan">Basic</div>
-        <div class="pricing-price" id="price-basic"><sup>€</sup>35</div>
-        <div class="pricing-period" id="period-basic">per month</div>
-        <div class="pricing-desc">Pro malé obchody a servisy.</div>
-        <div class="pricing-features">
-          <div class="pricing-feature">Do 200 skenů / měsíc</div>
-          <div class="pricing-feature">Plná diagnostika (12 testů)</div>
-          <div class="pricing-feature">Tisk štítků</div>
-          <div class="pricing-feature">Export do Excelu</div>
-          <div class="pricing-feature no">Prioritní podpora</div>
-        </div>
-        <button onclick="startCheckout('basic')" class="btn-pricing btn-pricing-white">Koupit Basic</button>
-      </div>
-
-      <!-- PRO – FEATURED -->
-      <div class="pricing-card featured">
-        <div class="popular-badge">Nejoblíbenější</div>
-        <div class="pricing-plan">Pro</div>
-        <div class="pricing-price" id="price-pro"><sup>€</sup>49</div>
-        <div class="pricing-period" id="period-pro">per month</div>
-        <div class="pricing-desc">Pro střední výkupny a refurbishery.</div>
-        <div class="pricing-features">
-          <div class="pricing-feature">Do 500 skenů / měsíc</div>
-          <div class="pricing-feature">Plná diagnostika (12 testů)</div>
-          <div class="pricing-feature">Tisk štítků</div>
-          <div class="pricing-feature">Export do Excelu</div>
-          <div class="pricing-feature">Email podpora</div>
-        </div>
-        <button onclick="startCheckout('pro')" class="btn-pricing btn-pricing-pink">Koupit Pro</button>
-      </div>
-
-      <!-- BUSINESS -->
-      <div class="pricing-card">
-        <div class="pricing-plan">Business</div>
-        <div class="pricing-price" id="price-business"><sup>€</sup>79</div>
-        <div class="pricing-period" id="period-business">per month</div>
-        <div class="pricing-desc">Pro velké velkoobchody a ITAD.</div>
-        <div class="pricing-features">
-          <div class="pricing-feature">Do 1000 skenů / měsíc</div>
-          <div class="pricing-feature">Plná diagnostika (12 testů)</div>
-          <div class="pricing-feature">Tisk štítků</div>
-          <div class="pricing-feature">Export do Excelu</div>
-          <div class="pricing-feature">Prioritní podpora</div>
-        </div>
-        <button onclick="startCheckout('business')" class="btn-pricing btn-pricing-white">Koupit Business</button>
-      </div>
-
-      <!-- ENTERPRISE -->
-      <div class="pricing-card">
-        <div class="pricing-plan">Enterprise</div>
-        <div class="pricing-price" style="font-size:32px;padding-top:8px">Custom</div>
-        <div class="pricing-period">individuální cena</div>
-        <div class="pricing-desc">Pro operace nad 1000 ks/měsíc.</div>
-        <div class="pricing-features">
-          <div class="pricing-feature">Neomezené skeny</div>
-          <div class="pricing-feature">Plná diagnostika (12 testů)</div>
-          <div class="pricing-feature">Tisk štítků</div>
-          <div class="pricing-feature">Export do Excelu</div>
-          <div class="pricing-feature">Dedikovaná podpora + API</div>
-        </div>
-        <a href="mailto:info@isupply.cz?subject=Enterprise poptávka" class="btn-pricing btn-pricing-white">Kontaktujte nás</a>
-      </div>
-
-    </div>
-
-    <!-- EMAIL MODAL -->
-    <div id="checkout-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:999;align-items:center;justify-content:center">
-      <div style="background:#fff;border-radius:16px;padding:40px;max-width:420px;width:90%;position:relative">
-        <button onclick="closeModal()" style="position:absolute;top:16px;right:16px;background:none;border:none;font-size:20px;cursor:pointer;color:#999">×</button>
-        <div style="font-size:20px;font-weight:700;margin-bottom:8px" data-i18n="modal_title">Zadejte váš email</div>
-        <div style="font-size:14px;color:#6b7280;margin-bottom:24px" data-i18n="modal_sub">Licenční klíč vám zašleme na tento email po dokončení platby.</div>
-        <input id="checkout-email" type="email" placeholder="vas@email.cz" style="width:100%;padding:12px 14px;border:1.5px solid #e4e4e7;border-radius:8px;font-size:14px;margin-bottom:16px;outline:none;font-family:inherit" onfocus="this.style.borderColor='#ec4899'" onblur="this.style.borderColor='#e4e4e7'">
-        <div id="checkout-error" style="color:#dc2626;font-size:12px;margin-bottom:12px;display:none"></div>
-        <button id="checkout-submit" onclick="submitCheckout()" style="width:100%;background:#ec4899;color:#fff;border:none;border-radius:9px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;transition:opacity .2s" data-i18n="modal_btn">Pokračovat k platbě →</button>
-        <div style="text-align:center;font-size:11px;color:#9ca3af;margin-top:12px" data-i18n="modal_secure">🔒 Zabezpečená platba přes Stripe</div>
-      </div>
-    </div>
-
-  </div>
-</section>
-
-<!-- COMPATIBILITY -->
-<section id="compatibility" class="compat-section">
-  <div class="section-inner">
-    <div class="section-eyebrow" style="color:var(--pink)" data-i18n="compat_eyebrow">Device support</div>
-    <h2 class="section-title" data-i18n="compat_title">Tested on every major iPhone</h2>
-    <p class="section-sub" data-i18n="compat_sub">From iPhone 6s to iPhone 16 Pro Max, iSupply Scan reads model numbers, A-series identifiers and component serial numbers.</p>
     <div class="compat-grid">
-      <div class="compat-card"><div class="compat-model">iPhone 16 Pro Max</div><div class="compat-gen">A3293 · Latest</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone 15 Pro</div><div class="compat-gen">A3101</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone 14</div><div class="compat-gen">A2882</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone 13 Pro Max</div><div class="compat-gen">A2641</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone 12 mini</div><div class="compat-gen">A2399</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone 11</div><div class="compat-gen">A2111</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone XS Max</div><div class="compat-gen">A1921</div></div>
-      <div class="compat-card"><div class="compat-model">iPhone SE (all gen)</div><div class="compat-gen">A2595 / A2275 / A1662</div></div>
-      <div class="compat-more" data-i18n="compat_more">+ iPhone X, 8, 7, 6s and all variants · 60+ models supported</div>
+      <div class="compat"><h3>🪟 <span data-i18n="compat1_h">Windows 10 / 11</span></h3><p data-i18n="compat1_p">64-bit. Everything is bundled in one .exe — no Python or dependencies to install.</p></div>
+      <div class="compat"><h3>🍎 <span data-i18n="compat2_h">iTunes or Apple Devices</span></h3><p data-i18n="compat2_p">Required for USB drivers. If it's missing, the app shows a one-click download prompt on start.</p></div>
+      <div class="compat"><h3>🔌 <span data-i18n="compat3_h">USB connection</span></h3><p data-i18n="compat3_p">Connect iPhones directly to a USB port with an original cable and tap "Trust".</p></div>
     </div>
   </div>
 </section>
 
-<!-- DOWNLOAD -->
-<section class="download-section" id="download">
-  <div class="section-inner">
-    <div class="section-eyebrow" style="color:var(--pink)" data-i18n="dl_eyebrow">Download</div>
-    <h2 class="section-title" style="color:var(--white)" data-i18n="dl_title">Get iSupply Scan</h2>
-    <p class="section-sub" style="color:#71717a" data-i18n="dl_sub">Download the installer for your platform. A valid licence key is required to activate.</p>
-
-    <div class="download-grid">
-
-      <!-- WINDOWS -->
-      <div class="download-card windows">
-        <div class="download-os">🪟</div>
-        <div class="download-name">Windows</div>
-        <div class="download-desc">Full installer for Windows 10 and 11. No Python or dependencies required, everything is bundled.</div>
-        <div class="download-specs">
-          <div class="download-spec">Windows 10 / 11 (64-bit)</div>
-          <div class="download-spec">iTunes or Apple Devices required</div>
-          <div class="download-spec">~45 MB installer</div>
-          <div class="download-spec">Automatic updates</div>
-        </div>
-        <a class="btn-download" href="https://github.com/Bot-owner/isupply-scan-api/releases/latest/download/iSupply.Scan.exe" id="btn-download-win">
-          <span class="btn-download-icon">⬇</span>
-          <div>
-            <div>Download for Windows</div>
-            <div style="font-size:12px;font-weight:400;opacity:.7">iSupply.Scan.exe</div>
-          </div>
-        </a>
-        <div class="download-version" id="win-version">Latest version · checking...</div>
-      </div>
-
-      <!-- MAC -->
-      <div class="download-card mac">
-        <div class="coming-soon-badge">Coming soon</div>
-        <div class="download-os">🍎</div>
-        <div class="download-name">macOS</div>
-        <div class="download-desc">Native macOS app for Apple Silicon and Intel Macs. Requires macOS 12 Monterey or later.</div>
-        <div class="download-specs">
-          <div class="download-spec">macOS 12+ · Apple Silicon & Intel</div>
-          <div class="download-spec">No additional software required</div>
-          <div class="download-spec">~50 MB app bundle</div>
-          <div class="download-spec">Notarized by Apple</div>
-        </div>
-        <a class="btn-download disabled" href="#">
-          <span class="btn-download-icon">⬇</span>
-          <div>
-            <div>Download for macOS</div>
-            <div style="font-size:12px;font-weight:400;opacity:.7">iSupply_Scan.dmg</div>
-          </div>
-        </a>
-        <div class="download-version">In development · notify me at <a href="mailto:info@isupply.cz" style="color:#52525b">info@isupply.cz</a></div>
-      </div>
-
+<section id="download" class="bg-soft">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow" data-i18n="dl_eyebrow">Download</div>
+      <h2 data-i18n="dl_h2">Get iSupply Scan</h2>
+      <p data-i18n="dl_p">Download the installer for your platform. A valid licence key is required to activate.</p>
     </div>
+    <div class="dl-grid">
+      <div class="dl-card">
+        <div class="os-ic">🪟</div>
+        <h3 data-i18n="dl_win_h">Windows</h3>
+        <p data-i18n="dl_win_p">Full installer for Windows 10 and 11. No Python or dependencies required — everything is bundled.</p>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="dl_win_1">Windows 10 / 11 (64-bit)</span></li>
+          <li><span class="ck">✓</span><span data-i18n="dl_win_2">iTunes or Apple Devices required</span></li>
+          <li><span class="ck">✓</span><span data-i18n="dl_win_3">~75 MB, single file</span></li>
+          <li><span class="ck">✓</span><span data-i18n="dl_win_4">Automatic updates</span></li>
+        </ul>
+        <a class="btn-dl" href="https://github.com/Bot-owner/isupply-scan-api/releases/latest/download/iSupply.Scan.exe">
+          <span data-i18n="dl_win_btn">⬇ Download for Windows</span><small>iSupply.Scan.exe</small>
+        </a>
+        <div class="dl-ver" id="win-version" data-i18n="dl_win_ver">Latest version</div>
+      </div>
+      <div class="dl-card">
+        <div class="soon" data-i18n="dl_soon">Coming soon</div>
+        <div class="os-ic">🍎</div>
+        <h3 data-i18n="dl_mac_h">macOS</h3>
+        <p data-i18n="dl_mac_p">Native macOS app for Apple Silicon and Intel Macs. Requires macOS 12 Monterey or later.</p>
+        <ul>
+          <li><span class="ck">✓</span><span data-i18n="dl_mac_1">macOS 12+ · Apple Silicon & Intel</span></li>
+          <li><span class="ck">✓</span><span data-i18n="dl_mac_2">No additional software required</span></li>
+          <li><span class="ck">✓</span><span data-i18n="dl_mac_3">Notarized by Apple</span></li>
+        </ul>
+        <a class="btn-dl disabled"><span data-i18n="dl_mac_btn">Download for macOS</span><small>iSupply_Scan.dmg</small></a>
+        <div class="dl-ver" data-i18n="dl_mac_ver">In development · notify me at info@isupply.cz</div>
+      </div>
+    </div>
+    <div class="dl-foot"><span data-i18n="dl_foot1">After downloading, run the installer and enter your licence key to activate.</span> <a href="#pricing" data-i18n="dl_foot2">Don't have a key?</a> · <span data-i18n="dl_foot3">Need help?</span> <a href="mailto:info@isupply.cz" data-i18n="dl_foot4">Contact support</a></div>
+  </div>
+</section>
 
-    <div class="download-note">
-      After downloading, run the installer and enter your licence key to activate. 
-      <a href="#pricing">Don't have a key?</a> · 
-      Need help? <a href="mailto:info@isupply.cz">Contact support</a>
+<section>
+  <div class="wrap">
+    <div class="cta">
+      <h2 data-i18n="cta_h">Ready to grade with confidence?</h2>
+      <p data-i18n="cta_p">Join the EU refurbishers who trust iSupply Scan for every device.</p>
+      <a class="btn-cta-white" href="mailto:info@isupply.cz?subject=iSupply%20Scan%20licence" data-i18n="cta_btn">Get your licence today</a>
     </div>
   </div>
 </section>
 
-<!-- CTA -->
-<section class="cta-section">
-  <h2 data-i18n="cta_title">Ready to diagnose faster?</h2>
-  <p data-i18n="cta_sub">Join refurbishers across the EU using iSupply Scan to process more devices with fewer errors.</p>
-  <a href="mailto:info@isupply.cz?subject=iSupply Scan licence" class="btn-cta-white" data-i18n="cta_btn">Get your licence today</a>
-</section>
-
-<!-- FOOTER -->
-<footer>
-  <div class="footer-inner">
-    <div class="footer-top">
-      <div>
-        <div class="footer-brand-text">iSupply <span>Scan</span></div>
-        <div class="footer-brand-desc">Professional iPhone diagnostics software for EU refurbishers. Built by iSupply trade s.r.o.</div>
-      </div>
-      <div>
-        <div class="footer-col-title">Product</div>
-        <div class="footer-links">
-          <a href="#features" data-i18n="nav_features">Features</a>
-          <a href="#how-it-works" data-i18n="nav_how">How it works</a>
-          <a href="#pricing" data-i18n="nav_pricing">Pricing</a>
-          <a href="#compatibility" data-i18n="nav_compat">Compatibility</a>
+<footer class="ft">
+  <div class="wrap">
+    <div class="ft-grid">
+      <div class="ft-col">
+        <a href="/" class="logo" style="margin-bottom:14px"><span class="iS">iS</span> iSupply <span>Scan</span></a>
+        <div class="ft-company">
+          iSupply trade s.r.o.<br>
+          IČO: 23199351 · DIČ: CZ23199351<br>
+          Křižíkova 177/29, Karlín, 186 00 Praha 8<br>
+          <span data-i18n="ft_branch">Branch:</span> Opletalova 703, 537 01 Chrudim
         </div>
       </div>
-      <div>
-        <div class="footer-col-title">Support</div>
-        <div class="footer-links">
-          <a href="mailto:info@isupply.cz">Email support</a>
-          <a href="tel:+420703125125">+420 703 125 125</a>
-          <a href="#" onclick="alert('Documentation coming soon')">Documentation</a>
-        </div>
+      <div class="ft-col">
+        <h4 data-i18n="ft_product">Product</h4>
+        <a href="#features" data-i18n="nav_features">Features</a>
+        <a href="#how" data-i18n="nav_how">How it works</a>
+        <a href="#pricing" data-i18n="nav_pricing">Pricing</a>
+        <a href="#download" data-i18n="nav_download">Download</a>
       </div>
-      <div>
-        <div class="footer-col-title">Company</div>
-        <div class="footer-links">
-          <a href="https://www.isupply.cz" target="_blank">isupply.cz</a>
-          <a href="mailto:info@isupply.cz">info@isupply.cz</a>
-          <a href="#" onclick="alert('IČO: 23199351\nDIČ: CZ23199351\nKřižíkova 177/29, Praha 8\nPobočka: Opletalova 703, Chrudim')">Legal info</a>
-        </div>
+      <div class="ft-col">
+        <h4 data-i18n="ft_contact">Contact</h4>
+        <a href="mailto:info@isupply.cz">info@isupply.cz</a>
+        <a href="tel:+420703125125">+420 703 125 125</a>
+        <a href="/support" data-i18n="ft_support">Support & FAQ</a>
+        <a href="/admin" data-i18n="nav_admin">Admin Panel →</a>
       </div>
     </div>
-    <div class="footer-bottom">
-      <div class="footer-copy">© 2026 iSupply trade s.r.o. · IČO: 23199351</div>
-      <div class="footer-legal">
-        <a href="#">Privacy Policy</a>
-        <a href="#">Terms of Service</a>
-      </div>
+    <div class="ft-bottom">
+      <span>© 2026 iSupply trade s.r.o. · <span data-i18n="ft_rights">All rights reserved</span></span>
+      <span>iSupply Scan · isupply-scan.cz</span>
     </div>
   </div>
 </footer>
 
 <script>
-// Animace scanning v hero demo
-const tests = [
-  {icon:'🔋',label:'Battery · 91% · Excellent',cls:'pass'},
-  {icon:'📱',label:'Display · Original',cls:'pass'},
-  {icon:'📷',label:'Rear camera · Original',cls:'pass'},
-  {icon:'🤳',label:'Front camera · Original',cls:'pass'},
-  {icon:'🎤',label:'Microphone · Original',cls:'pass'},
-  {icon:'🔊',label:'Speaker · Original',cls:'pass'},
-  {icon:'📶',label:'Wi-Fi · Original',cls:'pass'},
-];
-let testIdx = 2;
-const testsEl = document.getElementById('demo-tests2');
-
-function nextTest() {
-  if (testIdx >= tests.length) return;
-  const t = tests[testIdx];
-  const rows = testsEl.querySelectorAll('.demo-test');
-  // Update scanning row
-  if (rows[testIdx]) {
-    rows[testIdx].className = 'demo-test ' + t.cls;
-    rows[testIdx].textContent = t.icon + ' ' + t.label;
-  }
-  testIdx++;
-  if (testIdx < tests.length) {
-    // Add next scanning row
-    const next = tests[testIdx];
-    if (rows[testIdx]) {
-      rows[testIdx].className = 'demo-test scanning';
-      rows[testIdx].textContent = next.icon + ' ' + next.label.split('·')[0] + '· scanning...';
-    }
-  }
-  if (testIdx < tests.length) {
-    setTimeout(nextTest, 900);
-  } else {
-    // Done
-    const slot = document.getElementById('demo-slot2');
-    slot.className = 'demo-slot done';
-    slot.querySelector('.demo-badge').className = 'demo-badge badge-done';
-    slot.querySelector('.demo-badge').textContent = 'OK ✓';
-    slot.querySelector('.scan-line').style.display = 'none';
-    // Add grade
-    const grade = document.createElement('div');
-    grade.className = 'demo-grade A';
-    grade.textContent = 'A';
-    slot.appendChild(grade);
-    // Restart after 3s
-    setTimeout(resetDemo, 3000);
-  }
-}
-
-function resetDemo() {
-  testIdx = 2;
-  const slot = document.getElementById('demo-slot2');
-  slot.className = 'demo-slot active';
-  slot.querySelector('.demo-badge').className = 'demo-badge badge-testing';
-  slot.querySelector('.demo-badge').textContent = 'Testing ●';
-  slot.querySelector('.scan-line').style.display = '';
-  const grade = slot.querySelector('.demo-grade');
-  if (grade) grade.remove();
-  testsEl.innerHTML = `
-    <div class="demo-test pass">🔋 Battery · 91% · Excellent</div>
-    <div class="demo-test pass">📱 Display · Original</div>
-    <div class="demo-test scanning" id="scanning-row">📷 Rear camera · scanning...</div>
-    <div class="demo-test pending">🤳 Front camera</div>
-    <div class="demo-test pending">🎤 Microphone</div>
-  `;
-  setTimeout(nextTest, 1000);
-}
-
-setTimeout(nextTest, 1200);
-
-// Smooth nav highlight
-const sections = document.querySelectorAll('section[id], div[id="pricing"]');
-window.addEventListener('scroll', () => {
-  const y = window.scrollY + 80;
-  document.querySelectorAll('.nav-links a').forEach(a => {
-    const target = document.querySelector(a.getAttribute('href'));
-    if (target && target.offsetTop <= y && target.offsetTop + target.offsetHeight > y) {
-      a.style.color = 'var(--pink)';
-    } else {
-      a.style.color = '';
-    }
-  });
-});
-</script>
-<script>
-// ── PRICING BILLING TOGGLE ──
-let currentBilling = 'monthly';
-let currentPlan = '';
-
-const prices = {
-  monthly: { basic: 35, pro: 49, business: 79 },
-  yearly:  { basic: 26, pro: 37, business: 59 }  // ~25% sleva
-};
-
-function toggleBilling() {
-  currentBilling = currentBilling === 'monthly' ? 'yearly' : 'monthly';
-  const knob = document.getElementById('toggle-knob');
-  const monthlyLbl = document.getElementById('toggle-monthly-lbl');
-  const yearlyLbl  = document.getElementById('toggle-yearly-lbl');
-
-  if (currentBilling === 'yearly') {
-    knob.style.transform = 'translateX(22px)';
-    monthlyLbl.style.color = 'var(--gray-400)';
-    monthlyLbl.style.fontWeight = '500';
-    yearlyLbl.style.color  = 'var(--black)';
-    yearlyLbl.style.fontWeight  = '600';
-  } else {
-    knob.style.transform = 'translateX(0)';
-    monthlyLbl.style.color = 'var(--black)';
-    monthlyLbl.style.fontWeight = '600';
-    yearlyLbl.style.color  = 'var(--gray-400)';
-    yearlyLbl.style.fontWeight  = '500';
-  }
-
-  ['basic','pro','business'].forEach(plan => {
-    document.getElementById('price-' + plan).innerHTML =
-      '<sup>€</sup>' + prices[currentBilling][plan];
-    document.getElementById('period-' + plan).textContent =
-      currentBilling === 'yearly' ? 'per month, billed yearly' : 'per month';
-  });
-}
-
-// ── STRIPE CHECKOUT ──
-function startCheckout(plan) {
-  currentPlan = plan;
-  const modal = document.getElementById('checkout-modal');
-  modal.style.display = 'flex';
-  document.getElementById('checkout-email').value = '';
-  document.getElementById('checkout-error').style.display = 'none';
-  document.getElementById('checkout-submit').textContent = 'Pokračovat k platbě →';
-  document.getElementById('checkout-submit').disabled = false;
-  setTimeout(() => document.getElementById('checkout-email').focus(), 100);
-}
-
-function closeModal() {
-  document.getElementById('checkout-modal').style.display = 'none';
-}
-
-document.getElementById('checkout-modal').addEventListener('click', function(e) {
-  if (e.target === this) closeModal();
-});
-
-async function submitCheckout() {
-  const email = document.getElementById('checkout-email').value.trim();
-  const errEl = document.getElementById('checkout-error');
-  const btn   = document.getElementById('checkout-submit');
-
-  if (!email || !email.includes('@')) {
-    errEl.textContent = 'Zadejte platný email.';
-    errEl.style.display = 'block';
-    return;
-  }
-
-  btn.textContent = 'Přesměrovávám na platbu...';
-  btn.disabled = true;
-  errEl.style.display = 'none';
-
-  try {
-    const res = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plan: currentPlan, billing: currentBilling, email })
-    });
-    const data = await res.json();
-
-    if (data.ok && data.url) {
-      window.location.href = data.url;
-    } else if (data.ok && data.free) {
-      // Starter plán – zdarma
-      closeModal();
-      alert('Váš licenční klíč: ' + data.license_key + '\n\nByl vám také zaslán na email.');
-    } else {
-      errEl.textContent = data.error || 'Chyba při vytváření platby.';
-      errEl.style.display = 'block';
-      btn.textContent = 'Pokračovat k platbě →';
-      btn.disabled = false;
-    }
-  } catch(e) {
-    errEl.textContent = 'Chyba připojení. Zkuste to znovu.';
-    errEl.style.display = 'block';
-    btn.textContent = 'Pokračovat k platbě →';
-    btn.disabled = false;
-  }
-}
-</script>
-
-<script>
-const TRANSLATIONS = {
-  "EN": {
-    "nav_features":"Features","nav_how":"How it works","nav_pricing":"Pricing","nav_compat":"Compatibility","nav_download":"⬇ Download","nav_admin":"Admin Panel →","nav_cta":"Get started",
-    "hero_eyebrow":"Professional iPhone Diagnostics","hero_h1a":"Know exactly what's","hero_h1b":"inside every iPhone",
-    "hero_sub":"iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.",
-    "hero_btn1":"Download free trial","hero_btn2":"See how it works","hero_note":"No credit card required · Works on Windows · USB connection",
-    "stats_comp":"Components tested<br>per device","stats_slots":"Simultaneous slots<br>per workstation","stats_time":"Average full<br>diagnostic time","stats_grade":"Automatic grading<br>with label printing",
-    "feat_eyebrow":"What you get","feat_title":"Everything a refurbisher needs","feat_sub":"From USB detection to label printing, iSupply Scan handles the full workflow.",
-    "feat1_title":"Automatic USB Detection","feat1_desc":"Connect an iPhone and diagnostics start instantly. No clicks, no setup. Supports up to 8 devices simultaneously on one workstation.",
-    "feat2_title":"Real Battery Health","feat2_desc":"Reads MaximumCapacityPercent directly from Apple's IOKit, the same value iOS shows in Settings. Not just charge level, but actual degradation.",
-    "feat3_title":"Original Parts Detection","feat3_desc":"Detects replaced displays, Touch ID sensors, cameras, mainboards and more. Instantly flags non-original components with red indicators.",
-    "feat4_title":"Label Printing","feat4_desc":"One click prints a label with IMEI, model, grade, battery health and status. Compatible with a wide range of label printers.",
-    "feat5_title":"Excel Export & Database","feat5_desc":"Every tested device is logged automatically. Export to Excel with custom column selection: model, IMEI, capacity, color, battery. Ready for your ERP.",
-    "feat6_title":"6 Languages","feat6_desc":"Full UI in English, Czech, Polish, Russian, Italian and French. Switch instantly from the header. Ideal for multi-national warehouses.",
-    "how_eyebrow":"Setup in minutes","how_title":"From purchase to first scan","how_sub":"No technical knowledge required. If you can plug in a USB cable, you can run iSupply Scan.",
-    "step1_title":"Buy a licence","step1_desc":"Choose a plan below and complete the purchase. Your licence key arrives instantly.",
-    "step2_title":"Download & install","step2_desc":"Download the Windows installer. Double-click, follow the setup wizard. Done in under 2 minutes.",
-    "step3_title":"Activate","step3_desc":"Enter your licence key, choose a username and password. One-time setup per device.",
-    "step4_title":"Start scanning","step4_desc":"Plug in an iPhone. Diagnostics start automatically. Grade, print label, export. Repeat.",
-    "pricing_eyebrow":"Pricing","pricing_title":"Simple, transparent pricing","pricing_sub":"All plans include the full diagnostic suite. Pay by scan volume, not by workstation.",
-    "pricing_monthly":"Monthly","pricing_yearly":"Yearly",
-    "plan_basic_desc":"For small shops and repair services.","plan_basic_f1":"Up to 200 scans / month","plan_basic_f2":"Full diagnostics (12 tests)","plan_basic_f3":"Label printing","plan_basic_f4":"Excel export","plan_basic_f5":"Priority support","plan_basic_f6":"Email support","plan_basic_btn":"Buy Basic",
-    "plan_pro_desc":"For mid-size buyback stores and refurbishers.","plan_pro_f1":"Up to 500 scans / month","plan_pro_f2":"Full diagnostics (12 tests)","plan_pro_f3":"Label printing","plan_pro_f4":"Excel export","plan_pro_f5":"Email support","plan_pro_btn":"Buy Pro",
-    "plan_biz_desc":"For large wholesalers and ITAD.","plan_biz_f1":"Up to 1000 scans / month","plan_biz_f2":"Full diagnostics (12 tests)","plan_biz_f3":"Label printing","plan_biz_f4":"Excel export","plan_biz_f5":"Priority support","plan_biz_btn":"Buy Business",
-    "plan_ent_desc":"For operations over 1000 units/month.","plan_ent_f1":"Unlimited scans","plan_ent_f2":"Full diagnostics (12 tests)","plan_ent_f3":"Label printing","plan_ent_f4":"Excel export","plan_ent_f5":"Dedicated support + API","plan_ent_btn":"Contact us",
-    "modal_title":"Enter your email","modal_sub":"We will send your licence key to this email after payment.","modal_btn":"Continue to payment →","modal_secure":"🔒 Secure payment via Stripe",
-    "compat_eyebrow":"Device support","compat_title":"Tested on every major iPhone","compat_sub":"From iPhone 6s to iPhone 16 Pro Max, iSupply Scan reads model numbers, A-series identifiers and component serial numbers.","compat_more":"+ iPhone X, 8, 7, 6s and all variants · 60+ models supported",
-    "dl_eyebrow":"Download","dl_title":"Get iSupply Scan","dl_sub":"Download the installer for your platform. A valid licence key is required to activate.",
-    "dl_win_desc":"Full installer for Windows 10 and 11. No Python or dependencies required, everything is bundled.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"iTunes or Apple Devices required","dl_win_s3":"~45 MB installer","dl_win_s4":"Automatic updates","dl_win_btn":"Download for Windows",
-    "dl_mac_desc":"Native macOS app for Apple Silicon and Intel Macs. Requires macOS 12 Monterey or later.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"No additional software required","dl_mac_s3":"~50 MB app bundle","dl_mac_s4":"Notarized by Apple","dl_mac_btn":"Download for macOS",
-    "dl_note_key":"Don't have a key?","dl_note_help":"Need help?","dl_note_contact":"Contact support",
-    "cta_title":"Ready to diagnose faster?","cta_sub":"Join refurbishers across the EU using iSupply Scan to process more devices with fewer errors.","cta_btn":"Get your licence today",
-    "footer_desc":"Professional iPhone diagnostics software for EU refurbishers. Built by iSupply trade s.r.o.","footer_product":"Product","footer_support":"Support","footer_company":"Company","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
+var I18N = {
+  en: {
+    nav_features:"Features", nav_how:"How it works", nav_pricing:"Pricing", nav_compat:"Compatibility",
+    nav_download:"⬇ Download", nav_admin:"Admin Panel →", nav_get:"Get started",
+    hero_eyebrow:"Professional iPhone diagnostics",
+    hero_h1a:"Know exactly what's", hero_h1b:"inside every iPhone",
+    hero_lead:"iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.",
+    hero_cta1:"Download free trial", hero_cta2:"See how it works",
+    hero_note:"No credit card required · Works on Windows · USB connection",
+    feat_eyebrow:"What it checks", feat_h2:"12 tests, one click",
+    feat_p:"Every component that affects resale value, verified against Apple's own diagnostic data — not guesswork.",
+    feat1_h:"Battery health", feat1_p:"True battery capacity and cycle count read straight from the device, so you grade honestly.",
+    feat2_h:"Display & Touch ID", feat2_p:"Detects original vs. aftermarket screens and whether Touch ID / Face ID is genuine.",
+    feat3_h:"Cameras & sensors", feat3_p:"Front and rear cameras, microphones and key sensors checked in a single pass.",
+    feat4_h:"iCloud & activation", feat4_p:"Instantly see activation lock status so you never buy a locked device by mistake.",
+    feat5_h:"Label printing", feat5_p:"Print a clean spec label straight to a Brother QL printer after every scan.",
+    feat6_h:"Excel export", feat6_p:"Export every scan to Excel for your stock, accounting or resale listings.",
+    how_eyebrow:"How it works", how_h2:"From box to graded in under a minute",
+    how1_h:"Connect", how1_p:"Plug the iPhone into any USB port. iSupply Scan detects it automatically — up to 10 at once.",
+    how2_h:"Scan", how2_p:"12 components are tested in seconds and results appear live on screen.",
+    how3_h:"Grade & print", how3_p:"Pick a condition, print the label, and the unit can flow straight into your e-shop stock.",
+    price_eyebrow:"Pricing", price_h2:"Simple, transparent pricing",
+    price_p:"All plans include the full diagnostic suite. Pay by scan volume, not by workstation.",
+    price_monthly:"Monthly", price_yearly:"Yearly", price_per:"per month",
+    p_basic_tag:"For small shops and repair centers.", p_pro_tag:"For mid-size buyers and refurbishers.",
+    p_biz_tag:"For large wholesalers and ITAD.", p_ent_tag:"For operations over 1000 units / month.",
+    p_full:"Full diagnostics (12 tests)", p_label:"Label printing", p_excel:"Excel export",
+    p_priority:"Priority support", p_email:"Email support", p_popular:"Most popular",
+    p_basic_1:"Up to 200 scans / month", p_pro_1:"Up to 500 scans / month", p_biz_1:"Up to 1000 scans / month",
+    p_ent_1:"Unlimited scans", p_ent_2:"Dedicated support + API",
+    p_custom:"Custom", p_custom_sub:"tailored pricing",
+    p_buy_basic:"Get Basic", p_buy_pro:"Get Pro", p_buy_biz:"Get Business", p_buy_ent:"Contact us",
+    compat_eyebrow:"Compatibility", compat_h2:"What you need to run it",
+    compat1_h:"Windows 10 / 11", compat1_p:"64-bit. Everything is bundled in one .exe — no Python or dependencies to install.",
+    compat2_h:"iTunes or Apple Devices", compat2_p:"Required for USB drivers. If it's missing, the app shows a one-click download prompt on start.",
+    compat3_h:"USB connection", compat3_p:"Connect iPhones directly to a USB port with an original cable and tap \"Trust\".",
+    dl_eyebrow:"Download", dl_h2:"Get iSupply Scan",
+    dl_p:"Download the installer for your platform. A valid licence key is required to activate.",
+    dl_win_h:"Windows", dl_win_p:"Full installer for Windows 10 and 11. No Python or dependencies required — everything is bundled.",
+    dl_win_1:"Windows 10 / 11 (64-bit)", dl_win_2:"iTunes or Apple Devices required", dl_win_3:"~75 MB, single file", dl_win_4:"Automatic updates",
+    dl_win_btn:"⬇ Download for Windows", dl_win_ver:"Latest version",
+    dl_soon:"Coming soon", dl_mac_h:"macOS", dl_mac_p:"Native macOS app for Apple Silicon and Intel Macs. Requires macOS 12 Monterey or later.",
+    dl_mac_1:"macOS 12+ · Apple Silicon & Intel", dl_mac_2:"No additional software required", dl_mac_3:"Notarized by Apple",
+    dl_mac_btn:"Download for macOS", dl_mac_ver:"In development · notify me at info@isupply.cz",
+    dl_foot1:"After downloading, run the installer and enter your licence key to activate.",
+    dl_foot2:"Don't have a key?", dl_foot3:"Need help?", dl_foot4:"Contact support",
+    cta_h:"Ready to grade with confidence?", cta_p:"Join the EU refurbishers who trust iSupply Scan for every device.", cta_btn:"Get your licence today",
+    ft_product:"Product", ft_contact:"Contact", ft_support:"Support & FAQ", ft_branch:"Branch:", ft_rights:"All rights reserved"
   },
-  "CZ": {
-    "nav_features":"Funkce","nav_how":"Jak to funguje","nav_pricing":"Ceník","nav_compat":"Kompatibilita","nav_download":"⬇ Stáhnout","nav_admin":"Admin Panel →","nav_cta":"Začít",
-    "hero_eyebrow":"Profesionální diagnostika iPhone","hero_h1a":"Zjistěte přesně co je","hero_h1b":"uvnitř každého iPhonu",
-    "hero_sub":"iSupply Scan testuje 12 komponent během sekund: displej, Touch ID, kamery, stav baterie a další. Včetně tisku štítků. Vytvořeno pro EU refurbishery.",
-    "hero_btn1":"Stáhnout zdarma","hero_btn2":"Jak to funguje","hero_note":"Bez platební karty · Funguje na Windows · USB připojení",
-    "stats_comp":"Testovaných komponent<br>na zařízení","stats_slots":"Současných slotů<br>na pracovišti","stats_time":"Průměrná doba<br>diagnostiky","stats_grade":"Automatické hodnocení<br>s tiskem štítků",
-    "feat_eyebrow":"Co získáte","feat_title":"Vše co refurbisher potřebuje","feat_sub":"Od detekce USB po tisk štítků, iSupply Scan zvládá celý pracovní postup.",
-    "feat1_title":"Automatická detekce USB","feat1_desc":"Připojte iPhone a diagnostika začne okamžitě. Bez klikání, bez nastavení. Podporuje až 8 zařízení současně na jednom pracovišti.",
-    "feat2_title":"Skutečný stav baterie","feat2_desc":"Čte MaximumCapacityPercent přímo z Apple IOKit, stejnou hodnotu jakou zobrazuje iOS v Nastavení. Nejen stav nabití, ale skutečná degradace.",
-    "feat3_title":"Detekce originálních dílů","feat3_desc":"Detekuje vyměněné displeje, Touch ID senzory, kamery, základní desky a další. Okamžitě označí neoriginální komponenty červeně.",
-    "feat4_title":"Tisk štítků","feat4_desc":"Jeden klik vytiskne štítek s IMEI, modelem, hodnocením, stavem baterie a statusem. Kompatibilní s širokou řadou tiskáren štítků.",
-    "feat5_title":"Export do Excelu & Databáze","feat5_desc":"Každé testované zařízení je automaticky zaznamenáno. Export do Excelu s vlastním výběrem sloupců: model, IMEI, kapacita, barva, baterie.",
-    "feat6_title":"6 Jazyků","feat6_desc":"Celé UI v angličtině, češtině, polštině, ruštině, italštině a francouzštině. Přepněte okamžitě v záhlaví. Ideální pro mezinárodní sklady.",
-    "how_eyebrow":"Nastavení za minuty","how_title":"Od nákupu k prvnímu skenování","how_sub":"Není potřeba technické znalosti. Pokud umíte zapojit USB kabel, zvládnete iSupply Scan.",
-    "step1_title":"Kupte licenci","step1_desc":"Vyberte plán níže a dokončete nákup. Licenční klíč obdržíte okamžitě.",
-    "step2_title":"Stáhněte & nainstalujte","step2_desc":"Stáhněte instalátor pro Windows. Dvojklik, projděte průvodcem. Hotovo do 2 minut.",
-    "step3_title":"Aktivujte","step3_desc":"Zadejte licenční klíč, zvolte uživatelské jméno a heslo. Jednorázové nastavení na každém zařízení.",
-    "step4_title":"Začněte skenovat","step4_desc":"Připojte iPhone. Diagnostika začne automaticky. Ohodnoťte, vytiskněte štítek, exportujte. Opakujte.",
-    "pricing_eyebrow":"Ceník","pricing_title":"Jednoduché, transparentní ceny","pricing_sub":"Všechny plány zahrnují plnou diagnostiku. Platíte podle objemu skenů, nikoli podle pracoviště.",
-    "pricing_monthly":"Měsíčně","pricing_yearly":"Ročně",
-    "plan_basic_desc":"Pro malé obchody a servisy.","plan_basic_f1":"Do 200 skenů / měsíc","plan_basic_f2":"Plná diagnostika (12 testů)","plan_basic_f3":"Tisk štítků","plan_basic_f4":"Export do Excelu","plan_basic_f5":"Prioritní podpora","plan_basic_f6":"Email podpora","plan_basic_btn":"Koupit Basic",
-    "plan_pro_desc":"Pro střední výkupny a refurbishery.","plan_pro_f1":"Do 500 skenů / měsíc","plan_pro_f2":"Plná diagnostika (12 testů)","plan_pro_f3":"Tisk štítků","plan_pro_f4":"Export do Excelu","plan_pro_f5":"Email podpora","plan_pro_btn":"Koupit Pro",
-    "plan_biz_desc":"Pro velké velkoobchody a ITAD.","plan_biz_f1":"Do 1000 skenů / měsíc","plan_biz_f2":"Plná diagnostika (12 testů)","plan_biz_f3":"Tisk štítků","plan_biz_f4":"Export do Excelu","plan_biz_f5":"Prioritní podpora","plan_biz_btn":"Koupit Business",
-    "plan_ent_desc":"Pro operace nad 1000 ks/měsíc.","plan_ent_f1":"Neomezené skeny","plan_ent_f2":"Plná diagnostika (12 testů)","plan_ent_f3":"Tisk štítků","plan_ent_f4":"Export do Excelu","plan_ent_f5":"Dedikovaná podpora + API","plan_ent_btn":"Kontaktujte nás",
-    "modal_title":"Zadejte váš email","modal_sub":"Licenční klíč vám zašleme na tento email po dokončení platby.","modal_btn":"Pokračovat k platbě →","modal_secure":"🔒 Zabezpečená platba přes Stripe",
-    "compat_eyebrow":"Podpora zařízení","compat_title":"Otestováno na všech hlavních iPhonech","compat_sub":"Od iPhone 6s po iPhone 16 Pro Max, iSupply Scan čte čísla modelů, A-series identifikátory a sériová čísla komponent.","compat_more":"+ iPhone X, 8, 7, 6s a všechny varianty · 60+ podporovaných modelů",
-    "dl_eyebrow":"Stáhnout","dl_title":"Získejte iSupply Scan","dl_sub":"Stáhněte instalátor pro vaši platformu. K aktivaci je potřeba platný licenční klíč.",
-    "dl_win_desc":"Plný instalátor pro Windows 10 a 11. Nevyžaduje Python ani závislosti, vše je zabaleno.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"Vyžaduje iTunes nebo Apple Devices","dl_win_s3":"~45 MB instalátor","dl_win_s4":"Automatické aktualizace","dl_win_btn":"Stáhnout pro Windows",
-    "dl_mac_desc":"Nativní macOS aplikace pro Apple Silicon a Intel Macy. Vyžaduje macOS 12 Monterey nebo novější.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"Nevyžaduje další software","dl_mac_s3":"~50 MB aplikace","dl_mac_s4":"Notarizováno Apple","dl_mac_btn":"Stáhnout pro macOS",
-    "dl_note_key":"Nemáte klíč?","dl_note_help":"Potřebujete pomoc?","dl_note_contact":"Kontaktovat podporu",
-    "cta_title":"Připraveni diagnostikovat rychleji?","cta_sub":"Připojte se k refurbisherům po celé EU, kteří používají iSupply Scan ke zpracování více zařízení s méně chybami.","cta_btn":"Získejte licenci dnes",
-    "footer_desc":"Profesionální software pro diagnostiku iPhone pro EU refurbishery. Vytvořeno iSupply trade s.r.o.","footer_product":"Produkt","footer_support":"Podpora","footer_company":"Společnost","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
-  },
-  "PL": {
-    "nav_features":"Funkcje","nav_how":"Jak to działa","nav_pricing":"Cennik","nav_compat":"Kompatybilność","nav_download":"⬇ Pobierz","nav_admin":"Panel admina →","nav_cta":"Rozpocznij",
-    "hero_eyebrow":"Profesjonalna diagnostyka iPhone","hero_h1a":"Dowiedz się dokładnie co jest","hero_h1b":"w każdym iPhonie",
-    "hero_sub":"iSupply Scan testuje 12 komponentów w sekundach: wyświetlacz, Touch ID, kamery, stan baterii i inne. Z drukowaniem etykiet. Stworzony dla refurbisherów w UE.",
-    "hero_btn1":"Pobierz za darmo","hero_btn2":"Zobacz jak działa","hero_note":"Bez karty kredytowej · Działa na Windows · Połączenie USB",
-    "stats_comp":"Testowanych komponentów<br>na urządzenie","stats_slots":"Jednoczesnych slotów<br>na stanowisko","stats_time":"Średni czas<br>pełnej diagnostyki","stats_grade":"Automatyczna ocena<br>z drukowaniem etykiet",
-    "feat_eyebrow":"Co otrzymujesz","feat_title":"Wszystko czego potrzebuje refurbisher","feat_sub":"Od wykrywania USB po drukowanie etykiet, iSupply Scan obsługuje cały przepływ pracy.",
-    "feat1_title":"Automatyczne wykrywanie USB","feat1_desc":"Podłącz iPhone a diagnostyka rozpoczyna się natychmiast. Bez klikania, bez konfiguracji. Obsługuje do 8 urządzeń jednocześnie.",
-    "feat2_title":"Rzeczywisty stan baterii","feat2_desc":"Odczytuje MaximumCapacityPercent bezpośrednio z Apple IOKit, tę samą wartość którą iOS pokazuje w Ustawieniach.",
-    "feat3_title":"Wykrywanie oryginalnych części","feat3_desc":"Wykrywa wymienione wyświetlacze, czujniki Touch ID, kamery i inne. Natychmiast oznacza nieoryginalne komponenty na czerwono.",
-    "feat4_title":"Drukowanie etykiet","feat4_desc":"Jedno kliknięcie drukuje etykietę z IMEI, modelem, oceną, stanem baterii i statusem. Kompatybilne z szeroką gamą drukarek etykiet.",
-    "feat5_title":"Eksport do Excela i baza danych","feat5_desc":"Każde testowane urządzenie jest automatycznie rejestrowane. Eksportuj do Excela z niestandardowym wyborem kolumn.",
-    "feat6_title":"6 języków","feat6_desc":"Pełny interfejs w angielskim, czeskim, polskim, rosyjskim, włoskim i francuskim. Przełącz natychmiast w nagłówku.",
-    "how_eyebrow":"Konfiguracja w minuty","how_title":"Od zakupu do pierwszego skanu","how_sub":"Nie wymagana wiedza techniczna. Jeśli potrafisz podłączyć kabel USB, możesz uruchomić iSupply Scan.",
-    "step1_title":"Kup licencję","step1_desc":"Wybierz plan poniżej i dokończ zakup. Klucz licencyjny otrzymasz natychmiast.",
-    "step2_title":"Pobierz i zainstaluj","step2_desc":"Pobierz instalator Windows. Dwuklik, przejdź przez kreator. Gotowe w mniej niż 2 minuty.",
-    "step3_title":"Aktywuj","step3_desc":"Wprowadź klucz licencyjny, wybierz nazwę użytkownika i hasło. Jednorazowa konfiguracja na urządzenie.",
-    "step4_title":"Zacznij skanować","step4_desc":"Podłącz iPhone. Diagnostyka startuje automatycznie. Oceń, wydrukuj etykietę, eksportuj. Powtarzaj.",
-    "pricing_eyebrow":"Cennik","pricing_title":"Proste, przejrzyste ceny","pricing_sub":"Wszystkie plany zawierają pełny zestaw diagnostyczny. Płacisz za wolumen skanów, nie za stanowisko.",
-    "pricing_monthly":"Miesięcznie","pricing_yearly":"Rocznie",
-    "plan_basic_desc":"Dla małych sklepów i serwisów.","plan_basic_f1":"Do 200 skanów / miesiąc","plan_basic_f2":"Pełna diagnostyka (12 testów)","plan_basic_f3":"Drukowanie etykiet","plan_basic_f4":"Eksport do Excela","plan_basic_f5":"Priorytetowe wsparcie","plan_basic_f6":"Wsparcie email","plan_basic_btn":"Kup Basic",
-    "plan_pro_desc":"Dla średnich skupów i refurbisherów.","plan_pro_f1":"Do 500 skanów / miesiąc","plan_pro_f2":"Pełna diagnostyka (12 testów)","plan_pro_f3":"Drukowanie etykiet","plan_pro_f4":"Eksport do Excela","plan_pro_f5":"Wsparcie email","plan_pro_btn":"Kup Pro",
-    "plan_biz_desc":"Dla dużych hurtowni i ITAD.","plan_biz_f1":"Do 1000 skanów / miesiąc","plan_biz_f2":"Pełna diagnostyka (12 testów)","plan_biz_f3":"Drukowanie etykiet","plan_biz_f4":"Eksport do Excela","plan_biz_f5":"Priorytetowe wsparcie","plan_biz_btn":"Kup Business",
-    "plan_ent_desc":"Dla operacji powyżej 1000 szt./miesiąc.","plan_ent_f1":"Nieograniczone skany","plan_ent_f2":"Pełna diagnostyka (12 testów)","plan_ent_f3":"Drukowanie etykiet","plan_ent_f4":"Eksport do Excela","plan_ent_f5":"Dedykowane wsparcie + API","plan_ent_btn":"Skontaktuj się",
-    "modal_title":"Podaj swój email","modal_sub":"Wyślemy klucz licencyjny na ten email po zakończeniu płatności.","modal_btn":"Przejdź do płatności →","modal_secure":"🔒 Bezpieczna płatność przez Stripe",
-    "compat_eyebrow":"Obsługiwane urządzenia","compat_title":"Przetestowane na wszystkich głównych iPhonach","compat_sub":"Od iPhone 6s do iPhone 16 Pro Max, iSupply Scan odczytuje numery modeli, identyfikatory A-series i numery seryjne komponentów.","compat_more":"+ iPhone X, 8, 7, 6s i wszystkie warianty · 60+ obsługiwanych modeli",
-    "dl_eyebrow":"Pobierz","dl_title":"Pobierz iSupply Scan","dl_sub":"Pobierz instalator dla swojej platformy. Do aktywacji wymagany jest ważny klucz licencyjny.",
-    "dl_win_desc":"Pełny instalator dla Windows 10 i 11. Nie wymaga Pythona ani zależności, wszystko jest spakowane.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"Wymagane iTunes lub Apple Devices","dl_win_s3":"~45 MB instalator","dl_win_s4":"Automatyczne aktualizacje","dl_win_btn":"Pobierz dla Windows",
-    "dl_mac_desc":"Natywna aplikacja macOS dla Apple Silicon i Intel Mac. Wymaga macOS 12 Monterey lub nowszego.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"Nie wymaga dodatkowego oprogramowania","dl_mac_s3":"~50 MB pakiet aplikacji","dl_mac_s4":"Notaryzowane przez Apple","dl_mac_btn":"Pobierz dla macOS",
-    "dl_note_key":"Nie masz klucza?","dl_note_help":"Potrzebujesz pomocy?","dl_note_contact":"Skontaktuj się z pomocą",
-    "cta_title":"Gotowy diagnozować szybciej?","cta_sub":"Dołącz do refurbisherów w całej UE korzystających z iSupply Scan do przetwarzania większej liczby urządzeń z mniejszą liczbą błędów.","cta_btn":"Zdobądź licencję już dziś",
-    "footer_desc":"Profesjonalne oprogramowanie do diagnostyki iPhone dla refurbisherów w UE. Zbudowane przez iSupply trade s.r.o.","footer_product":"Produkt","footer_support":"Wsparcie","footer_company":"Firma","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
-  },
-  "RU": {
-    "nav_features":"Функции","nav_how":"Как это работает","nav_pricing":"Цены","nav_compat":"Совместимость","nav_download":"⬇ Скачать","nav_admin":"Панель админа →","nav_cta":"Начать",
-    "hero_eyebrow":"Профессиональная диагностика iPhone","hero_h1a":"Узнайте точно что находится","hero_h1b":"внутри каждого iPhone",
-    "hero_sub":"iSupply Scan тестирует 12 компонентов за секунды: дисплей, Touch ID, камеры, состояние батареи и многое другое. Включая печать этикеток.",
-    "hero_btn1":"Скачать бесплатно","hero_btn2":"Как это работает","hero_note":"Без кредитной карты · Работает на Windows · USB подключение",
-    "stats_comp":"Тестируемых компонентов<br>на устройство","stats_slots":"Одновременных слотов<br>на рабочем месте","stats_time":"Среднее время<br>полной диагностики","stats_grade":"Автоматическая оценка<br>с печатью этикеток",
-    "feat_eyebrow":"Что вы получаете","feat_title":"Всё что нужно рефурбишеру","feat_sub":"От обнаружения USB до печати этикеток, iSupply Scan обрабатывает весь рабочий процесс.",
-    "feat1_title":"Автоматическое обнаружение USB","feat1_desc":"Подключите iPhone и диагностика начнётся мгновенно. Без кликов, без настройки. Поддерживает до 8 устройств одновременно.",
-    "feat2_title":"Реальное состояние батареи","feat2_desc":"Считывает MaximumCapacityPercent напрямую из Apple IOKit, то же значение которое iOS показывает в Настройках.",
-    "feat3_title":"Обнаружение оригинальных деталей","feat3_desc":"Обнаруживает замененные дисплеи, датчики Touch ID, камеры, материнские платы и многое другое. Мгновенно отмечает неоригинальные компоненты красным.",
-    "feat4_title":"Печать этикеток","feat4_desc":"Один клик печатает этикетку с IMEI, моделью, оценкой, состоянием батареи и статусом. Совместимо с широким спектром принтеров этикеток.",
-    "feat5_title":"Экспорт в Excel и база данных","feat5_desc":"Каждое протестированное устройство автоматически записывается. Экспорт в Excel с настраиваемым выбором столбцов.",
-    "feat6_title":"6 языков","feat6_desc":"Полный интерфейс на английском, чешском, польском, русском, итальянском и французском. Переключайтесь мгновенно в заголовке.",
-    "how_eyebrow":"Настройка за минуты","how_title":"От покупки до первого сканирования","how_sub":"Технические знания не требуются. Если вы можете подключить USB кабель, вы можете использовать iSupply Scan.",
-    "step1_title":"Купите лицензию","step1_desc":"Выберите план ниже и завершите покупку. Лицензионный ключ приходит мгновенно.",
-    "step2_title":"Скачайте и установите","step2_desc":"Скачайте установщик Windows. Двойной клик, следуйте мастеру установки. Готово менее чем за 2 минуты.",
-    "step3_title":"Активируйте","step3_desc":"Введите лицензионный ключ, выберите имя пользователя и пароль. Однократная настройка на устройство.",
-    "step4_title":"Начните сканирование","step4_desc":"Подключите iPhone. Диагностика запускается автоматически. Оцените, напечатайте этикетку, экспортируйте. Повторяйте.",
-    "pricing_eyebrow":"Цены","pricing_title":"Простые, прозрачные цены","pricing_sub":"Все планы включают полный пакет диагностики. Платите по объёму сканирований, а не по рабочему месту.",
-    "pricing_monthly":"Ежемесячно","pricing_yearly":"Ежегодно",
-    "plan_basic_desc":"Для небольших магазинов и сервисов.","plan_basic_f1":"До 200 сканирований / месяц","plan_basic_f2":"Полная диагностика (12 тестов)","plan_basic_f3":"Печать этикеток","plan_basic_f4":"Экспорт в Excel","plan_basic_f5":"Приоритетная поддержка","plan_basic_f6":"Поддержка по email","plan_basic_btn":"Купить Basic",
-    "plan_pro_desc":"Для средних пунктов выкупа и рефурбишеров.","plan_pro_f1":"До 500 сканирований / месяц","plan_pro_f2":"Полная диагностика (12 тестов)","plan_pro_f3":"Печать этикеток","plan_pro_f4":"Экспорт в Excel","plan_pro_f5":"Поддержка по email","plan_pro_btn":"Купить Pro",
-    "plan_biz_desc":"Для крупных оптовиков и ITAD.","plan_biz_f1":"До 1000 сканирований / месяц","plan_biz_f2":"Полная диагностика (12 тестов)","plan_biz_f3":"Печать этикеток","plan_biz_f4":"Экспорт в Excel","plan_biz_f5":"Приоритетная поддержка","plan_biz_btn":"Купить Business",
-    "plan_ent_desc":"Для операций свыше 1000 единиц/месяц.","plan_ent_f1":"Неограниченные сканирования","plan_ent_f2":"Полная диагностика (12 тестов)","plan_ent_f3":"Печать этикеток","plan_ent_f4":"Экспорт в Excel","plan_ent_f5":"Выделенная поддержка + API","plan_ent_btn":"Связаться с нами",
-    "modal_title":"Введите ваш email","modal_sub":"Мы отправим лицензионный ключ на этот email после завершения оплаты.","modal_btn":"Перейти к оплате →","modal_secure":"🔒 Безопасная оплата через Stripe",
-    "compat_eyebrow":"Поддержка устройств","compat_title":"Протестировано на всех основных iPhone","compat_sub":"От iPhone 6s до iPhone 16 Pro Max, iSupply Scan считывает номера моделей, идентификаторы A-series и серийные номера компонентов.","compat_more":"+ iPhone X, 8, 7, 6s и все варианты · 60+ поддерживаемых моделей",
-    "dl_eyebrow":"Скачать","dl_title":"Получите iSupply Scan","dl_sub":"Скачайте установщик для вашей платформы. Для активации требуется действующий лицензионный ключ.",
-    "dl_win_desc":"Полный установщик для Windows 10 и 11. Python и зависимости не требуются, всё включено.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"Требуется iTunes или Apple Devices","dl_win_s3":"~45 МБ установщик","dl_win_s4":"Автоматические обновления","dl_win_btn":"Скачать для Windows",
-    "dl_mac_desc":"Нативное приложение macOS для Apple Silicon и Intel Mac. Требуется macOS 12 Monterey или новее.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"Дополнительное ПО не требуется","dl_mac_s3":"~50 МБ пакет приложения","dl_mac_s4":"Нотаризовано Apple","dl_mac_btn":"Скачать для macOS",
-    "dl_note_key":"Нет ключа?","dl_note_help":"Нужна помощь?","dl_note_contact":"Связаться с поддержкой",
-    "cta_title":"Готовы диагностировать быстрее?","cta_sub":"Присоединяйтесь к рефурбишерам по всей ЕС, использующим iSupply Scan для обработки большего количества устройств с меньшим количеством ошибок.","cta_btn":"Получите лицензию сегодня",
-    "footer_desc":"Профессиональное программное обеспечение для диагностики iPhone для рефурбишеров ЕС. Создано iSupply trade s.r.o.","footer_product":"Продукт","footer_support":"Поддержка","footer_company":"Компания","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
-  },
-  "FR": {
-    "nav_features":"Fonctionnalités","nav_how":"Comment ça marche","nav_pricing":"Tarifs","nav_compat":"Compatibilité","nav_download":"⬇ Télécharger","nav_admin":"Panneau admin →","nav_cta":"Commencer",
-    "hero_eyebrow":"Diagnostics iPhone professionnels","hero_h1a":"Sachez exactement ce qu'il y a","hero_h1b":"à l'intérieur de chaque iPhone",
-    "hero_sub":"iSupply Scan teste 12 composants en quelques secondes : écran, Touch ID, caméras, état de la batterie et plus encore. Avec impression d'étiquettes.",
-    "hero_btn1":"Télécharger gratuitement","hero_btn2":"Voir comment ça marche","hero_note":"Sans carte de crédit · Fonctionne sur Windows · Connexion USB",
-    "stats_comp":"Composants testés<br>par appareil","stats_slots":"Slots simultanés<br>par poste de travail","stats_time":"Durée moyenne<br>de diagnostic complet","stats_grade":"Notation automatique<br>avec impression d'étiquettes",
-    "feat_eyebrow":"Ce que vous obtenez","feat_title":"Tout ce dont un refurbisher a besoin","feat_sub":"De la détection USB à l'impression d'étiquettes, iSupply Scan gère tout le flux de travail.",
-    "feat1_title":"Détection USB automatique","feat1_desc":"Connectez un iPhone et les diagnostics démarrent instantanément. Sans clics, sans configuration. Supporte jusqu'à 8 appareils simultanément.",
-    "feat2_title":"Vrai état de la batterie","feat2_desc":"Lit MaximumCapacityPercent directement depuis Apple IOKit, la même valeur qu'iOS affiche dans les Réglages.",
-    "feat3_title":"Détection des pièces originales","feat3_desc":"Détecte les écrans, capteurs Touch ID, caméras et cartes mères remplacés. Signale instantanément les composants non-originaux en rouge.",
-    "feat4_title":"Impression d'étiquettes","feat4_desc":"Un clic imprime une étiquette avec IMEI, modèle, note, état de la batterie et statut. Compatible avec une large gamme d'imprimantes d'étiquettes.",
-    "feat5_title":"Export Excel et base de données","feat5_desc":"Chaque appareil testé est enregistré automatiquement. Exportez vers Excel avec sélection personnalisée des colonnes.",
-    "feat6_title":"6 langues","feat6_desc":"Interface complète en anglais, tchèque, polonais, russe, italien et français. Changez instantanément dans l'en-tête.",
-    "how_eyebrow":"Configuration en minutes","how_title":"De l'achat au premier scan","how_sub":"Aucune connaissance technique requise. Si vous pouvez brancher un câble USB, vous pouvez utiliser iSupply Scan.",
-    "step1_title":"Achetez une licence","step1_desc":"Choisissez un plan ci-dessous et finalisez l'achat. Votre clé de licence arrive instantanément.",
-    "step2_title":"Téléchargez et installez","step2_desc":"Téléchargez l'installateur Windows. Double-clic, suivez l'assistant. Terminé en moins de 2 minutes.",
-    "step3_title":"Activez","step3_desc":"Entrez votre clé de licence, choisissez un nom d'utilisateur et un mot de passe. Configuration unique par appareil.",
-    "step4_title":"Commencez à scanner","step4_desc":"Branchez un iPhone. Les diagnostics démarrent automatiquement. Notez, imprimez l'étiquette, exportez. Répétez.",
-    "pricing_eyebrow":"Tarifs","pricing_title":"Des prix simples et transparents","pricing_sub":"Tous les plans incluent la suite de diagnostic complète. Payez par volume de scans, pas par poste de travail.",
-    "pricing_monthly":"Mensuel","pricing_yearly":"Annuel",
-    "plan_basic_desc":"Pour les petits magasins et services.","plan_basic_f1":"Jusqu'à 200 scans / mois","plan_basic_f2":"Diagnostics complets (12 tests)","plan_basic_f3":"Impression d'étiquettes","plan_basic_f4":"Export Excel","plan_basic_f5":"Support prioritaire","plan_basic_f6":"Support email","plan_basic_btn":"Acheter Basic",
-    "plan_pro_desc":"Pour les racheteurs et refurbishers de taille moyenne.","plan_pro_f1":"Jusqu'à 500 scans / mois","plan_pro_f2":"Diagnostics complets (12 tests)","plan_pro_f3":"Impression d'étiquettes","plan_pro_f4":"Export Excel","plan_pro_f5":"Support email","plan_pro_btn":"Acheter Pro",
-    "plan_biz_desc":"Pour les grands grossistes et ITAD.","plan_biz_f1":"Jusqu'à 1000 scans / mois","plan_biz_f2":"Diagnostics complets (12 tests)","plan_biz_f3":"Impression d'étiquettes","plan_biz_f4":"Export Excel","plan_biz_f5":"Support prioritaire","plan_biz_btn":"Acheter Business",
-    "plan_ent_desc":"Pour les opérations de plus de 1000 unités/mois.","plan_ent_f1":"Scans illimités","plan_ent_f2":"Diagnostics complets (12 tests)","plan_ent_f3":"Impression d'étiquettes","plan_ent_f4":"Export Excel","plan_ent_f5":"Support dédié + API","plan_ent_btn":"Nous contacter",
-    "modal_title":"Entrez votre email","modal_sub":"Nous vous enverrons votre clé de licence à cet email après le paiement.","modal_btn":"Continuer vers le paiement →","modal_secure":"🔒 Paiement sécurisé via Stripe",
-    "compat_eyebrow":"Support des appareils","compat_title":"Testé sur tous les principaux iPhones","compat_sub":"De l'iPhone 6s à l'iPhone 16 Pro Max, iSupply Scan lit les numéros de modèle, les identifiants A-series et les numéros de série des composants.","compat_more":"+ iPhone X, 8, 7, 6s et toutes les variantes · 60+ modèles pris en charge",
-    "dl_eyebrow":"Télécharger","dl_title":"Obtenez iSupply Scan","dl_sub":"Téléchargez l'installateur pour votre plateforme. Une clé de licence valide est requise pour l'activation.",
-    "dl_win_desc":"Installateur complet pour Windows 10 et 11. Python et dépendances non requis, tout est inclus.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"iTunes ou Apple Devices requis","dl_win_s3":"~45 Mo installateur","dl_win_s4":"Mises à jour automatiques","dl_win_btn":"Télécharger pour Windows",
-    "dl_mac_desc":"Application macOS native pour Apple Silicon et Intel Mac. Nécessite macOS 12 Monterey ou version ultérieure.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"Aucun logiciel supplémentaire requis","dl_mac_s3":"~50 Mo bundle d'application","dl_mac_s4":"Notarisé par Apple","dl_mac_btn":"Télécharger pour macOS",
-    "dl_note_key":"Pas de clé ?","dl_note_help":"Besoin d'aide ?","dl_note_contact":"Contacter le support",
-    "cta_title":"Prêt à diagnostiquer plus vite ?","cta_sub":"Rejoignez les refurbishers à travers l'UE qui utilisent iSupply Scan pour traiter plus d'appareils avec moins d'erreurs.","cta_btn":"Obtenez votre licence aujourd'hui",
-    "footer_desc":"Logiciel professionnel de diagnostic iPhone pour les refurbishers UE. Créé par iSupply trade s.r.o.","footer_product":"Produit","footer_support":"Support","footer_company":"Société","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
-  },
-  "IT": {
-    "nav_features":"Funzionalità","nav_how":"Come funziona","nav_pricing":"Prezzi","nav_compat":"Compatibilità","nav_download":"⬇ Scarica","nav_admin":"Pannello admin →","nav_cta":"Inizia",
-    "hero_eyebrow":"Diagnostica professionale iPhone","hero_h1a":"Scopri esattamente cosa c'è","hero_h1b":"dentro ogni iPhone",
-    "hero_sub":"iSupply Scan testa 12 componenti in pochi secondi: display, Touch ID, fotocamere, salute della batteria e altro ancora. Con stampa etichette.",
-    "hero_btn1":"Scarica gratis","hero_btn2":"Scopri come funziona","hero_note":"Senza carta di credito · Funziona su Windows · Connessione USB",
-    "stats_comp":"Componenti testati<br>per dispositivo","stats_slots":"Slot simultanei<br>per postazione","stats_time":"Tempo medio<br>di diagnostica completa","stats_grade":"Classificazione automatica<br>con stampa etichette",
-    "feat_eyebrow":"Cosa ottieni","feat_title":"Tutto ciò di cui un refurbisher ha bisogno","feat_sub":"Dal rilevamento USB alla stampa di etichette, iSupply Scan gestisce l'intero flusso di lavoro.",
-    "feat1_title":"Rilevamento USB automatico","feat1_desc":"Collega un iPhone e la diagnostica inizia istantaneamente. Senza clic, senza configurazione. Supporta fino a 8 dispositivi simultaneamente.",
-    "feat2_title":"Vero stato della batteria","feat2_desc":"Legge MaximumCapacityPercent direttamente da Apple IOKit, lo stesso valore che iOS mostra nelle Impostazioni.",
-    "feat3_title":"Rilevamento parti originali","feat3_desc":"Rileva display sostituiti, sensori Touch ID, fotocamere, schede madri e altro. Segnala immediatamente i componenti non originali in rosso.",
-    "feat4_title":"Stampa etichette","feat4_desc":"Un clic stampa un'etichetta con IMEI, modello, valutazione, stato della batteria e stato. Compatibile con un'ampia gamma di stampanti per etichette.",
-    "feat5_title":"Export Excel e database","feat5_desc":"Ogni dispositivo testato viene registrato automaticamente. Esporta in Excel con selezione personalizzata delle colonne.",
-    "feat6_title":"6 lingue","feat6_desc":"Interfaccia completa in inglese, ceco, polacco, russo, italiano e francese. Cambia istantaneamente nell'intestazione.",
-    "how_eyebrow":"Configurazione in minuti","how_title":"Dall'acquisto alla prima scansione","how_sub":"Non sono richieste conoscenze tecniche. Se sai collegare un cavo USB, puoi usare iSupply Scan.",
-    "step1_title":"Acquista una licenza","step1_desc":"Scegli un piano qui sotto e completa l'acquisto. La chiave di licenza arriva immediatamente.",
-    "step2_title":"Scarica e installa","step2_desc":"Scarica l'installer Windows. Doppio clic, segui la procedura guidata. Fatto in meno di 2 minuti.",
-    "step3_title":"Attiva","step3_desc":"Inserisci la chiave di licenza, scegli nome utente e password. Configurazione una tantum per dispositivo.",
-    "step4_title":"Inizia a scansionare","step4_desc":"Collega un iPhone. La diagnostica si avvia automaticamente. Valuta, stampa etichetta, esporta. Ripeti.",
-    "pricing_eyebrow":"Prezzi","pricing_title":"Prezzi semplici e trasparenti","pricing_sub":"Tutti i piani includono la suite diagnostica completa. Paghi per volume di scansioni, non per postazione.",
-    "pricing_monthly":"Mensile","pricing_yearly":"Annuale",
-    "plan_basic_desc":"Per piccoli negozi e servizi.","plan_basic_f1":"Fino a 200 scansioni / mese","plan_basic_f2":"Diagnostica completa (12 test)","plan_basic_f3":"Stampa etichette","plan_basic_f4":"Export Excel","plan_basic_f5":"Supporto prioritario","plan_basic_f6":"Supporto email","plan_basic_btn":"Acquista Basic",
-    "plan_pro_desc":"Per centri di riacquisto e refurbisher medi.","plan_pro_f1":"Fino a 500 scansioni / mese","plan_pro_f2":"Diagnostica completa (12 test)","plan_pro_f3":"Stampa etichette","plan_pro_f4":"Export Excel","plan_pro_f5":"Supporto email","plan_pro_btn":"Acquista Pro",
-    "plan_biz_desc":"Per grandi grossisti e ITAD.","plan_biz_f1":"Fino a 1000 scansioni / mese","plan_biz_f2":"Diagnostica completa (12 test)","plan_biz_f3":"Stampa etichette","plan_biz_f4":"Export Excel","plan_biz_f5":"Supporto prioritario","plan_biz_btn":"Acquista Business",
-    "plan_ent_desc":"Per operazioni oltre 1000 unità/mese.","plan_ent_f1":"Scansioni illimitate","plan_ent_f2":"Diagnostica completa (12 test)","plan_ent_f3":"Stampa etichette","plan_ent_f4":"Export Excel","plan_ent_f5":"Supporto dedicato + API","plan_ent_btn":"Contattaci",
-    "modal_title":"Inserisci la tua email","modal_sub":"Ti invieremo la chiave di licenza a questa email dopo il pagamento.","modal_btn":"Continua al pagamento →","modal_secure":"🔒 Pagamento sicuro tramite Stripe",
-    "compat_eyebrow":"Supporto dispositivi","compat_title":"Testato su tutti i principali iPhone","compat_sub":"Da iPhone 6s a iPhone 16 Pro Max, iSupply Scan legge i numeri di modello, gli identificatori A-series e i numeri seriali dei componenti.","compat_more":"+ iPhone X, 8, 7, 6s e tutte le varianti · 60+ modelli supportati",
-    "dl_eyebrow":"Scarica","dl_title":"Ottieni iSupply Scan","dl_sub":"Scarica l'installer per la tua piattaforma. È necessaria una chiave di licenza valida per l'attivazione.",
-    "dl_win_desc":"Installer completo per Windows 10 e 11. Python e dipendenze non richiesti, tutto è incluso.","dl_win_s1":"Windows 10 / 11 (64-bit)","dl_win_s2":"iTunes o Apple Devices richiesti","dl_win_s3":"~45 MB installer","dl_win_s4":"Aggiornamenti automatici","dl_win_btn":"Scarica per Windows",
-    "dl_mac_desc":"App macOS nativa per Apple Silicon e Intel Mac. Richiede macOS 12 Monterey o versioni successive.","dl_mac_s1":"macOS 12+ · Apple Silicon & Intel","dl_mac_s2":"Nessun software aggiuntivo richiesto","dl_mac_s3":"~50 MB bundle app","dl_mac_s4":"Notarizzato da Apple","dl_mac_btn":"Scarica per macOS",
-    "dl_note_key":"Non hai una chiave?","dl_note_help":"Hai bisogno di aiuto?","dl_note_contact":"Contatta il supporto",
-    "cta_title":"Pronto a diagnosticare più velocemente?","cta_sub":"Unisciti ai refurbisher di tutta l'UE che usano iSupply Scan per elaborare più dispositivi con meno errori.","cta_btn":"Ottieni la tua licenza oggi",
-    "footer_desc":"Software professionale di diagnostica iPhone per refurbisher UE. Creato da iSupply trade s.r.o.","footer_product":"Prodotto","footer_support":"Supporto","footer_company":"Azienda","footer_copy":"© 2026 iSupply trade s.r.o. · IČO: 23199351"
+  cs: {
+    nav_features:"Funkce", nav_how:"Jak to funguje", nav_pricing:"Ceník", nav_compat:"Kompatibilita",
+    nav_download:"⬇ Stáhnout", nav_admin:"Admin panel →", nav_get:"Začít",
+    hero_eyebrow:"Profesionální diagnostika iPhonů",
+    hero_h1a:"Víš přesně, co je", hero_h1b:"uvnitř každého iPhonu",
+    hero_lead:"iSupply Scan otestuje 12 komponent během vteřin: displej, Touch ID, fotoaparáty, kondici baterie a další. Umí i tisk štítků. Postaveno pro EU refurbishery, co chtějí přesnost.",
+    hero_cta1:"Stáhnout zkušební verzi", hero_cta2:"Podívat se, jak to funguje",
+    hero_note:"Bez platební karty · Běží na Windows · Připojení přes USB",
+    feat_eyebrow:"Co kontroluje", feat_h2:"12 testů, jedno kliknutí",
+    feat_p:"Každá komponenta, která ovlivňuje výkupní cenu, ověřená proti diagnostickým datům přímo od Applu — žádné hádání.",
+    feat1_h:"Kondice baterie", feat1_p:"Skutečná kapacita baterie a počet cyklů čtené přímo ze zařízení — hodnotíš poctivě.",
+    feat2_h:"Displej a Touch ID", feat2_p:"Rozezná originální displej od neoriginálního a jestli je Touch ID / Face ID pravé.",
+    feat3_h:"Fotoaparáty a senzory", feat3_p:"Přední i zadní fotoaparát, mikrofony a klíčové senzory zkontrolované najednou.",
+    feat4_h:"iCloud a aktivace", feat4_p:"Okamžitě vidíš stav aktivačního zámku — nikdy omylem nekoupíš zamčené zařízení.",
+    feat5_h:"Tisk štítků", feat5_p:"Po každém skenu vytiskneš přehledný štítek přímo na tiskárnu Brother QL.",
+    feat6_h:"Export do Excelu", feat6_p:"Každý sken vyexportuješ do Excelu pro sklad, účetnictví nebo inzeráty.",
+    how_eyebrow:"Jak to funguje", how_h2:"Z krabice ohodnocené za necelou minutu",
+    how1_h:"Připoj", how1_p:"Zapoj iPhone do libovolného USB. iSupply Scan ho sám detekuje — až 10 najednou.",
+    how2_h:"Naskenuj", how2_p:"12 komponent se otestuje během vteřin a výsledky naskáčou naživo na obrazovku.",
+    how3_h:"Ohodnoť a vytiskni", how3_p:"Vyber stav, vytiskni štítek a kus může rovnou naskočit na sklad tvého e-shopu.",
+    price_eyebrow:"Ceník", price_h2:"Jednoduchý, přehledný ceník",
+    price_p:"Všechny plány obsahují plnou diagnostiku. Platíš za počet skenů, ne za počítač.",
+    price_monthly:"Měsíčně", price_yearly:"Ročně", price_per:"za měsíc",
+    p_basic_tag:"Pro malé obchody a servisy.", p_pro_tag:"Pro střední výkupny a refurbishery.",
+    p_biz_tag:"Pro velké velkoobchody a ITAD.", p_ent_tag:"Pro operace nad 1000 ks / měsíc.",
+    p_full:"Plná diagnostika (12 testů)", p_label:"Tisk štítků", p_excel:"Export do Excelu",
+    p_priority:"Prioritní podpora", p_email:"Email podpora", p_popular:"Nejoblíbenější",
+    p_basic_1:"Do 200 skenů / měsíc", p_pro_1:"Do 500 skenů / měsíc", p_biz_1:"Do 1000 skenů / měsíc",
+    p_ent_1:"Neomezené skeny", p_ent_2:"Dedikovaná podpora + API",
+    p_custom:"Individuální", p_custom_sub:"cena na míru",
+    p_buy_basic:"Koupit Basic", p_buy_pro:"Koupit Pro", p_buy_biz:"Koupit Business", p_buy_ent:"Kontaktujte nás",
+    compat_eyebrow:"Kompatibilita", compat_h2:"Co potřebuješ ke spuštění",
+    compat1_h:"Windows 10 / 11", compat1_p:"64-bit. Všechno je zabalené v jednom .exe — žádný Python ani závislosti k instalaci.",
+    compat2_h:"iTunes nebo Apple Devices", compat2_p:"Nutné kvůli USB ovladačům. Když chybí, aplikace při startu ukáže okno se stažením na jedno kliknutí.",
+    compat3_h:"Připojení přes USB", compat3_p:"iPhony připojuj přímo do USB portu originálním kabelem a ťukni na „Trust“.",
+    dl_eyebrow:"Stažení", dl_h2:"Stáhni iSupply Scan",
+    dl_p:"Stáhni instalátor pro svou platformu. K aktivaci je potřeba platný licenční klíč.",
+    dl_win_h:"Windows", dl_win_p:"Plný instalátor pro Windows 10 a 11. Žádný Python ani závislosti — vše je zabaleno.",
+    dl_win_1:"Windows 10 / 11 (64-bit)", dl_win_2:"Nutné iTunes nebo Apple Devices", dl_win_3:"~75 MB, jeden soubor", dl_win_4:"Automatické aktualizace",
+    dl_win_btn:"⬇ Stáhnout pro Windows", dl_win_ver:"Nejnovější verze",
+    dl_soon:"Již brzy", dl_mac_h:"macOS", dl_mac_p:"Nativní macOS aplikace pro Apple Silicon i Intel Macy. Vyžaduje macOS 12 Monterey nebo novější.",
+    dl_mac_1:"macOS 12+ · Apple Silicon & Intel", dl_mac_2:"Žádný další software", dl_mac_3:"Notarizováno Applem",
+    dl_mac_btn:"Stáhnout pro macOS", dl_mac_ver:"Ve vývoji · dej mi vědět na info@isupply.cz",
+    dl_foot1:"Po stažení spusť instalátor a zadej svůj licenční klíč k aktivaci.",
+    dl_foot2:"Nemáš klíč?", dl_foot3:"Potřebuješ pomoc?", dl_foot4:"Kontaktuj podporu",
+    cta_h:"Připraven hodnotit s jistotou?", cta_p:"Přidej se k EU refurbisherům, kteří spoléhají na iSupply Scan u každého zařízení.", cta_btn:"Získej licenci ještě dnes",
+    ft_product:"Produkt", ft_contact:"Kontakt", ft_support:"Podpora a FAQ", ft_branch:"Pobočka:", ft_rights:"Všechna práva vyhrazena"
   }
 };
-
-let currentLang = localStorage.getItem('isupply_lang') || 'EN';
-
-function toggleLangDropdown() {
-  document.getElementById('langSwitcher').classList.toggle('open');
-}
-
-document.addEventListener('click', function(e) {
-  const switcher = document.getElementById('langSwitcher');
-  if (switcher && !switcher.contains(e.target)) {
-    switcher.classList.remove('open');
-  }
-});
-
-function setLang(lang) {
-  currentLang = lang;
-  localStorage.setItem('isupply_lang', lang);
-  document.getElementById('langCurrent').textContent = lang;
-  document.querySelectorAll('.lang-option').forEach(el => {
-    el.classList.toggle('active', el.textContent.includes(lang) || 
-      (lang === 'EN' && el.textContent.includes('English')) ||
-      (lang === 'CZ' && el.textContent.includes('Čeština')) ||
-      (lang === 'PL' && el.textContent.includes('Polski')) ||
-      (lang === 'RU' && el.textContent.includes('Русский')) ||
-      (lang === 'FR' && el.textContent.includes('Français')) ||
-      (lang === 'IT' && el.textContent.includes('Italiano')));
+var curLang='en';
+function setLang(lang){
+  curLang = I18N[lang] ? lang : 'en';
+  var d = I18N[curLang];
+  document.querySelectorAll('[data-i18n]').forEach(function(el){
+    var k = el.getAttribute('data-i18n');
+    if(d[k] !== undefined) el.textContent = d[k];
   });
-  document.getElementById('langSwitcher').classList.remove('open');
-  applyTranslations(lang);
-}
-
-function applyTranslations(lang) {
-  const t = TRANSLATIONS[lang] || TRANSLATIONS['EN'];
-  document.querySelectorAll('[data-i18n]').forEach(el => {
-    const key = el.getAttribute('data-i18n');
-    if (t[key] !== undefined) {
-      el.innerHTML = t[key];
-    }
+  document.querySelectorAll('.lang button').forEach(function(b){
+    b.classList.toggle('active', b.getAttribute('data-lang')===curLang);
   });
-  // Update html lang attribute
-  document.documentElement.lang = lang.toLowerCase();
+  document.documentElement.lang = curLang;
+  try{ localStorage.setItem('isupply_lang', curLang); }catch(e){}
 }
-
-// Init on load
-document.addEventListener('DOMContentLoaded', function() {
-  setLang(currentLang);
-});
+var yearly=false;
+function toggleBilling(){
+  yearly=!yearly;
+  document.getElementById('billing-switch').classList.toggle('yearly', yearly);
+  document.querySelectorAll('.amt').forEach(function(el){
+    el.textContent = yearly ? el.getAttribute('data-y') : el.getAttribute('data-m');
+  });
+}
+(function(){
+  try{
+    fetch('https://api.github.com/repos/Bot-owner/isupply-scan-api/releases/latest')
+      .then(function(r){ return r.json(); })
+      .then(function(j){
+        if(j && j.tag_name){
+          var el=document.getElementById('win-version');
+          if(el){ el.textContent = 'v'+j.tag_name.replace(/^v/,''); el.removeAttribute('data-i18n'); }
+        }
+      }).catch(function(){});
+  }catch(e){}
+})();
+(function(){
+  var saved='en';
+  try{ saved = localStorage.getItem('isupply_lang') || 'en'; }catch(e){}
+  setLang(saved);
+})();
 </script>
-
 </body>
 </html>
