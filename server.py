@@ -1132,6 +1132,326 @@ def api_get_scans():
     conn.close()
     return jsonify({'ok': True, 'scans': [dict(r) for r in rows]})
 
+
+# ─── E-SHOP INTEGRACE – napojení scanu na libovolný e-shop přes API ─────
+# Konfigurace se ukládá do lokální DB (tabulka settings), nastavuje se v admin UI.
+def _ensure_settings():
+    conn = get_db()
+    conn.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
+    conn.commit()
+    conn.close()
+
+def get_setting(key, default=None):
+    _ensure_settings()
+    conn = get_db()
+    row = conn.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+    conn.close()
+    return row['value'] if row else default
+
+def set_setting(key, value):
+    _ensure_settings()
+    conn = get_db()
+    conn.execute('INSERT INTO settings (key,value) VALUES (?,?) '
+                 'ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, value))
+    conn.commit()
+    conn.close()
+
+def eshop_target():
+    if get_setting('eshop_enabled', '0') != '1':
+        return None, None
+    url = (get_setting('eshop_url') or '').strip()
+    key = (get_setting('eshop_key') or '').strip()
+    return (url or None), (key or None)
+
+def _post_to_eshop(url, key, body, timeout=8):
+    import urllib.request
+    req = urllib.request.Request(
+        url, data=json.dumps(body).encode('utf-8'), method='POST',
+        headers={'Content-Type': 'application/json', 'x-scan-key': key})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.getcode(), resp.read().decode('utf-8')
+
+@app.route('/api/eshop-config', methods=['GET'])
+def api_eshop_config_get():
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    return jsonify({'ok': True, 'url': get_setting('eshop_url', ''),
+                    'key': get_setting('eshop_key', ''),
+                    'enabled': get_setting('eshop_enabled', '0') == '1'})
+
+@app.route('/api/eshop-config', methods=['POST'])
+def api_eshop_config_set():
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    data = request.get_json() or {}
+    set_setting('eshop_url', (data.get('url') or '').strip())
+    set_setting('eshop_key', (data.get('key') or '').strip())
+    set_setting('eshop_enabled', '1' if data.get('enabled') else '0')
+    return jsonify({'ok': True})
+
+@app.route('/api/eshop-test', methods=['POST'])
+def api_eshop_test():
+    if not require_admin(request):
+        return jsonify({'ok': False, 'error': 'Přístup odepřen.'}), 403
+    url = (get_setting('eshop_url') or '').strip()
+    key = (get_setting('eshop_key') or '').strip()
+    if not url or not key:
+        return jsonify({'ok': False, 'error': 'Vyplňte URL i klíč.'}), 400
+    try:
+        code, body = _post_to_eshop(url, key, {'test': True, 'source': 'isupply-scan',
+            'model': 'iPhone TEST', 'capacity': '128 GB', 'color': 'Test', 'condition': 'A'})
+        return jsonify({'ok': True, 'status': code, 'response': body[:300]})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+
+@app.route('/api/eshop-push', methods=['POST'])
+def api_eshop_push():
+    url, key = eshop_target()
+    if not url or not key:
+        return jsonify({'ok': False, 'skipped': True}), 200
+    d = request.get_json() or {}
+    body = {
+        'source':    'isupply-scan',
+        'imei':      d.get('imei'),       # jen pro deduplikaci na straně e-shopu
+        'serial':    d.get('serial'),     # jen pro deduplikaci
+        'model':     d.get('model'),
+        'capacity':  d.get('storage'),
+        'color':     d.get('color'),
+        'condition': d.get('condition'),  # stav zadaný technikem: A/B/C/zánovní/nový
+    }
+    try:
+        code, resp = _post_to_eshop(url, key, body)
+        try: parsed = json.loads(resp)
+        except Exception: parsed = {'raw': resp[:300]}
+        return jsonify({'ok': True, 'status': code, 'eshop': parsed})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+
+
+# ─── SOFTWARE TOOL – iOS RESTORE (IPSW) ─────────────────────────────────────
+#
+# Backend pro záložku "Software Tool" v iphone-diagnostic.html.
+# Používá idevicerestore (libimobiledevice) ke stažení a nahrání IPSW.
+# idevicerestore.exe musí být v tools/idevicerestore.exe vedle .exe/server.py
+# (Windows binárku lze získat přes MSYS2 balíček mingw-w64-x86_64-idevicerestore,
+# oficiální postup je popsán v README projektu libimobiledevice/idevicerestore).
+
+import urllib.request
+import re as _re_restore
+
+IPSW_CACHE_DIR      = os.path.join(BASE_DIR, 'ipsw_cache')
+IDEVICERESTORE_BIN  = os.path.join(BASE_DIR, 'tools', 'idevicerestore.exe')
+
+restore_log_queue = queue.Queue()
+restore_state = {'running': False, 'process': None}
+
+# Known idevicerestore / iTunes restore error codes -> pravděpodobná příčina.
+# Toto je heuristika podobná té, kterou používá 3uTools (nejde o jistotu,
+# jde o nejpravděpodobnější vysvětlení na základě známých vzorců chyb
+# rozšířených v repair komunitě – GSM fórum, iFixit, Apple support vlákna).
+RESTORE_ERROR_DIAGNOSIS = {
+    '9':    'USB komunikace selhala během restore. Obvykle vadný/nekvalitní USB kabel, USB port na PC, nebo poškozený lightning konektor telefonu.',
+    '14':   'Chyba ověření firmware komponenty – většinou zastaralá verze idevicerestore, ne hardware.',
+    '20':   'Chyba zápisu na NAND (flash paměť). Pokud se opakuje i po výměně kabelu/portu, jde pravděpodobně o vadný NAND čip nebo základní desku.',
+    '21':   'Baseband/modem selhal při aktualizaci – podezření na poškozený baseband čip nebo neautorizovaný zásah na desce.',
+    '23':   'Chyba komunikace během DFU – zkuste jiný kabel a USB port přímo na základní desce PC (ne hub).',
+    '26':   'Chyba čtení konfigurace zařízení – může indikovat poškozenou NAND nebo logic board.',
+    '28':   'Chyba power management IC / baterie – restore selhal na kroku napájení. Zkontrolujte baterii a nabíjecí obvod.',
+    '34':   'Chyba zápisu na disk počítače – nedostatek místa nebo poškozený IPSW soubor.',
+    '35':   'Chyba přehrání firmware image – zkuste IPSW stáhnout znovu (poškozený soubor).',
+    '36':   'Chyba zápisu do flash paměti. Pokud přetrvává, pravděpodobně vadná NAND / logic board.',
+    '37':   'Chyba ověření kernel image – poškozený IPSW nebo problém s pamětí zařízení.',
+    '40':   'Chyba hardwarového testu při restore – často NAND nebo základní deska.',
+    '56':   'Hardwarová chyba hlášená přímo zařízením (Apple hardware error) – typicky logic board.',
+    '1000': 'Nedostatek místa na disku počítače pro IPSW/dočasné soubory.',
+    '1013': 'Baseband update selhal – možný vadný baseband čip.',
+    '1015': 'Zařízení odmítlo downgrade (SHSH okno pro tuto verzi je zavřené) – nejde o hardware.',
+    '1600': 'Zařízení nekomunikuje v DFU módu – zkuste znovu uvést do DFU, jiný kabel/port.',
+    '1601': 'Chyba komunikace v recovery módu – kabel, port nebo USB rozbočovač.',
+    '1602': 'Timeout při čekání na odezvu zařízení – kabel, port nebo nabíjecí konektor.',
+    '1603': 'Chyba přenosu dat v recovery módu.',
+    '1604': 'Zařízení se odpojilo během restore – vadný kabel/port, nebo se telefon sám vypnul (baterie/power IC).',
+    '1611': 'Baseband personalizace selhala.',
+    '2001': 'Zařízení nerozpoznáno v DFU – kabel, port, nebo poškozený lightning konektor.',
+    '2002': 'Chyba enumerace USB zařízení – zkuste jiný port/kabel.',
+    '2005': 'Zařízení se nepodařilo najít po restartu do DFU – nabíjecí konektor nebo power button flex.',
+    '3004': 'Baseband update selhal opakovaně – podezření na vadný baseband čip.',
+    '3194': 'Apple servery už tuto verzi nepodepisují (signing window closed) – nejde o hardware.',
+    '4005': 'Zařízení se odpojilo během restore. Pokud se opakuje s různými kabely/porty/PC, jde pravděpodobně o vadnou nabíjecí civku/konektor nebo základní desku.',
+    '4013': 'Timeout během restore – klasická "hardwarová" chyba. Zkuste jiný kabel, jiný USB port (ideálně přímo na desce PC) a jiný počítač. Pokud chyba přetrvává napříč všemi kombinacemi, pravděpodobně jde o vadnou základní desku nebo NAND.',
+    '4014': 'Podobné jako 4013 – přerušení komunikace při restore. Kabel/port/hub, při opakovaném výskytu logic board.',
+    '4020': 'Baseband selhal při restore – možný vadný baseband/modem čip.',
+}
+
+
+def _diagnose_restore_failure(log_text, returncode):
+    """Projde log z idevicerestore a zkusí najít známý error kód -> vrátí
+    lidsky čitelnou diagnózu podobnou té, co ukazuje 3uTools."""
+    codes_found = _re_restore.findall(r'(?:error|Error)\s*[:#]?\s*(-?\d{1,5})', log_text)
+    codes_found += _re_restore.findall(r'\((-?\d{1,5})\)', log_text)
+
+    for code in codes_found:
+        clean = code.lstrip('-')
+        if clean in RESTORE_ERROR_DIAGNOSIS:
+            return {'code': code, 'diagnosis': RESTORE_ERROR_DIAGNOSIS[clean]}
+
+    low = log_text.lower()
+    if 'disconnect' in low or 'no device' in low:
+        return {'code': None, 'diagnosis': 'Zařízení se odpojilo během procesu. Zkontrolujte kabel, USB port a nabíjecí konektor telefonu.'}
+    if 'timeout' in low:
+        return {'code': None, 'diagnosis': 'Vypršel časový limit komunikace. Obvykle kabel/port, ve vzácných případech logic board.'}
+    if returncode not in (0, None):
+        return {'code': str(returncode), 'diagnosis': 'Restore selhal s neznámou chybou. Zkuste jiný kabel/port a zopakujte, aby šlo odlišit hardwarovou příčinu od dočasného výpadku.'}
+    return None
+
+
+def _download_ipsw(url, dest_path, progress_cb):
+    """Stahuje IPSW se sledováním postupu (5–40 %)."""
+    req = urllib.request.Request(url, headers={'User-Agent': 'iSupply-Scan/1.0'})
+    with urllib.request.urlopen(req) as resp:
+        total = int(resp.getheader('Content-Length') or 0)
+        downloaded = 0
+        chunk_size = 1024 * 256
+        with open(dest_path, 'wb') as f:
+            while True:
+                buf = resp.read(chunk_size)
+                if not buf:
+                    break
+                f.write(buf)
+                downloaded += len(buf)
+                if total:
+                    pct = 5 + int((downloaded / total) * 35)
+                    progress_cb(min(pct, 40))
+
+
+def _run_restore_job(udid, ipsw_url, version, buildid):
+    restore_state['running'] = True
+    full_log = []
+
+    def emit(text, type_='info', progress=None):
+        payload = {'log': text, 'type': type_}
+        if progress is not None:
+            payload['progress'] = progress
+        full_log.append(text)
+        restore_log_queue.put(payload)
+
+    try:
+        os.makedirs(IPSW_CACHE_DIR, exist_ok=True)
+        ipsw_filename = f"{buildid or version or 'firmware'}.ipsw"
+        ipsw_path = os.path.join(IPSW_CACHE_DIR, ipsw_filename)
+
+        if not os.path.exists(ipsw_path):
+            emit(f'Stahuji IPSW (iOS {version})...', 'info', 5)
+            _download_ipsw(ipsw_url, ipsw_path, lambda p: emit(f'Stahování: {p}%', 'info', p))
+            emit('IPSW úspěšně stažen.', 'ok', 40)
+        else:
+            emit('IPSW nalezen v cache, přeskakuji stahování.', 'info', 40)
+
+        if not os.path.exists(IDEVICERESTORE_BIN):
+            emit(f'idevicerestore.exe nenalezen v: {IDEVICERESTORE_BIN}', 'err')
+            restore_log_queue.put({
+                'done': True,
+                'error': 'idevicerestore.exe chybí – doplňte nástroj do složky tools/ vedle aplikace.'
+            })
+            return
+
+        emit(f'Spouštím restore pro zařízení {udid} (všechna data budou smazána)...', 'info', 42)
+
+        cmd = [IDEVICERESTORE_BIN, '-u', udid, '-y', '-e', ipsw_path]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, bufsize=1, universal_newlines=True
+        )
+        restore_state['process'] = proc
+
+        progress = 45
+        for line in proc.stdout:
+            line = line.rstrip()
+            if not line:
+                continue
+            low = line.lower()
+            if 'extract' in low:
+                progress = max(progress, 48)
+            elif 'personaliz' in low or 'tss' in low:
+                progress = max(progress, 55)
+            elif 'dfu' in low or 'recovery' in low:
+                progress = max(progress, 62)
+            elif 'sending' in low or 'uploading' in low:
+                progress = max(progress, 70)
+            elif 'verify' in low or 'flash' in low:
+                progress = max(progress, 82)
+            elif 'reboot' in low or 'restart' in low:
+                progress = max(progress, 95)
+
+            is_err = 'error' in low or 'fail' in low
+            emit(line, 'err' if is_err else 'info', progress)
+
+        proc.wait()
+        returncode = proc.returncode
+
+        if returncode == 0:
+            emit('Restore dokončen úspěšně.', 'ok', 100)
+            restore_log_queue.put({'done': True, 'progress': 100})
+        else:
+            full_text = '\n'.join(full_log)
+            diag = _diagnose_restore_failure(full_text, returncode)
+            if diag:
+                emit(f"Pravděpodobná příčina: {diag['diagnosis']}", 'err')
+            restore_log_queue.put({
+                'done': True,
+                'error': f'Restore selhal (kód {returncode}).',
+                'diagnosis': diag['diagnosis'] if diag else None,
+            })
+
+    except Exception as e:
+        emit(f'Výjimka: {e}', 'err')
+        restore_log_queue.put({'done': True, 'error': str(e)})
+    finally:
+        restore_state['running'] = False
+        restore_state['process'] = None
+
+
+@app.route('/api/restore', methods=['POST'])
+def api_restore():
+    data     = request.get_json() or {}
+    udid     = (data.get('udid') or '').strip()
+    ipsw_url = data.get('ipsw_url')
+    version  = data.get('version')
+    buildid  = data.get('buildid')
+
+    if not udid or not ipsw_url:
+        return jsonify({'ok': False, 'error': 'Chybí udid nebo ipsw_url'}), 400
+
+    if restore_state['running']:
+        return jsonify({'ok': False, 'error': 'Jiný restore už běží.'}), 409
+
+    while not restore_log_queue.empty():
+        try:
+            restore_log_queue.get_nowait()
+        except queue.Empty:
+            break
+
+    t = threading.Thread(target=_run_restore_job, args=(udid, ipsw_url, version, buildid), daemon=True)
+    t.start()
+
+    return jsonify({'ok': True})
+
+
+@app.route('/api/restore-logs')
+def api_restore_logs():
+    def generate():
+        while True:
+            try:
+                evt = restore_log_queue.get(timeout=25)
+                yield f"data: {json.dumps(evt)}\n\n"
+                if evt.get('done'):
+                    break
+            except queue.Empty:
+                yield 'data: {"type":"ping"}\n\n'
+    return app.response_class(generate(), mimetype='text/event-stream',
+                               headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+
+
 # ─── START ───────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':

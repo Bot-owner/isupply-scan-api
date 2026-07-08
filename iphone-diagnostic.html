@@ -384,6 +384,17 @@
       </button>
     </div>
     <div class="label-preview" id="label-preview-content"></div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+      <label style="font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap">Stav pro e-shop:</label>
+      <select id="eshop-condition" style="flex:1;font-family:var(--mono);font-size:12px;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;background:var(--surface,#fff)">
+        <option value="">— vyber stav —</option>
+        <option value="A">A</option>
+        <option value="B">B</option>
+        <option value="C">C</option>
+        <option value="zánovní">zánovní</option>
+        <option value="nový">nový</option>
+      </select>
+    </div>
     <div class="modal-actions">
       <button class="btn-modal-print" id="print-btn-do" onclick="doPrint()">Print label</button>
       <button class="btn-modal-cancel" id="print-btn-cancel" onclick="closePrintModal()">Cancel</button>
@@ -1881,6 +1892,8 @@ function openPrintModal(id) {
     ? detectedPrinterName + ' · ' + currentTapeSize + ' mm'
     : 'No printer detected – click Detect';
   renderLabelPreview(slots[id], currentTapeSize);
+  const _cs = document.getElementById('eshop-condition');
+  if (_cs) { const g = (slots[id].grade||'').toUpperCase(); _cs.value = ['A','B','C'].includes(g) ? g : ''; }
   document.getElementById('print-modal').classList.remove('hidden');
 }
 
@@ -1894,6 +1907,31 @@ function closePrintModal() {
 function doPrint() {
   document.getElementById('print-label-content').innerHTML = document.getElementById('label-preview-content').innerHTML;
   window.print();
+  pushToEshop(printSlotId);
+}
+
+// Po tisku pošle na e-shop: model+kapacita+barva (z diagnostiky) + stav (zadaný technikem).
+async function pushToEshop(slotId) {
+  const slot = slots[slotId];
+  if (!slot || !slot.device) return;
+  const condition = (document.getElementById('eshop-condition') || {}).value || '';
+  if (!condition) { showToast('ℹ Stav nevybrán – na e-shop neodesláno'); return; }
+  const d = slot.device;
+  try {
+    const r = await fetch('/api/eshop-push', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        imei: d.imei, serial: d.serial, model: d.model,
+        storage: d.storage, color: d.color, condition,
+      }),
+    });
+    const j = await r.json();
+    if (j.skipped) return;
+    if (j.ok && j.eshop && j.eshop.stored === false)
+      return showToast('⚠ E-shop: ' + (j.eshop.error || 'kus neuložen'));
+    if (j.ok) showToast('✓ Přidáno na sklad e-shopu');
+    else showToast('⚠ E-shop: ' + (j.error || 'chyba'));
+  } catch (e) { showToast('⚠ E-shop nedostupný'); }
 }
 document.getElementById('print-modal').addEventListener('click', function(e){if(e.target===this)closePrintModal();});
 
