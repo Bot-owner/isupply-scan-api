@@ -751,6 +751,77 @@ def api_driver_check():
         pass
     return jsonify({'installed': False})
 
+# ══════════════════════════════════════════════════════════════════
+#  AKTIVACE ZARIZENI (jako 3uTools)
+#  DULEZITE: Provadi POUZE standardni Apple aktivacni handshake pro
+#  zarizeni, ktere NENI zamcene na iCloud (Activation Lock / Find My).
+#  NEOBCHAZI a NEUMI obejit Activation Lock - to nelze a nedelame to.
+#  Vyzaduje pripojeni k internetu (kontaktuje albert.apple.com).
+#  POZOR: netestovano na realnem zarizeni v tomto prostredi - overit!
+# ══════════════════════════════════════════════════════════════════
+def _get_activation_service():
+    from pymobiledevice3.lockdown import create_using_usbmux
+    from pymobiledevice3.services.mobile_activation import MobileActivationService
+    ld = create_using_usbmux()
+    return ld, MobileActivationService(ld)
+
+@app.route('/api/device-activation-state')
+def api_device_activation_state():
+    """Vrati stav aktivace + indikaci Find My (Activation Lock)."""
+    try:
+        ld, svc = _get_activation_service()
+        try:
+            state = str(svc.state)
+        except Exception:
+            state = 'unknown'
+        find_my = None
+        for domain, key in (('com.apple.fmip', 'IsAssociated'),
+                            ('com.apple.mobile.chaperone', 'IsAssociated')):
+            try:
+                v = ld.get_value(domain=domain, key=key)
+                if v is not None:
+                    find_my = bool(v)
+                    break
+            except Exception:
+                pass
+        return jsonify({'ok': True, 'state': state, 'find_my_associated': find_my})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@app.route('/api/device-activate', methods=['POST'])
+def api_device_activate():
+    """Provede standardni Apple aktivaci u NEZAMCENEHO zarizeni."""
+    try:
+        ld, svc = _get_activation_service()
+        try:
+            state = str(svc.state)
+        except Exception:
+            state = 'unknown'
+        # Uz aktivovano -> nic nedelame
+        if state.lower().startswith('activ'):
+            return jsonify({'ok': True, 'already': True, 'state': state})
+        # Bezpecnostni brzda: kdyz je zarizeni asociovane s Apple ID (Find My),
+        # aktivaci NEProvadime (je to iCloud-locked).
+        for domain, key in (('com.apple.fmip', 'IsAssociated'),
+                            ('com.apple.mobile.chaperone', 'IsAssociated')):
+            try:
+                if ld.get_value(domain=domain, key=key):
+                    return jsonify({'ok': False, 'locked': True,
+                        'error': 'Zarizeni je uzamceno na iCloud (Find My). Aktivaci nelze provest.'}), 409
+            except Exception:
+                pass
+        # Standardni handshake s Apple aktivacnim serverem (nutny internet)
+        svc.activate()
+        try:
+            new_state = str(_get_activation_service()[1].state)
+        except Exception:
+            new_state = 'unknown'
+        return jsonify({'ok': True, 'activated': True, 'state': new_state})
+    except Exception as e:
+        # Casta pricina: zarizeni je Activation-Locked -> Apple vrati challenge
+        return jsonify({'ok': False, 'error': str(e),
+            'hint': 'Muze byt uzamceno na iCloud, nebo neni internet.'}), 500
+
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
