@@ -154,6 +154,11 @@ def admin_panel():
     from flask import send_from_directory
     return send_from_directory(_APP_DIR, 'admin.html')
 
+@app.route('/admin')
+def admin_page_alias():
+    from flask import send_from_directory
+    return send_from_directory(_APP_DIR, 'admin.html')
+
 @app.route('/health')
 def health():
     return jsonify({'ok': True, 'version': '1.0', 'service': 'iSupply Scan API'})
