@@ -156,6 +156,27 @@ def health():
     return jsonify({'ok': True, 'version': '1.0', 'service': 'iSupply Scan API'})
 
 
+# Statické soubory (loga, ikony, css, js) – jen bezpečné přípony, ne zdrojáky.
+@app.route('/<path:filename>')
+def static_files(filename):
+    from flask import send_from_directory, abort
+    ext = filename.lower().rsplit('.', 1)[-1] if '.' in filename else ''
+    if ext not in ('ico','png','jpg','jpeg','gif','svg','webp','css','js','woff','woff2','ttf','map','txt'):
+        abort(404)
+    try:
+        return send_from_directory('.', filename)
+    except Exception:
+        abort(404)
+
+@app.route('/favicon.ico')
+def favicon():
+    from flask import send_from_directory, abort
+    import os
+    for cand in ('favicon.ico','icon.ico'):
+        if os.path.exists(cand):
+            return send_from_directory('.', cand)
+    abort(404)
+
 @app.route('/api/validate', methods=['POST'])
 def validate_license():
     """
