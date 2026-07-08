@@ -25,6 +25,9 @@ from psycopg2.extras import RealDictCursor
 app = Flask(__name__)
 CORS(app)
 
+# Absolutni cesta ke slozce s app.py (Railway/gunicorn neni v korenu repa)
+_APP_DIR = os.path.dirname(os.path.abspath(__file__))
+
 SECRET_KEY    = os.environ.get('SECRET_KEY', 'change-this-in-production')
 ADMIN_PASS    = os.environ.get('ADMIN_PASSWORD', 'isupply-admin-2024')
 DATABASE_URL  = os.environ.get('DATABASE_URL', '')
@@ -144,19 +147,19 @@ def verify_token(token: str) -> dict | None:
 @app.route('/')
 def index():
     from flask import send_from_directory
-    return send_from_directory('.', 'index.html')
+    return send_from_directory(_APP_DIR, 'index.html')
 
 @app.route('/admin-panel')
 def admin_panel():
     from flask import send_from_directory
-    return send_from_directory('.', 'admin.html')
+    return send_from_directory(_APP_DIR, 'admin.html')
 
 @app.route('/health')
 def health():
     return jsonify({'ok': True, 'version': '1.0', 'service': 'iSupply Scan API'})
 
 
-# Statické soubory (loga, ikony, css, js) – jen bezpečné přípony, ne zdrojáky.
+# Staticke soubory (loga, ikony, css, js) - jen bezpecne pripony, absolutni cesta.
 @app.route('/<path:filename>')
 def static_files(filename):
     from flask import send_from_directory, abort
@@ -164,17 +167,16 @@ def static_files(filename):
     if ext not in ('ico','png','jpg','jpeg','gif','svg','webp','css','js','woff','woff2','ttf','map','txt'):
         abort(404)
     try:
-        return send_from_directory('.', filename)
+        return send_from_directory(_APP_DIR, filename)
     except Exception:
         abort(404)
 
 @app.route('/favicon.ico')
 def favicon():
     from flask import send_from_directory, abort
-    import os
     for cand in ('favicon.ico','icon.ico'):
-        if os.path.exists(cand):
-            return send_from_directory('.', cand)
+        if os.path.exists(os.path.join(_APP_DIR, cand)):
+            return send_from_directory(_APP_DIR, cand)
     abort(404)
 
 @app.route('/api/validate', methods=['POST'])
