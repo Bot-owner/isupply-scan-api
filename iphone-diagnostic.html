@@ -1897,15 +1897,37 @@ function actModal(title, body, opts) {
   }
   m.style.display = 'flex';
   const spin = opts.spinner ? '<div style="width:26px;height:26px;border:3px solid #eee;border-top-color:#ec4899;border-radius:50%;margin:0 auto 14px;animation:aspin 1s linear infinite"></div>' : '';
-  const closeBtn = opts.close ? '<div style="text-align:center;margin-top:16px"><button onclick="document.getElementById(\'act-status-modal\').style.display=\'none\'" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button></div>' : '';
+  const extraBtn = opts.extraLabel ? '<button onclick="'+opts.extraOnclick+'" style="background:#ec4899;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:8px">'+opts.extraLabel+'</button>' : '';
+  const closeBtn = opts.close ? '<button onclick="document.getElementById(\'act-status-modal\').style.display=\'none\'" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button>' : '';
+  const btnRow = (extraBtn||closeBtn) ? '<div style="text-align:center;margin-top:16px">'+extraBtn+closeBtn+'</div>' : '';
   m.innerHTML = '<div style="background:#fff;color:#0a0a0a;max-width:440px;width:92%;border-radius:14px;padding:26px;font-family:var(--sans,sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:center">'
     + '<style>@keyframes aspin{to{transform:rotate(360deg)}}</style>'
     + spin
     + '<div style="font-size:17px;font-weight:700;margin-bottom:8px">' + title + '</div>'
     + '<div style="font-size:13px;line-height:1.6;color:#6b7280">' + (body||'') + '</div>'
-    + closeBtn + '</div>';
+    + btnRow + '</div>';
 }
 function actClose(){ const m=document.getElementById('act-status-modal'); if(m) m.style.display='none'; }
+
+async function skipSetup(id){
+  actModal('Zkouším přeskočit průvodce…','Experiment – čtu, co telefon přes USB dovolí. Chvilku.',{spinner:true});
+  try{
+    const r = await fetchJSON('/api/device-skip-setup',{method:'POST'},60000);
+    if(r && r.ok){
+      actModal('✅ Průvodce možná přeskočen','Zkontroluj telefon, jestli naskočil na plochu.<br><br><span style="font-size:11px;color:#9ca3af">'+(r.note||'')+'</span>',{close:true});
+    } else {
+      actModal('ℹ️ Přeskočení zatím nejde',(r && r.note ? r.note : 'Telefon to přes USB nedovolil.')+'<br><br><span style="font-size:11px;color:#9ca3af">Na stock telefonech očekávané. Pošli mi tenhle text a zkusíme jiný iOS / jiný postup.</span>',{close:true});
+    }
+  }catch(e){
+    if(String(e.message).startsWith('ENDPOINT_MISSING')){
+      actModal('⚠️ Endpoint chybí v buildu','V EXE je starý server.py bez /api/device-skip-setup. Dej do build složky nový server.py a rebuildni.',{close:true});
+    } else if (e.name==='AbortError'){
+      actModal('⏱️ Vypršel čas','Telefon neodpověděl včas.',{close:true});
+    } else {
+      actModal('❌ Chyba',String(e.message||e),{close:true});
+    }
+  }
+}
 
 async function fetchJSON(url, options, timeoutMs) {
   const ctrl = new AbortController();
@@ -1934,7 +1956,7 @@ async function activateDevice(id) {
     actModal('Aktivuji zařízení…', 'Probíhá handshake s Apple serverem (nutný internet).', {spinner:true});
     const r = await fetchJSON('/api/device-activate', {method:'POST'}, 60000);
     if (r && r.ok && (r.activated || r.already)) {
-      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.', {close:true});
+      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.<br><br>Chceš zkusit i přeskočení průvodce (beta)?', {close:true, extraLabel:'Přeskočit průvodce (beta)', extraOnclick:'skipSetup('+id+')'});
     } else if (r && r.locked) {
       actClose(); showActivationLockModal();
     } else {

@@ -854,6 +854,53 @@ def api_device_activate():
         return jsonify({'ok': False, 'error': str(e),
             'hint': 'Muze byt uzamceno na iCloud, nebo neni internet.'}), 500
 
+@app.route('/api/device-skip-setup', methods=['POST'])
+def api_device_skip_setup():
+    """EXPERIMENTALNI (beta): pokus o preskoceni Setup Assistanta pres purplebuddy.
+    Neni to bypass - jen 'odklikani' pruvodce, jako 3uTools Skip Setup.
+    POZOR: na stock telefonech je AFC omezene na slozku Media, takze zapis do
+    Library/Preferences casto NEPROJDE. Endpoint presne reportuje, co telefon
+    dovolil, at podle toho vime, co jde na kterem iOS."""
+    report = {'attempts': [], 'ok': False}
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        ld = create_using_usbmux()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 500
+
+    # AFC: co vubec vidime + pokus dosahnout na purplebuddy plist
+    try:
+        from pymobiledevice3.services.afc import AfcService
+        afc = AfcService(ld)
+        try:
+            report['afc_root'] = afc.listdir('/')
+        except Exception as e:
+            report['afc_root_error'] = str(e)
+        candidates = [
+            'Library/Preferences/com.apple.purplebuddy.plist',
+            '../Library/Preferences/com.apple.purplebuddy.plist',
+            '/var/mobile/Library/Preferences/com.apple.purplebuddy.plist',
+        ]
+        for c in candidates:
+            try:
+                data = afc.get_file_contents(c)
+                report['reach'] = {'path': c, 'read_ok': True, 'size': len(data)}
+                report['ok'] = True
+                break
+            except Exception as e:
+                report['attempts'].append({'method': 'afc-read', 'path': c, 'error': str(e)})
+    except Exception as e:
+        report['attempts'].append({'method': 'afc-service', 'error': str(e)})
+
+    if report['ok']:
+        report['note'] = ('AFC DOSAHL na purplebuddy plist! Dalsi krok: zapsat priznaky '
+                          'SetupDone/SetupFinishedAllSteps. Napis mi to a dopisu zapis.')
+    else:
+        report['note'] = ('AFC nedosahl na Library/Preferences (na stock telefonu ocekavane - '
+                          'AFC vidi jen slozku Media). Cisty purplebuddy zapis pres USB takhle '
+                          'nejde. Zkus jiny/starsi iOS - vypis attempts ukazuje presne chyby.')
+    return jsonify(report)
+
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
