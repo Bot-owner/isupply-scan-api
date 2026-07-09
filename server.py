@@ -791,7 +791,7 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'activation-diag-v1',
+    return jsonify({'ok': True, 'build': 'hardware-discovery-v17',
                     'endpoints': ['activation-diag']})
 
 @app.route('/api/activation-diag', methods=['POST'])
@@ -985,7 +985,9 @@ _COMPONENT_SERIAL_LABELS = {
     "front_camera": "Přední kamera",
     "tele_camera": "Teleobjektiv",
     "front_ir_camera": "Přední IR kamera",
-    "true_depth_projector": "TrueDepth projektor",
+    "true_depth_projector": "Dot projektor (Lattice)",
+    "distance_sensor": "Distance Sensor",
+    "ambient_light_sensor": "Ambient Light Sensor",
     "screen": "Displej",
     "wifi": "Wi-Fi",
     "bluetooth": "Bluetooth",
@@ -998,6 +1000,8 @@ _COMPONENT_SERIAL_GROUPS = {
     "cameras": {"label": "Kamery", "components": [
         "rear_camera", "front_camera", "tele_camera",
         "front_ir_camera", "true_depth_projector"]},
+    "sensors": {"label": "Senzory", "components": [
+        "distance_sensor", "ambient_light_sensor"]},
     "display": {"label": "Displej", "components": ["screen"]},
     "connectivity": {"label": "Konektivita", "components": ["wifi", "bluetooth", "cellular"]},
     "hardware": {"label": "Hardware", "components": ["mainboard", "battery"]},
@@ -1096,6 +1100,12 @@ async def _read_hw_sources(udid):
     pearl = await _read_ioreg(diag, "pearl", "AppleH10PearlCam", errors)
     clcd = await _read_ioreg(diag, "AppleCLCD", "AppleCLCD", errors)
     battery = await _read_ioreg(diag, "AppleSmartBattery", "AppleSmartBattery", errors)
+    proximity = await _read_ioreg(diag, "proximity", "AppleProxDriver", errors)
+    als = await _read_ioreg(diag, "ambient_light", "AppleALSDriver", errors)
+    vibrator = await _read_ioreg(diag, "vibrator", "AppleHapticsSupportLEAP", errors)
+    nand = await _read_ioreg(diag, "nand", "AppleANS2NVMeController", errors)
+    if not nand:
+        nand = await _read_ioreg(diag, "nand_fallback", "AppleNANDConfigAccess", errors)
 
     try:
         cr = diag.close()
@@ -1105,7 +1115,8 @@ async def _read_hw_sources(udid):
         pass
 
     return {"values": values, "camera": camera, "pearl": pearl,
-            "clcd": clcd, "battery": battery, "errors": errors}
+            "clcd": clcd, "battery": battery, "proximity": proximity,
+            "als": als, "vibrator": vibrator, "nand": nand, "errors": errors}
 
 async def _component_serials_collect(udid, sources=None):
     # Pokud uz mame syrove zdroje (napr. z hardware-report), pouzij je - jinak precti.
@@ -1116,6 +1127,9 @@ async def _component_serials_collect(udid, sources=None):
     pearl = sources.get("pearl", {})
     clcd = sources.get("clcd", {})
     battery = sources.get("battery", {})
+    proximity = sources.get("proximity", {})
+    als = sources.get("als", {})
+    vibrator = sources.get("vibrator", {})
     errors = dict(sources.get("errors", {}))
 
     raw = {
@@ -1124,8 +1138,34 @@ async def _component_serials_collect(udid, sources=None):
         "tele_camera": _component_serial_find(camera, ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString")),
         "front_ir_camera": _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",))
                           or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)),
-        "true_depth_projector": _component_serial_find(pearl, ("StructuredLightProjectorModuleSerialNumString",))
-                          or _component_serial_find(camera, ("StructuredLightProjectorModuleSerialNumString",)),
+        "true_depth_projector": _component_serial_find(camera, (
+                              "FrontIRStructuredLightProjectorSerialNumString",
+                              "StructuredLightProjectorModuleSerialNumString",
+                              "DotProjectorSerialNumString",
+                              "ProjectorModuleSerialNumString",
+                          ))
+                          or _component_serial_find(pearl, (
+                              "FrontIRStructuredLightProjectorSerialNumString",
+                              "StructuredLightProjectorModuleSerialNumString",
+                              "DotProjectorSerialNumString",
+                              "ProjectorModuleSerialNumString",
+                          )),
+        "distance_sensor": _component_serial_find(proximity, (
+                              "DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
+                              "DistSensSerialNumber", "SerialNumber", "Serial",
+                          ))
+                          or _component_serial_find(values, (
+                              "DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
+                              "DistanceSensor", "DistSens",
+                          )),
+        "ambient_light_sensor": _component_serial_find(als, (
+                              "AmbientLightSensorSerialNumber", "ALSSerialNumber",
+                              "SerialNumber", "Serial",
+                          ))
+                          or _component_serial_find(values, (
+                              "AmbientLightSensorSerialNumber", "ALSSerialNumber",
+                              "AmbientLightSensor", "AmbientLight",
+                          )),
         "screen": _component_serial_panel_id(clcd),
         "wifi": _component_serial_find(values, ("WiFiAddress", "WifiAddress")),
         "bluetooth": _component_serial_find(values, ("BluetoothAddress",)),
@@ -1318,6 +1358,8 @@ async def _hardware_report_collect(udid):
     values = sources.get("values", {})
     battery = sources.get("battery", {})
     clcd = sources.get("clcd", {})
+    nand = sources.get("nand", {})
+    vibrator = sources.get("vibrator", {})
     errors = dict(sources.get("errors", {}))
 
     # komponenty z POTVRZENÉHO readeru (stejné zdroje, žádné druhé čtení)
@@ -1343,7 +1385,10 @@ async def _hardware_report_collect(udid):
     device = {
         "serial_number": _hw_field("Sériové číslo", lv("SerialNumber"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+        "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
+        "baseband_serial": _hw_field("Baseband Serial Number", lv("BasebandSerialNumber"), "lockdown"),
+        "chip_serial": _hw_field("Chip Serial", lv("ChipSerialNo", "ChipSerialNumber"), "lockdown"),
         "product_type": _hw_field("ProductType", lv("ProductType"), "lockdown"),
         "model": _hw_field("Model", cached.get("model") or lv("ProductType"), "resolved"),
         "a_number": _hw_field("Model number (A)", cached.get("a_number"), "resolved"),
@@ -1357,7 +1402,9 @@ async def _hardware_report_collect(udid):
         "front_camera": from_comp("front_camera", "Přední kamera"),
         "tele_camera": from_comp("tele_camera", "Teleobjektiv"),
         "front_ir_camera": from_comp("front_ir_camera", "Přední IR kamera"),
-        "true_depth_projector": from_comp("true_depth_projector", "TrueDepth projektor"),
+        "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
+        "distance_sensor": from_comp("distance_sensor", "Distance Sensor"),
+        "ambient_light_sensor": from_comp("ambient_light_sensor", "Ambient Light Sensor"),
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
@@ -1377,6 +1424,7 @@ async def _hardware_report_collect(udid):
         health = min(100, round(nominal / design * 100))
     battery_diag = {
         "serial": _hw_field("Sériové číslo", bv("Serial", "SerialNumber", "BatterySerialNumber")),
+        "manufacturer": _hw_field("Výrobce baterie", bv("Manufacturer", "BatteryManufacturer", "DeviceName", "ManufacturerName")),
         "health_percent": _hw_field("Kondice (%)", str(health) if health is not None else None),
         "cycle_count": _hw_field("Počet cyklů", bv("CycleCount", "AppleRawCycleCount")),
         "design_capacity": _hw_field("Návrhová kapacita (mAh)", str(design) if design else None),
@@ -1394,7 +1442,10 @@ async def _hardware_report_collect(udid):
         "bluetooth_address": _hw_field("Bluetooth adresa (MAC)", lv("BluetoothAddress"), "lockdown"),
         "ethernet_address": _hw_field("Ethernet adresa (MAC)", lv("EthernetAddress"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+        "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
+        "baseband_serial": _hw_field("Baseband Serial Number", lv("BasebandSerialNumber"), "lockdown"),
+        "chip_serial": _hw_field("Chip Serial", lv("ChipSerialNo", "ChipSerialNumber"), "lockdown"),
     }
 
     # ── DISPLEJ ──
@@ -1407,6 +1458,18 @@ async def _hardware_report_collect(udid):
     # ── ÚLOŽIŠTĚ / HARDWARE ──
     storage = {
         "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
+        "nand_type": _hw_field("NAND typ", _component_serial_find(nand, (
+            "NANDType", "FlashType", "MediaType", "MemoryType", "CellType",
+        )) or lv("NANDType", "FlashType", "MediaType"), "IORegistry/lockdown"),
+        "nand_manufacturer": _hw_field("NAND výrobce", _component_serial_find(nand, (
+            "Manufacturer", "Vendor", "VendorName", "NANDVendor", "FlashVendor",
+        )) or lv("NANDVendor", "FlashVendor", "NANDManufacturer"), "IORegistry/lockdown"),
+        "vibrator_number": _hw_field("Vibrator Number", lv(
+            "VibratorNumber", "VibratorSerialNumber", "HapticSerialNumber", "TapticEngineSerialNumber"
+        ) or _component_serial_find(vibrator, (
+            "VibratorNumber", "VibratorSerialNumber", "HapticSerialNumber",
+            "TapticEngineSerialNumber", "SerialNumber", "Serial",
+        )), "lockdown/IORegistry"),
     }
 
     sections = {
