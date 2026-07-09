@@ -958,16 +958,6 @@ def api_device_activate_single():
     return jsonify({'ok': ok, 'locked': locked, 'status': result['status'],
                     'message': result.get('message', ''), 'result': result}), 200
 
-@app.route('/api/auto-activate-config', methods=['GET'])
-def api_auto_activate_get():
-    return jsonify({'ok': True, 'enabled': get_setting('auto_activate_enabled', '0') == '1'})
-
-@app.route('/api/auto-activate-config', methods=['POST'])
-def api_auto_activate_set():
-    data = request.get_json(silent=True) or {}
-    set_setting('auto_activate_enabled', '1' if data.get('enabled') else '0')
-    return jsonify({'ok': True, 'enabled': bool(data.get('enabled'))})
-
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
