@@ -1959,7 +1959,7 @@ async function activateDevice(id) {
     actModal('Aktivuji zařízení…', 'Probíhá handshake s Apple serverem (nutný internet).', {spinner:true});
     const r = await fetchJSON('/api/device-activate', {method:'POST'}, 60000);
     if (r && r.ok && (r.activated || r.already)) {
-      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.<br><br>Chceš zkusit i přeskočení průvodce (beta)?', {close:true, extraLabel:'Přeskočit průvodce (beta)', extraOnclick:'skipSetup('+id+')'});
+      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.<br><br>Chceš telefon rovnou <b>přeskočit setup až na plochu</b>? (nemaze data)', {close:true, extraLabel:'Přeskočit setup na plochu', extraOnclick:'confirmSupervise('+id+')'});
     } else if (r && r.locked) {
       actClose(); showActivationLockModal();
     } else {
@@ -1972,6 +1972,32 @@ async function activateDevice(id) {
       actModal('⏱️ Vypršel čas', 'Zařízení neodpovědělo včas. Zkontroluj připojení telefonu a internet, pak zkus znovu.', {close:true});
     } else {
       actModal('❌ Aktivaci nelze provést', String(e.message||e), {close:true});
+    }
+  }
+}
+
+function confirmSupervise(id){
+  actModal('⚠️ Supervise + přeskočit setup','Nastaví telefon jako supervised (správce: iSupply trade s.r.o.) a přeskočí většinu Setup Assistanta až na plochu. <b>Nemaze data</b> (telefon je stejně na Hello screenu). Pak se restartuje. Pokračovat?',{extraLabel:'Ano, přeskočit setup', extraOnclick:'doSupervise('+id+')', close:true});
+}
+
+async function doSupervise(id){
+  actModal('Supervise probíhá…','Erase → supervise → skip setup. Nech telefon připojený, může se restartovat. Chvilku.',{spinner:true});
+  try{
+    const r = await fetchJSON('/api/device-supervise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true, erase:false, restart:true, organization:'iSupply trade s.r.o.', language:'en', locale:'en_US'})}, 180000);
+    if(r && r.ok){
+      actModal('✅ Hotovo – konfigurace nastavena','Telefon se restartuje a měl by přeskočit setup až na plochu (supervised). Chvilku počkej.',{close:true});
+    } else {
+      let stepsTxt='';
+      if(r && r.steps){ stepsTxt = r.steps.map(function(s){return (s.ok?'✓':'✗')+' '+s.step+(s.error?': '+s.error:'');}).join('<br>'); }
+      actModal('ℹ️ Supervise neproběhlo celé', (r && r.error ? r.error : 'Některý krok selhal.')+'<br><br><span style="font-size:11px;color:#9ca3af;text-align:left;display:block">'+stepsTxt+'</span><br><span style="font-size:11px;color:#9ca3af">Pošli mi tenhle výpis kroků – podle chyby doladím názvy API.</span>',{close:true});
+    }
+  }catch(e){
+    if(String(e.message).startsWith('ENDPOINT_MISSING')){
+      actModal('⚠️ Endpoint chybí v buildu','V EXE je starý server.py bez /api/device-supervise. Rebuildni s novým server.py.',{close:true});
+    } else if(e.name==='AbortError'){
+      actModal('⏱️ Vypršel čas','Supervise trvalo moc dlouho. Telefon možná stále pracuje – zkontroluj ho.',{close:true});
+    } else {
+      actModal('❌ Chyba', String(e.message||e), {close:true});
     }
   }
 }

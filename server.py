@@ -912,6 +912,106 @@ def api_device_skip_setup():
         return jsonify({'ok': False, 'error': 'nelze serializovat report: ' + str(e),
                         'note': 'serializacni chyba - reci mi to'}), 200
 
+@app.route('/api/device-supervise', methods=['POST'])
+def api_device_supervise():
+    """BETA: supervised 'prepare' jako Apple Configurator.
+    Udela zarizeni supervised + nastavi SkipSetup + jazyk/locale, pak SMAZE telefon.
+    Po smazani a restartu telefon preskoci vetsinu Setup Assistanta a naskoci na plochu.
+    NENI to bypass - oficialni supervised mechanismus. POZOR: SMAZE TELEFON.
+    Bezpecnostni pojistka: erase probehne JEN kdyz supervise/cloud-config prosel."""
+    data = request.get_json(silent=True) or {}
+    if not data.get('confirm'):
+        return jsonify({'ok': False, 'error': 'Chybi potvrzeni. Toto SMAZE telefon.'}), 200
+    org = (data.get('organization') or 'iSupply trade s.r.o.').strip()
+    language = (data.get('language') or 'en').strip()
+    locale = (data.get('locale') or 'en_US').strip()
+    do_erase = bool(data.get('erase', False))     # default: NEMAZAT (telefon je na Hello screenu)
+    do_restart = bool(data.get('restart', True))   # restart, aby Setup Assistant nacetl skip config
+    steps = []
+    try:
+        from pymobiledevice3.lockdown import create_using_usbmux
+        ld = create_using_usbmux()
+    except Exception as e:
+        return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 200
+    try:
+        from pymobiledevice3.services.mobile_config import MobileConfigService
+        mc = MobileConfigService(ld)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': 'Nelze otevrit mobile_config sluzbu: ' + str(e),
+                        'note': 'Mozna jiny nazev API v teto verzi pymobiledevice3 - reci mi to.'}), 200
+
+    skip_panes = ['Location', 'Restore', 'Android', 'AppleID', 'TOS', 'Siri', 'Diagnostics',
+                  'SoftwareUpdate', 'iMessageAndFaceTime', 'Passcode', 'Biometric', 'Payment',
+                  'Zoom', 'DisplayTone', 'MessagingActivationUsingPhoneNumber', 'WatchMigration',
+                  'ScreenTime', 'Appearance', 'Privacy', 'SIMSetup', 'OnBoarding', 'Welcome',
+                  'Keyboard', 'PreferredLanguage', 'DeviceToDeviceMigration', 'Wallpaper',
+                  'HomeButtonSensitivity', 'CloudStorage', 'ScreenSaver', 'TapToSetup',
+                  'AppStore', 'Safety', 'Multitasking', 'ActionButton', 'TermsOfAddress',
+                  'ExpressLanguage', 'Language', 'Region', 'FileVault', 'iCloudDiagnostics',
+                  'iCloudStorage', 'Accessibility', 'UpdateCompleted', 'RestoreCompleted']
+    cloud_cfg = {
+        'CloudConfigurationUIComplete': True,
+        'PostSetupProfileWasInstalled': True,
+        'SkipSetup': skip_panes,
+        'OrganizationName': org,
+        'IsSupervised': True,
+        'AllowPairing': True,
+        'Language': language,
+        'Locale': locale,
+    }
+
+    # 1) supervise (auto-generovana identita)
+    try:
+        mc.supervise(org)
+        steps.append({'step': 'supervise', 'ok': True})
+    except Exception as e:
+        steps.append({'step': 'supervise', 'ok': False, 'error': str(e)})
+
+    # 2) cloud configuration se SkipSetup + jazyk/locale
+    try:
+        mc.set_cloud_configuration(cloud_cfg)
+        steps.append({'step': 'set_cloud_configuration', 'ok': True})
+    except Exception as e:
+        steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
+
+    # kontrola supervised stavu
+    try:
+        cur = mc.get_cloud_configuration() or {}
+        steps.append({'step': 'get_cloud_configuration', 'ok': True,
+                      'IsSupervised': bool(cur.get('IsSupervised'))})
+    except Exception as e:
+        steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
+
+    # 3) erase JEN kdyz vyslovne pozadovano (telefon na Hello screenu mazat netreba)
+    ready = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
+    if do_erase:
+        if ready:
+            try:
+                mc.erase_device()
+                steps.append({'step': 'erase_device', 'ok': True})
+            except Exception as e:
+                steps.append({'step': 'erase_device', 'ok': False, 'error': str(e)})
+        else:
+            steps.append({'step': 'erase_device', 'ok': False,
+                          'error': 'PRESKOCENO - supervise/config neprosel, telefon NEMAZU'})
+
+    # 4) restart, aby Setup Assistant znovu nacetl konfiguraci a preskocil setup
+    if do_restart and ready:
+        try:
+            from pymobiledevice3.services.diagnostics import DiagnosticsService
+            ds = DiagnosticsService(ld)
+            ds.restart()
+            steps.append({'step': 'restart', 'ok': True})
+        except Exception as e:
+            steps.append({'step': 'restart', 'ok': False, 'error': str(e)})
+
+    ok = ready  # uspech = supervise/cloud-config prosel (ne mazani)
+    return jsonify({'ok': ok, 'organization': org, 'language': language, 'locale': locale,
+                    'erased': do_erase, 'steps': steps,
+                    'note': ('Konfigurace nastavena (supervised + SkipSetup). Telefon se restartuje a '
+                             'mel by preskocit vetsinu Setup Assistanta na plochu. Kdyz nektery krok '
+                             'selhal, posli mi steps - podle chyby doladime nazvy API.')})
+
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
