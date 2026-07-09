@@ -800,7 +800,7 @@ def _get_activation_service():
 @app.route('/api/version')
 def api_version():
     """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
-    return jsonify({'ok': True, 'build': 'supervise-v1',
+    return jsonify({'ok': True, 'build': 'supervise-v2',
                     'endpoints': ['device-activate', 'device-activation-state',
                                   'device-skip-setup', 'device-supervise']})
 
@@ -967,25 +967,69 @@ def api_device_supervise():
         'Locale': locale,
     }
 
-    # 1) supervise (auto-generovana identita)
+    # helper: nektere metody mobile_config jsou async (vraci coroutine)
+    def _maybe_await(x):
+        try:
+            import asyncio as _a
+            if _a.iscoroutine(x):
+                loop = _a.new_event_loop()
+                try:
+                    return loop.run_until_complete(x)
+                finally:
+                    loop.close()
+        except Exception:
+            pass
+        return x
+
+    # 0) vygeneruj supervision identitu (keybag) - self-signed, jako Apple Configurator
+    keybag_path = None
     try:
-        mc.supervise(org)
+        import tempfile, datetime as _dt
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.hazmat.primitives.serialization import pkcs12
+        _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        _name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, org)])
+        _cert = (x509.CertificateBuilder()
+                 .subject_name(_name).issuer_name(_name).public_key(_key.public_key())
+                 .serial_number(x509.random_serial_number())
+                 .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
+                 .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
+                 .sign(_key, hashes.SHA256()))
+        _p12 = pkcs12.serialize_key_and_certificates(org.encode(), _key, _cert, None,
+                                                     serialization.NoEncryption())
+        _fd, keybag_path = tempfile.mkstemp(suffix='.p12')
+        with os.fdopen(_fd, 'wb') as _f:
+            _f.write(_p12)
+        steps.append({'step': 'generate_identity', 'ok': True})
+    except Exception as e:
+        steps.append({'step': 'generate_identity', 'ok': False, 'error': str(e)})
+
+    # 1) supervise (s vygenerovanou identitou)
+    try:
+        if keybag_path:
+            _maybe_await(mc.supervise(org, keybag_path))
+        else:
+            _maybe_await(mc.supervise(org))
         steps.append({'step': 'supervise', 'ok': True})
     except Exception as e:
         steps.append({'step': 'supervise', 'ok': False, 'error': str(e)})
 
     # 2) cloud configuration se SkipSetup + jazyk/locale
     try:
-        mc.set_cloud_configuration(cloud_cfg)
+        _maybe_await(mc.set_cloud_configuration(cloud_cfg))
         steps.append({'step': 'set_cloud_configuration', 'ok': True})
     except Exception as e:
         steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
 
-    # kontrola supervised stavu
+    # kontrola supervised stavu (metoda je async -> await)
     try:
-        cur = mc.get_cloud_configuration() or {}
+        cur = _maybe_await(mc.get_cloud_configuration()) or {}
         steps.append({'step': 'get_cloud_configuration', 'ok': True,
-                      'IsSupervised': bool(cur.get('IsSupervised'))})
+                      'IsSupervised': bool(cur.get('IsSupervised')),
+                      'cloud': {k: cur.get(k) for k in ('IsSupervised', 'OrganizationName') if isinstance(cur, dict)}})
     except Exception as e:
         steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
 
@@ -994,7 +1038,7 @@ def api_device_supervise():
     if do_erase:
         if ready:
             try:
-                mc.erase_device()
+                _maybe_await(mc.erase_device())
                 steps.append({'step': 'erase_device', 'ok': True})
             except Exception as e:
                 steps.append({'step': 'erase_device', 'ok': False, 'error': str(e)})
@@ -1007,7 +1051,7 @@ def api_device_supervise():
         try:
             from pymobiledevice3.services.diagnostics import DiagnosticsService
             ds = DiagnosticsService(ld)
-            ds.restart()
+            _maybe_await(ds.restart())
             steps.append({'step': 'restart', 'ok': True})
         except Exception as e:
             steps.append({'step': 'restart', 'ok': False, 'error': str(e)})
