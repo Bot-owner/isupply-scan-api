@@ -797,6 +797,13 @@ def _get_activation_service():
     ld = create_using_usbmux()
     return ld, MobileActivationService(ld)
 
+@app.route('/api/version')
+def api_version():
+    """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
+    return jsonify({'ok': True, 'build': 'supervise-v1',
+                    'endpoints': ['device-activate', 'device-activation-state',
+                                  'device-skip-setup', 'device-supervise']})
+
 @app.route('/api/device-activation-state')
 def api_device_activation_state():
     """Vrati stav aktivace + indikaci Find My (Activation Lock)."""
