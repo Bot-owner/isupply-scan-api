@@ -1355,10 +1355,12 @@ function renderSlot(slot) {
   const isDone = slot.state==='done-pass'||slot.state==='done-fail';
   const printBtn = isDone ? `<button class="btn-icon" onclick="event.stopPropagation();openPrintModal(${slot.id})" title="Tisk štítku">🖨️</button>` : '';
   const excelBtn = isDone ? `<button class="btn-icon excel" onclick="event.stopPropagation();exportSlotToExcel(${slot.id})" title="Export do Excelu">📊</button>` : '';
+  const hasDev = slot.state!=='empty' && slot.device && slot.device.udid;
+  const compBtn = hasDev ? `<button class="btn-icon" onclick="event.stopPropagation();openComponentSerialsModal(${slot.id})" title="Sériová čísla komponent">🔎</button>` : '';
   return `<div class="slot ${slot.state}" id="slot-${slot.id}">
     <div class="slot-header">
       <span class="slot-num">SLOT ${String(slot.id+1).padStart(2,'0')}</span>
-      <div class="slot-header-right">${printBtn}${excelBtn}${renderBadge(slot)}</div>
+      <div class="slot-header-right">${printBtn}${excelBtn}${compBtn}${renderBadge(slot)}</div>
     </div>
     <div class="slot-body">${renderBody(slot)}</div>
   </div>`;
@@ -2005,15 +2007,18 @@ async function loadAutoActivateConfig(){
 }
 
 async function setAutoActivate(checked){
-  autoActivateEnabled = checked;
   updateAutoActivateStatus(t('act_status_saving'));
   try{
     await fetchJSON('/api/auto-activate-config', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({enabled: checked})
     }, 10000);
+    autoActivateEnabled = checked;  // az PO uspesnem ulozeni na server
     updateAutoActivateStatus();
   }catch(e){
+    // ulozeni selhalo -> vrat checkbox i stav do puvodni podoby, nic nezapinej
+    const cb = document.getElementById('auto-activate-cb');
+    if (cb) cb.checked = autoActivateEnabled;
     updateAutoActivateStatus(t('act_status_save_err') + e.message);
   }
 }
@@ -2055,6 +2060,110 @@ async function activateDevice(id) {
     }
   }
 }
+
+// ═══ SÉRIOVÁ ČÍSLA KOMPONENT ═══
+// DNES: /api/component-serials vrací jen AKTUÁLNÍ hodnotu (value/available).
+// Karty jsou ale připravené i na budoucí verifikační pole (factory_value,
+// current_value, match, status) - až je backend jednou bude vracet, karty je
+// samy vykreslí jako Originál/Možná vyměněno. Dokud tahle pole chybí, appka
+// si NEVYMÝŠLÍ verdikt - ukazuje jen "aktuální stav".
+const COMPONENT_ICONS = {
+  rear_camera:'📷', front_camera:'🤳', tele_camera:'🔭', front_ir_camera:'👁️',
+  true_depth_projector:'✨', screen:'📱', wifi:'📶', bluetooth:'🔵',
+  cellular:'📡', mainboard:'🔧', battery:'🔋',
+};
+
+function renderComponentCard(c) {
+  const icon = COMPONENT_ICONS[c.key] || '🔩';
+  const hasVerification = c.status !== undefined && c.status !== null;
+
+  if (hasVerification) {
+    // Budoucí stav: backend jednou vrati factory_value/current_value/match/status
+    const cfg = {
+      MATCH:                    {badge:'✓ Originál', bg:'#f0fdf4', bd:'#bbf7d0', fg:'#16a34a'},
+      MISMATCH:                 {badge:'✕ Možná vyměněno', bg:'#fef2f2', bd:'#fecaca', fg:'#dc2626'},
+      FACTORY_VALUE_UNAVAILABLE:{badge:'Bez tovární reference', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
+      CURRENT_VALUE_UNAVAILABLE:{badge:'Nelze přečíst', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
+      UNAVAILABLE:               {badge:'Nedostupné', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#9ca3af'},
+    }[c.status] || {badge:c.status, bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'};
+    return `<div style="border:1.5px solid ${cfg.bd};background:${cfg.bg};border-radius:11px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${c.label}</span>
+        <span style="font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
+      </div>
+      <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
+        <div>Tovární: <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
+        <div>Aktuální: <span style="color:#0a0a0a">${c.current_value ? esc(c.current_value) : '—'}</span></div>
+      </div>
+    </div>`;
+  }
+
+  // Dnesni stav: jen aktualni hodnota, zadny verdikt
+  return `<div style="border:1.5px solid #e8e8e8;border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fafafa'}">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${c.label}</span>
+      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;color:#9ca3af;letter-spacing:.04em">AKTUÁLNÍ STAV</span>
+    </div>
+    <div style="font-family:var(--mono,monospace);font-size:12.5px;${c.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'};word-break:break-all">
+      ${c.available ? esc(c.value) : 'nedostupné'}
+    </div>
+  </div>`;
+}
+
+async function openComponentSerialsModal(id) {
+  const slot = slots[id];
+  if (!slot || !slot.device || !slot.device.udid) return;
+  let m = document.getElementById('comp-serials-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'comp-serials-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px';
+    document.body.appendChild(m);
+  }
+  m.style.display = 'flex';
+  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:680px;width:100%;max-height:86vh;overflow:auto;border-radius:16px;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
+      <div>
+        <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Sériová čísla komponent</div>
+        <div style="font-size:18px;font-weight:700">${esc(slot.device.model || 'iPhone')}</div>
+      </div>
+      <button onclick="document.getElementById('comp-serials-modal').style.display='none'" style="background:#f4f4f5;border:none;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer;color:#6b7280;line-height:1">×</button>
+    </div>
+    <div style="font-size:12px;color:#6b7280;line-height:1.6;margin:12px 0 18px;padding:10px 12px;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:9px">
+      🔎 Appka <b>nemá přístup k tovární databázi Apple</b>, proto zatím <b>neurčuje</b>, jestli je díl
+      originál nebo vyměněný — jen zobrazuje, co je v telefonu nainstalováno teď.
+    </div>
+    <div id="comp-serials-body" style="text-align:center;padding:40px 0;color:#9ca3af;font-family:var(--mono,monospace);font-size:12px">Načítám…</div>
+  </div>`;
+
+  try {
+    const r = await fetchJSON(`/api/component-serials/${encodeURIComponent(slot.device.udid)}`, {}, 60000);
+    const body = document.getElementById('comp-serials-body');
+    if (!body) return;
+    if (!r || !r.ok || !r.groups) {
+      body.innerHTML = `<div style="color:#dc2626">Nepodařilo se načíst: ${esc((r && r.error) || 'neznámá chyba')}</div>`;
+      return;
+    }
+    body.style.padding = '0'; body.style.textAlign = 'left';
+    body.innerHTML = r.groups.map(g => `
+      <div style="margin-bottom:18px">
+        <div style="font-family:var(--mono,monospace);font-size:11px;font-weight:700;color:#0a0a0a;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+          ${g.label}
+          <span style="font-weight:400;color:#9ca3af">${g.available_count}/${g.components.length}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${g.components.map(renderComponentCard).join('')}
+        </div>
+      </div>`).join('') +
+      `<div style="font-family:var(--mono,monospace);font-size:10.5px;color:#9ca3af;margin-top:4px;text-align:center">
+        Načteno komponent: ${r.summary.components_available} / ${r.summary.components_total}
+      </div>`;
+  } catch (e) {
+    const body = document.getElementById('comp-serials-body');
+    if (body) body.innerHTML = `<div style="color:#dc2626">Chyba: ${String(e.message||e)}</div>`;
+  }
+}
+function esc(s){ const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
 
 function openPrintModal(id) {
   printSlotId = id;

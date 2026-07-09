@@ -254,6 +254,10 @@ def check_license() -> tuple[bool, str]:
 
 usb_event_queue = queue.Queue()
 connected_devices = {}
+# Globalni zamek: nikdy neotevirat 2 usbmux/lockdown spojeni soucasne (napr.
+# aktivace + USB monitor na pozadi) - soubezna spojeni k jednomu telefonu
+# umely zpusobovaly nahodne MuxException chyby.
+_usbmux_lock = threading.Lock()
 
 # ─── DB ─────────────────────────────────────────────────────────────────────
 
@@ -622,7 +626,8 @@ def get_device_info(udid):
     # Vlastní izolovaný event loop
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(_fetch())
+        with _usbmux_lock:
+            result = loop.run_until_complete(_fetch())
         print(f"  ✓ {result['name']} | IMEI: {result['imei']} | iOS: {result['ios']} | Baterie: {result['battery']}%")
         return result
     except Exception as e:
@@ -786,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'display-serial-verifier-v14',
-                    'endpoints': ['activation-diag', 'component-query-v12', 'eeprom-display-v13', 'display-verify-v14']})
+    return jsonify({'ok': True, 'build': 'activation-diag-v1',
+                    'endpoints': ['activation-diag']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -867,1255 +872,6 @@ def api_activation_diag():
                                  'trace': traceback.format_exc()})
     return jsonify(out), 200
 
-
-# ─── FACTORY VALUE PROBE ─────────────────────────────────────────────────────
-# READ-ONLY diagnostika: hledá známé 3uTools Ex-factory / current serialy
-# v hodnotách dostupných přes lockdown a DiagnosticsService.
-FACTORY_PROBE_DEFAULT_NEEDLES = [
-    "F8Y83860U9GJT0Q02", "F5D4277HSTZYT0QA8",
-    "DN883779V9YHYMX5T", "GCF918708MRHYMX5U",
-    "DNM83850UJWJH834W", "F3X8405016AJVN7A",
-]
-
-FACTORY_PROBE_KEYWORDS = [
-    "serial", "camera", "battery", "mlb", "logicboard", "board", "syscfg",
-    "factory", "manufact", "display", "lcd", "panel", "gauss", "mtsn", "lcm",
-    "fdr", "calibration", "pearl", "mesa", "savage", "yonkers", "rear",
-    "front", "nand", "wifi", "bluetooth", "macaddress", "part", "component",
-]
-
-FACTORY_PROBE_DOMAINS = [
-    None,
-    "com.apple.disk_usage",
-    "com.apple.disk_usage.factory",
-    "com.apple.mobile.battery",
-    "com.apple.mobile.iTunes",
-    "com.apple.mobile.iTunes.store",
-    "com.apple.mobile.data_sync",
-    "com.apple.xcode.developerdomain",
-    "com.apple.mobile.lockdown_cache",
-    "com.apple.mobile.internal",
-    "com.apple.mobile.factory",
-    "com.apple.factory",
-    "com.apple.mobilegestalt",
-]
-
-def _factory_probe_json_safe(value, depth=0):
-    if depth > 8:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, bytes):
-        return {"__bytes_hex__": value.hex(), "__bytes_len__": len(value)}
-    if isinstance(value, dict):
-        return {str(k): _factory_probe_json_safe(v, depth + 1)
-                for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_factory_probe_json_safe(v, depth + 1) for v in value]
-    return str(value)
-
-def _factory_probe_walk(value, path="$"):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            yield child_path, str(key), child
-            yield from _factory_probe_walk(child, child_path)
-    elif isinstance(value, (list, tuple)):
-        for idx, child in enumerate(value):
-            child_path = f"{path}[{idx}]"
-            yield child_path, str(idx), child
-            yield from _factory_probe_walk(child, child_path)
-
-def _factory_probe_analyze(source, value, needles):
-    exact_hits = []
-    candidate_keys = []
-    wanted = [str(x).upper() for x in needles if str(x).strip()]
-
-    for path, key, child in _factory_probe_walk(value):
-        if isinstance(child, bytes):
-            scalar_text = child.hex()
-        elif isinstance(child, (str, int, float, bool)):
-            scalar_text = str(child)
-        else:
-            scalar_text = ""
-
-        upper_value = scalar_text.upper()
-        for needle in wanted:
-            if needle in upper_value:
-                exact_hits.append({
-                    "source": source,
-                    "path": path,
-                    "needle": needle,
-                    "value": scalar_text[:1000],
-                })
-
-        if any(word in key.lower() for word in FACTORY_PROBE_KEYWORDS):
-            candidate_keys.append({
-                "source": source,
-                "path": path,
-                "key": key,
-                "value": _factory_probe_json_safe(child),
-            })
-
-    return exact_hits, candidate_keys
-
-async def _factory_probe_collect(udid, needles):
-    ld = await _create_lockdown_for_udid(udid)
-    sources = {}
-    errors = {}
-
-    for domain in FACTORY_PROBE_DOMAINS:
-        source = "lockdown:default" if domain is None else f"lockdown:{domain}"
-        try:
-            value = ld.all_values if domain is None else ld.get_value(domain=domain)
-            if asyncio.iscoroutine(value):
-                value = await value
-            sources[source] = _factory_probe_json_safe(value)
-        except Exception as exc:
-            errors[source] = f"{type(exc).__name__}: {exc}"
-
-    try:
-        from pymobiledevice3.services.diagnostics import DiagnosticsService
-        diag = DiagnosticsService(ld)
-
-        diag_jobs = [
-            ("diagnostics", "get_diagnostics", ()),
-            ("battery", "get_battery_diagnostics", ()),
-            ("mobilegestalt", "mobilegestalt", (FACTORY_PROBE_KEYWORDS,)),
-        ]
-
-        for label, method_name, args in diag_jobs:
-            source = f"diagnostics:{label}"
-            try:
-                method = getattr(diag, method_name, None)
-                if method is None:
-                    errors[source] = f"method {method_name} unavailable"
-                    continue
-                value = method(*args)
-                if asyncio.iscoroutine(value):
-                    value = await value
-                sources[source] = _factory_probe_json_safe(value)
-            except Exception as exc:
-                errors[source] = f"{type(exc).__name__}: {exc}"
-    except Exception as exc:
-        errors["diagnostics:init"] = f"{type(exc).__name__}: {exc}"
-
-    exact_hits = []
-    candidate_keys = []
-    for source, value in sources.items():
-        hits, candidates = _factory_probe_analyze(source, value, needles)
-        exact_hits.extend(hits)
-        candidate_keys.extend(candidates)
-
-    dedup = {
-        (item["source"], item["path"]): item
-        for item in candidate_keys
-    }
-
-    return {
-        "ok": True,
-        "udid": udid,
-        "needles": needles,
-        "summary": {
-            "sources_read": len(sources),
-            "sources_failed": len(errors),
-            "exact_hits": len(exact_hits),
-            "candidate_keys": len(dedup),
-        },
-        "exact_hits": exact_hits,
-        "candidate_keys": list(dedup.values()),
-        "errors": errors,
-        "sources": sources,
-    }
-
-@app.route("/api/factory-probe/<udid>", methods=["GET", "POST"])
-def api_factory_probe(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
-    needles = [
-        str(x).strip()
-        for x in (query_needles or body_needles or FACTORY_PROBE_DEFAULT_NEEDLES)
-        if str(x).strip()
-    ]
-
-    try:
-        result = _run_async_isolated(
-            _factory_probe_collect(udid, needles),
-            timeout=120,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-@app.route("/api/factory-probe/<udid>/report", methods=["GET"])
-def api_factory_probe_report(udid):
-    needles = request.args.getlist("needle") or FACTORY_PROBE_DEFAULT_NEEDLES
-    try:
-        result = _run_async_isolated(
-            _factory_probe_collect(udid, needles),
-            timeout=120,
-        )
-        result.pop("sources", None)
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
-
-# ─── CAMERA / DISPLAY IOREGISTRY DEEP SCANNER V9 ─────────────────────────────
-# READ-ONLY. Používá potvrzené API:
-# DiagnosticsService.ioregistry(plane="IOService")
-# a rekurzivně prohledá celý vrácený strom.
-
-_COMPONENT_V9_TERMS = (
-    "camera", "cam", "avcapture", "appleh", "isp", "sensor",
-    "front", "rear", "wide", "ultra", "tele", "truedepth",
-    "display", "screen", "panel", "oled", "lcd", "dcp",
-    "backlight", "brightness", "multitouch", "touch",
-    "serial", "sn", "part", "vendor", "manufacturer",
-    "factory", "calibration", "calibr", "module"
-)
-
-def _component_v9_safe(value, depth=0):
-    if depth > 10:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        return {
-            "__type__": "bytes",
-            "__bytes_len__": len(raw),
-            "__bytes_hex__": raw.hex(),
-        }
-    if isinstance(value, dict):
-        return {
-            str(k): _component_v9_safe(v, depth + 1)
-            for k, v in value.items()
-        }
-    if isinstance(value, (list, tuple, set)):
-        return [_component_v9_safe(v, depth + 1) for v in value]
-    return {"__type__": type(value).__name__, "__repr__": repr(value)}
-
-def _component_v9_blob_text(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        chunks = re.findall(rb"[\x20-\x7e]{4,}", raw)
-        return " ".join(x.decode("ascii", errors="ignore") for x in chunks)
-    return ""
-
-def _component_v9_match_text(value):
-    try:
-        if isinstance(value, dict):
-            parts = []
-            for k, v in value.items():
-                parts.append(str(k))
-                parts.append(_component_v9_match_text(v))
-            return " ".join(parts)
-        if isinstance(value, (list, tuple, set)):
-            return " ".join(_component_v9_match_text(v) for v in value)
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            return _component_v9_blob_text(value)
-        return str(value)
-    except Exception:
-        return ""
-
-def _component_v9_walk(node, path="IOService", out=None):
-    if out is None:
-        out = []
-    if not isinstance(node, dict):
-        return out
-
-    name = str(node.get("name") or node.get("className") or "<unnamed>")
-    current_path = f"{path}/{name}"
-    reg = node.get("regEntry")
-    class_name = node.get("className")
-    inheritance = node.get("inheritance")
-
-    searchable = " ".join([
-        name,
-        str(class_name or ""),
-        _component_v9_match_text(inheritance),
-        _component_v9_match_text(reg),
-    ]).lower()
-
-    matched_terms = sorted({term for term in _COMPONENT_V9_TERMS if term in searchable})
-    interesting_props = {}
-
-    if isinstance(reg, dict):
-        for key, value in reg.items():
-            key_l = str(key).lower()
-            value_text = _component_v9_match_text(value).lower()
-            prop_terms = sorted({
-                term for term in _COMPONENT_V9_TERMS
-                if term in key_l or term in value_text
-            })
-            if prop_terms or isinstance(value, (bytes, bytearray, memoryview)):
-                interesting_props[str(key)] = {
-                    "matched_terms": prop_terms,
-                    "value": _component_v9_safe(value),
-                }
-
-    if matched_terms or interesting_props:
-        out.append({
-            "path": current_path,
-            "name": name,
-            "className": class_name,
-            "inheritance": _component_v9_safe(inheritance),
-            "matched_terms": matched_terms,
-            "interesting_properties": interesting_props,
-            "regEntry": _component_v9_safe(reg),
-        })
-
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            _component_v9_walk(child, current_path, out)
-    elif isinstance(children, dict):
-        for child_name, child in children.items():
-            child_path = f"{current_path}/{child_name}"
-            _component_v9_walk(child, child_path, out)
-
-    return out
-
-async def _component_v9_collect(udid):
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-
-    result = {
-        "ok": True,
-        "probe": "camera-display-ioregistry-deep-scanner-v9",
-        "udid": udid,
-        "api_used": 'DiagnosticsService.ioregistry(plane="IOService")',
-        "matches": [],
-        "summary": {},
-        "errors": {},
-    }
-
-    try:
-        tree = await diag.ioregistry(plane="IOService")
-        if not isinstance(tree, dict):
-            result["ok"] = False
-            result["errors"]["IOService"] = (
-                f"Expected dict, got {type(tree).__name__}"
-            )
-            return result
-
-        matches = _component_v9_walk(tree)
-        result["matches"] = matches
-        result["summary"] = {
-            "match_count": len(matches),
-            "camera_like": sum(
-                1 for x in matches
-                if any(t in x.get("matched_terms", ())
-                       for t in ("camera", "cam", "avcapture", "isp",
-                                 "sensor", "front", "rear", "wide",
-                                 "ultra", "tele", "truedepth"))
-            ),
-            "display_like": sum(
-                1 for x in matches
-                if any(t in x.get("matched_terms", ())
-                       for t in ("display", "screen", "panel", "oled",
-                                 "lcd", "dcp", "backlight", "brightness",
-                                 "multitouch", "touch"))
-            ),
-        }
-    except Exception as exc:
-        result["ok"] = False
-        result["errors"]["IOService"] = f"{type(exc).__name__}: {exc}"
-
-    try:
-        await diag.close()
-    except Exception:
-        pass
-
-    return result
-
-@app.route("/api/component-scan/<udid>", methods=["GET"])
-def api_component_scan_v9(udid):
-    try:
-        result = _run_async_isolated(
-            _component_v9_collect(udid),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "camera-display-ioregistry-deep-scanner-v9",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
-
-# ─── TARGETED CAMERA / DISPLAY RAW EXTRACTOR V10 ─────────────────────────────
-# READ-ONLY. Uses the confirmed IOService tree and dumps ALL properties from
-# exact display EEPROM / LCD / camera ISP nodes. Bytes are preserved as HEX
-# and Base64. Known 3uTools serials are searched in text, raw bytes, HEX and
-# Base64 representations.
-
-_COMPONENT_V10_TARGETS = (
-    "display-eeprom",
-    "display-eeprom-data",
-    "display-eeprom-generic-data",
-    "AppleEmbeddedTouchEEPROMDriver",
-    "lcd",
-    "AppleSummitLCD",
-    "AppleCLCD",
-    "AppleH10CamIn",
-    "AppleH10PearlCam",
-)
-
-_COMPONENT_V10_DEFAULT_NEEDLES = (
-    "DNM83850UJWJH834W",
-    "GCF918708MRHYMX5U",
-)
-
-def _component_v10_safe(value, depth=0):
-    import base64
-    if depth > 16:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        return {
-            "__type__": "bytes",
-            "__bytes_len__": len(raw),
-            "__bytes_hex__": raw.hex(),
-            "__bytes_base64__": base64.b64encode(raw).decode("ascii"),
-        }
-    if isinstance(value, dict):
-        return {str(k): _component_v10_safe(v, depth + 1)
-                for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_component_v10_safe(v, depth + 1) for v in value]
-    return {"__type__": type(value).__name__, "__repr__": repr(value)}
-
-def _component_v10_find_needles(value, needles, path="$", hits=None):
-    import base64
-    if hits is None:
-        hits = []
-
-    if isinstance(value, dict):
-        for key, child in value.items():
-            _component_v10_find_needles(
-                child, needles, f"{path}.{key}", hits
-            )
-        return hits
-
-    if isinstance(value, (list, tuple)):
-        for idx, child in enumerate(value):
-            _component_v10_find_needles(
-                child, needles, f"{path}[{idx}]", hits
-            )
-        return hits
-
-    representations = {}
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        representations = {
-            "ascii": raw.decode("ascii", errors="ignore"),
-            "latin1": raw.decode("latin1", errors="ignore"),
-            "hex": raw.hex(),
-            "base64": base64.b64encode(raw).decode("ascii"),
-        }
-    elif isinstance(value, (str, int, float, bool)):
-        representations = {"text": str(value)}
-
-    for needle in needles:
-        needle_s = str(needle)
-        needle_upper = needle_s.upper()
-        needle_hex = needle_s.encode("ascii", errors="ignore").hex().upper()
-        needle_b64 = base64.b64encode(
-            needle_s.encode("ascii", errors="ignore")
-        ).decode("ascii").upper()
-
-        for representation, scalar in representations.items():
-            scalar_upper = scalar.upper()
-            matched_as = None
-            if needle_upper and needle_upper in scalar_upper:
-                matched_as = "plain"
-            elif representation == "hex" and needle_hex and needle_hex in scalar_upper:
-                matched_as = "ascii-bytes-as-hex"
-            elif representation == "base64" and needle_b64 and needle_b64 in scalar_upper:
-                matched_as = "ascii-bytes-as-base64"
-
-            if matched_as:
-                hits.append({
-                    "path": path,
-                    "needle": needle_s,
-                    "representation": representation,
-                    "matched_as": matched_as,
-                    "value_preview": scalar[:2000],
-                })
-    return hits
-
-def _component_v10_walk(node, needles, path="IOService", out=None):
-    if out is None:
-        out = []
-    if not isinstance(node, dict):
-        return out
-
-    name = str(node.get("name") or node.get("className") or "<unnamed>")
-    class_name = str(node.get("className") or "")
-    current_path = f"{path}/{name}"
-    reg = node.get("regEntry")
-
-    name_l = name.lower()
-    class_l = class_name.lower()
-    matched_targets = [
-        target for target in _COMPONENT_V10_TARGETS
-        if target.lower() == name_l or target.lower() == class_l
-    ]
-
-    if matched_targets:
-        raw_properties = reg if isinstance(reg, dict) else {}
-        hits = _component_v10_find_needles(raw_properties, needles)
-        out.append({
-            "path": current_path,
-            "name": name,
-            "className": class_name or None,
-            "matched_targets": matched_targets,
-            "inheritance": _component_v10_safe(node.get("inheritance")),
-            "property_count": len(raw_properties),
-            "properties": _component_v10_safe(raw_properties),
-            "needle_hits": hits,
-        })
-
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            _component_v10_walk(child, needles, current_path, out)
-    elif isinstance(children, dict):
-        for child_name, child in children.items():
-            _component_v10_walk(
-                child, needles, f"{current_path}/{child_name}", out
-            )
-    return out
-
-async def _component_v10_collect(udid, needles):
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-    result = {
-        "ok": True,
-        "probe": "targeted-camera-display-raw-extractor-v10",
-        "udid": udid,
-        "api_used": 'DiagnosticsService.ioregistry(plane="IOService")',
-        "targets": list(_COMPONENT_V10_TARGETS),
-        "needles": list(needles),
-        "nodes": [],
-        "needle_hits": [],
-        "summary": {},
-        "errors": {},
-    }
-
-    try:
-        tree = diag.ioregistry(plane="IOService")
-        if asyncio.iscoroutine(tree):
-            tree = await tree
-        if not isinstance(tree, dict):
-            result["ok"] = False
-            result["errors"]["IOService"] = (
-                f"Expected dict, got {type(tree).__name__}"
-            )
-            return result
-
-        nodes = _component_v10_walk(tree, needles)
-        result["nodes"] = nodes
-
-        all_hits = []
-        for node in nodes:
-            for hit in node.get("needle_hits", []):
-                all_hits.append({
-                    "node_path": node["path"],
-                    "node_name": node["name"],
-                    **hit,
-                })
-        result["needle_hits"] = all_hits
-        result["summary"] = {
-            "target_nodes_found": len(nodes),
-            "total_properties": sum(
-                x.get("property_count", 0) for x in nodes
-            ),
-            "byte_properties": sum(
-                1
-                for node in nodes
-                for value in node.get("properties", {}).values()
-                if isinstance(value, dict)
-                and value.get("__type__") == "bytes"
-            ),
-            "needle_hits": len(all_hits),
-            "found_node_names": [x["name"] for x in nodes],
-        }
-    except Exception as exc:
-        result["ok"] = False
-        result["errors"]["IOService"] = f"{type(exc).__name__}: {exc}"
-    finally:
-        try:
-            close_result = diag.close()
-            if asyncio.iscoroutine(close_result):
-                await close_result
-        except Exception:
-            pass
-
-    return result
-
-@app.route("/api/component-scan-v10/<udid>", methods=["GET", "POST"])
-def api_component_scan_v10(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = (
-        data.get("needles")
-        if isinstance(data.get("needles"), list)
-        else []
-    )
-    needles = [
-        str(x).strip()
-        for x in (
-            query_needles
-            or body_needles
-            or _COMPONENT_V10_DEFAULT_NEEDLES
-        )
-        if str(x).strip()
-    ]
-
-    try:
-        result = _run_async_isolated(
-            _component_v10_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "targeted-camera-display-raw-extractor-v10",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-@app.route("/api/component-scan-v10/<udid>/report", methods=["GET"])
-def api_component_scan_v10_report(udid):
-    needles = request.args.getlist("needle") or list(
-        _COMPONENT_V10_DEFAULT_NEEDLES
-    )
-    try:
-        result = _run_async_isolated(
-            _component_v10_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "targeted-camera-display-raw-extractor-v10",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
-
-# ─── IOREGISTRY DIRECT QUERY MATRIX V11 ──────────────────────────────────────
-# READ-ONLY. Tests confirmed DiagnosticsService.ioregistry signature directly
-# with name= / ioclass= / plane combinations and preserves complete responses.
-
-_COMPONENT_V11_TARGETS = (
-    ("display-eeprom", "AppleARMIICDevice"),
-    ("display-eeprom-data", "AppleARMNORFlashDevice"),
-    ("display-eeprom-generic-data", "AppleARMNORFlashDevice"),
-    ("AppleEmbeddedTouchEEPROMDriver", "AppleEmbeddedTouchEEPROMDriver"),
-    ("lcd", "AppleARMMIPIDSIDevice"),
-    ("AppleSummitLCD", "AppleSummitLCD"),
-    ("AppleCLCD", "AppleCLCD"),
-    ("AppleH10CamIn", "AppleH10CamIn"),
-    ("AppleH10PearlCam", "AppleH10PearlCam"),
-)
-
-_COMPONENT_V11_NEEDLES = (
-    "DNM83850UJWJH834W",
-    "GCF918708MRHYMX5U",
-)
-
-def _component_v11_safe(value, depth=0):
-    import base64
-    if depth > 20:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        return {
-            "__type__": "bytes",
-            "__bytes_len__": len(raw),
-            "__bytes_hex__": raw.hex(),
-            "__bytes_base64__": base64.b64encode(raw).decode("ascii"),
-        }
-    if isinstance(value, dict):
-        return {str(k): _component_v11_safe(v, depth + 1)
-                for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_component_v11_safe(v, depth + 1) for v in value]
-    return {"__type__": type(value).__name__, "__repr__": repr(value)}
-
-def _component_v11_scan(value, needles, path="$", stats=None, hits=None):
-    import base64
-    if stats is None:
-        stats = {"dicts": 0, "lists": 0, "bytes": 0, "byte_count": 0}
-    if hits is None:
-        hits = []
-
-    if isinstance(value, dict):
-        stats["dicts"] += 1
-        for key, child in value.items():
-            _component_v11_scan(child, needles, f"{path}.{key}", stats, hits)
-    elif isinstance(value, (list, tuple)):
-        stats["lists"] += 1
-        for i, child in enumerate(value):
-            _component_v11_scan(child, needles, f"{path}[{i}]", stats, hits)
-    else:
-        reps = {}
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            raw = bytes(value)
-            stats["bytes"] += 1
-            stats["byte_count"] += len(raw)
-            reps = {
-                "ascii": raw.decode("ascii", errors="ignore"),
-                "latin1": raw.decode("latin1", errors="ignore"),
-                "hex": raw.hex(),
-                "base64": base64.b64encode(raw).decode("ascii"),
-            }
-        elif isinstance(value, (str, int, float, bool)):
-            reps = {"text": str(value)}
-
-        for needle in needles:
-            n = str(needle)
-            n_upper = n.upper()
-            n_hex = n.encode("ascii", errors="ignore").hex().upper()
-            n_b64 = base64.b64encode(
-                n.encode("ascii", errors="ignore")
-            ).decode("ascii").upper()
-            for rep_name, rep_value in reps.items():
-                rv = rep_value.upper()
-                matched_as = None
-                if n_upper and n_upper in rv:
-                    matched_as = "plain"
-                elif rep_name == "hex" and n_hex and n_hex in rv:
-                    matched_as = "ascii-bytes-as-hex"
-                elif rep_name == "base64" and n_b64 and n_b64 in rv:
-                    matched_as = "ascii-bytes-as-base64"
-                if matched_as:
-                    hits.append({
-                        "path": path,
-                        "needle": n,
-                        "representation": rep_name,
-                        "matched_as": matched_as,
-                        "preview": rep_value[:2000],
-                    })
-    return stats, hits
-
-async def _component_v11_collect(udid, needles):
-    import inspect
-    import time
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-
-    out = {
-        "ok": True,
-        "probe": "ioregistry-direct-query-matrix-v11",
-        "udid": udid,
-        "needles": list(needles),
-        "targets": [{"name": n, "ioclass": c} for n, c in _COMPONENT_V11_TARGETS],
-        "calls": [],
-        "exact_hits": [],
-        "summary": {},
-        "errors": {},
-    }
-
-    jobs = []
-    seen = set()
-    for name, ioclass in _COMPONENT_V11_TARGETS:
-        variants = (
-            (f"name:{name}", {"name": name}),
-            (f"plane+name:{name}", {"plane": "IOService", "name": name}),
-            (f"ioclass:{ioclass}", {"ioclass": ioclass}),
-            (f"plane+ioclass:{ioclass}", {"plane": "IOService", "ioclass": ioclass}),
-        )
-        for label, kwargs in variants:
-            key = tuple(sorted(kwargs.items()))
-            if key not in seen:
-                seen.add(key)
-                jobs.append((label, kwargs))
-
-    for label, kwargs in jobs:
-        started = time.perf_counter()
-        item = {"label": label, "kwargs": kwargs}
-        try:
-            value = diag.ioregistry(**kwargs)
-            if inspect.isawaitable(value):
-                value = await value
-            stats, hits = _component_v11_scan(value, needles)
-            item.update({
-                "ok": True,
-                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-                "result_type": type(value).__name__,
-                "stats": stats,
-                "hits": hits,
-                "response": _component_v11_safe(value),
-            })
-            for hit in hits:
-                out["exact_hits"].append({"call": label, **hit})
-        except Exception as exc:
-            err = f"{type(exc).__name__}: {exc}"
-            item.update({
-                "ok": False,
-                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-                "error": err,
-            })
-            out["errors"][label] = err
-        out["calls"].append(item)
-
-    out["summary"] = {
-        "calls_total": len(out["calls"]),
-        "calls_ok": sum(1 for x in out["calls"] if x.get("ok")),
-        "calls_failed": sum(1 for x in out["calls"] if not x.get("ok")),
-        "responses_with_bytes": sum(
-            1 for x in out["calls"]
-            if x.get("stats", {}).get("bytes", 0) > 0
-        ),
-        "binary_properties_total": sum(
-            x.get("stats", {}).get("bytes", 0) for x in out["calls"]
-        ),
-        "binary_bytes_total": sum(
-            x.get("stats", {}).get("byte_count", 0) for x in out["calls"]
-        ),
-        "exact_hits": len(out["exact_hits"]),
-    }
-
-    try:
-        close_result = diag.close()
-        if inspect.isawaitable(close_result):
-            await close_result
-    except Exception:
-        pass
-
-    return out
-
-@app.route("/api/component-query-v11/<udid>", methods=["GET", "POST"])
-def api_component_query_v11(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
-    needles = [
-        str(x).strip()
-        for x in (query_needles or body_needles or _COMPONENT_V11_NEEDLES)
-        if str(x).strip()
-    ]
-    try:
-        result = _run_async_isolated(
-            _component_v11_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "ioregistry-direct-query-matrix-v11",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-@app.route("/api/component-query-v11/<udid>/report", methods=["GET"])
-def api_component_query_v11_report(udid):
-    needles = request.args.getlist("needle") or list(_COMPONENT_V11_NEEDLES)
-    try:
-        result = _run_async_isolated(
-            _component_v11_collect(udid, needles),
-            timeout=300,
-        )
-        # Keep metadata/stats/hits but remove potentially huge raw responses.
-        for call in result.get("calls", []):
-            call.pop("response", None)
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "ioregistry-direct-query-matrix-v11",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
-
-
-# ─── DISPLAY EEPROM / COMPONENT SERIAL READER PROBE V12 ─────────────────────
-# READ-ONLY. V12 builds on the confirmed DiagnosticsService.ioregistry API.
-# It targets display EEPROM/LCD/camera nodes, preserves raw binary properties,
-# extracts serial-like ASCII/UTF-16 candidates, checks byte-order variants and
-# returns compact evidence windows suitable for deriving a universal parser.
-
-_COMPONENT_V12_TARGETS = (
-    ("display-eeprom", "AppleARMIICDevice"),
-    ("display-eeprom-data", "AppleARMNORFlashDevice"),
-    ("display-eeprom-generic-data", "AppleARMNORFlashDevice"),
-    ("AppleEmbeddedTouchEEPROMDriver", "AppleEmbeddedTouchEEPROMDriver"),
-    ("lcd", "AppleARMMIPIDSIDevice"),
-    ("AppleSummitLCD", "AppleSummitLCD"),
-    ("AppleCLCD", "AppleCLCD"),
-    ("AppleH10CamIn", "AppleH10CamIn"),
-    ("AppleH10PearlCam", "AppleH10PearlCam"),
-)
-
-_COMPONENT_V12_KNOWN_SERIAL_KEYS = (
-    "BackCameraModuleSerialNumString",
-    "FrontCameraModuleSerialNumString",
-    "TeleCameraModuleSerialNumString",
-    "FrontIRCameraModuleSerialNumString",
-    "StructuredLightProjectorModuleSerialNumString",
-    "CameraModuleSerialNumString",
-    "SerialNumber",
-    "serial-number",
-    "module-serial-number",
-)
-
-_COMPONENT_V12_DEFAULT_NEEDLES = (
-    "DNM83850UJWJH834W",
-    "GCF918708MRHYMX5U",
-)
-
-_COMPONENT_V12_SERIAL_RE = re.compile(rb"[A-Z0-9]{10,24}")
-
-def _component_v12_safe(value, depth=0):
-    import base64
-    if depth > 20:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        return {
-            "__type__": "bytes",
-            "__bytes_len__": len(raw),
-            "__bytes_hex__": raw.hex(),
-            "__bytes_base64__": base64.b64encode(raw).decode("ascii"),
-        }
-    if isinstance(value, dict):
-        return {str(k): _component_v12_safe(v, depth + 1)
-                for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_component_v12_safe(v, depth + 1) for v in value]
-    return {"__type__": type(value).__name__, "__repr__": repr(value)}
-
-def _component_v12_byte_variants(raw):
-    variants = [("raw", raw)]
-    if len(raw) > 1:
-        variants.append(("reversed", raw[::-1]))
-    if len(raw) >= 2:
-        variants.append(("swap16", b"".join(
-            raw[i:i+2][::-1] for i in range(0, len(raw), 2)
-        )))
-    if len(raw) >= 4:
-        variants.append(("swap32", b"".join(
-            raw[i:i+4][::-1] for i in range(0, len(raw), 4)
-        )))
-    return variants
-
-def _component_v12_candidate_strings(raw):
-    candidates = []
-    seen = set()
-
-    def add(value, encoding, offset=None, variant="raw"):
-        value = str(value).strip().strip("\x00")
-        if not value or value in seen:
-            return
-        if not re.fullmatch(r"[A-Z0-9]{10,24}", value.upper()):
-            return
-        seen.add(value)
-        candidates.append({
-            "value": value,
-            "encoding": encoding,
-            "offset": offset,
-            "variant": variant,
-            "length": len(value),
-        })
-
-    for variant_name, blob in _component_v12_byte_variants(raw):
-        for match in _COMPONENT_V12_SERIAL_RE.finditer(blob):
-            add(match.group().decode("ascii", errors="ignore"),
-                "ascii", match.start(), variant_name)
-
-        for encoding in ("utf-16-le", "utf-16-be"):
-            try:
-                decoded = blob.decode(encoding, errors="ignore").upper()
-                for match in re.finditer(r"[A-Z0-9]{10,24}", decoded):
-                    add(match.group(), encoding, None, variant_name)
-            except Exception:
-                pass
-
-    return candidates
-
-def _component_v12_needles(raw, needles):
-    hits = []
-    for needle in needles:
-        n = str(needle).strip()
-        if not n:
-            continue
-        encodings = (
-            ("ascii", n.encode("ascii", errors="ignore")),
-            ("utf-16-le", n.encode("utf-16-le", errors="ignore")),
-            ("utf-16-be", n.encode("utf-16-be", errors="ignore")),
-        )
-        for variant_name, blob in _component_v12_byte_variants(raw):
-            for encoding, encoded in encodings:
-                if not encoded:
-                    continue
-                start = 0
-                while True:
-                    pos = blob.upper().find(encoded.upper(), start)
-                    if pos < 0:
-                        break
-                    lo = max(0, pos - 64)
-                    hi = min(len(blob), pos + len(encoded) + 64)
-                    hits.append({
-                        "needle": n,
-                        "encoding": encoding,
-                        "variant": variant_name,
-                        "offset": pos,
-                        "window_start": lo,
-                        "window_end": hi,
-                        "window_hex": blob[lo:hi].hex(),
-                        "window_ascii": "".join(
-                            chr(x) if 32 <= x <= 126 else "."
-                            for x in blob[lo:hi]
-                        ),
-                    })
-                    start = pos + 1
-    return hits
-
-def _component_v12_walk_values(value, path="$", out=None):
-    if out is None:
-        out = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            _component_v12_walk_values(child, f"{path}.{key}", out)
-    elif isinstance(value, (list, tuple)):
-        for idx, child in enumerate(value):
-            _component_v12_walk_values(child, f"{path}[{idx}]", out)
-    elif isinstance(value, (bytes, bytearray, memoryview)):
-        out.append((path, bytes(value)))
-    return out
-
-def _component_v12_extract_named_serials(value, path="$", out=None):
-    if out is None:
-        out = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            if str(key) in _COMPONENT_V12_KNOWN_SERIAL_KEYS:
-                if isinstance(child, (str, int)):
-                    out.append({
-                        "key": str(key),
-                        "path": child_path,
-                        "value": str(child),
-                    })
-                elif isinstance(child, (bytes, bytearray, memoryview)):
-                    raw = bytes(child)
-                    out.append({
-                        "key": str(key),
-                        "path": child_path,
-                        "value": raw.decode("ascii", errors="ignore").strip("\x00"),
-                        "raw_hex": raw.hex(),
-                    })
-            _component_v12_extract_named_serials(child, child_path, out)
-    elif isinstance(value, (list, tuple)):
-        for idx, child in enumerate(value):
-            _component_v12_extract_named_serials(child, f"{path}[{idx}]", out)
-    return out
-
-async def _component_v12_collect(udid, needles):
-    import inspect
-    import time
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-
-    out = {
-        "ok": True,
-        "probe": "display-eeprom-component-serial-reader-v12",
-        "udid": udid,
-        "needles": list(needles),
-        "calls": [],
-        "named_serials": [],
-        "serial_candidates": [],
-        "needle_hits": [],
-        "summary": {},
-        "errors": {},
-    }
-
-    jobs = []
-    seen = set()
-    for name, ioclass in _COMPONENT_V12_TARGETS:
-        for label, kwargs in (
-            (f"name:{name}", {"name": name}),
-            (f"plane+name:{name}", {"plane": "IOService", "name": name}),
-            (f"ioclass:{ioclass}", {"ioclass": ioclass}),
-            (f"plane+ioclass:{ioclass}", {"plane": "IOService", "ioclass": ioclass}),
-        ):
-            key = tuple(sorted(kwargs.items()))
-            if key not in seen:
-                seen.add(key)
-                jobs.append((label, kwargs))
-
-    candidate_seen = set()
-    named_seen = set()
-    hit_seen = set()
-
-    for label, kwargs in jobs:
-        started = time.perf_counter()
-        call = {"label": label, "kwargs": kwargs}
-        try:
-            value = diag.ioregistry(**kwargs)
-            if inspect.isawaitable(value):
-                value = await value
-
-            named = _component_v12_extract_named_serials(value)
-            blobs = _component_v12_walk_values(value)
-            call_candidates = 0
-            call_hits = 0
-
-            for item in named:
-                key = (item.get("key"), item.get("path"), item.get("value"))
-                if key not in named_seen:
-                    named_seen.add(key)
-                    out["named_serials"].append({"call": label, **item})
-
-            for path, raw in blobs:
-                for candidate in _component_v12_candidate_strings(raw):
-                    key = (label, path, candidate["value"],
-                           candidate["encoding"], candidate["variant"])
-                    if key not in candidate_seen:
-                        candidate_seen.add(key)
-                        out["serial_candidates"].append({
-                            "call": label,
-                            "path": path,
-                            "blob_len": len(raw),
-                            **candidate,
-                        })
-                        call_candidates += 1
-
-                for hit in _component_v12_needles(raw, needles):
-                    key = (label, path, hit["needle"], hit["encoding"],
-                           hit["variant"], hit["offset"])
-                    if key not in hit_seen:
-                        hit_seen.add(key)
-                        out["needle_hits"].append({
-                            "call": label,
-                            "path": path,
-                            "blob_len": len(raw),
-                            **hit,
-                        })
-                        call_hits += 1
-
-            call.update({
-                "ok": True,
-                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-                "result_type": type(value).__name__,
-                "binary_properties": len(blobs),
-                "binary_bytes": sum(len(raw) for _, raw in blobs),
-                "named_serials": len(named),
-                "serial_candidates": call_candidates,
-                "needle_hits": call_hits,
-            })
-        except Exception as exc:
-            err = f"{type(exc).__name__}: {exc}"
-            call.update({
-                "ok": False,
-                "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-                "error": err,
-            })
-            out["errors"][label] = err
-        out["calls"].append(call)
-
-    out["summary"] = {
-        "calls_total": len(out["calls"]),
-        "calls_ok": sum(1 for x in out["calls"] if x.get("ok")),
-        "calls_failed": sum(1 for x in out["calls"] if not x.get("ok")),
-        "binary_properties_total": sum(x.get("binary_properties", 0) for x in out["calls"]),
-        "binary_bytes_total": sum(x.get("binary_bytes", 0) for x in out["calls"]),
-        "named_serials": len(out["named_serials"]),
-        "serial_candidates": len(out["serial_candidates"]),
-        "needle_hits": len(out["needle_hits"]),
-    }
-
-    try:
-        close_result = diag.close()
-        if inspect.isawaitable(close_result):
-            await close_result
-    except Exception:
-        pass
-
-    return out
-
-@app.route("/api/component-query-v12/<udid>", methods=["GET", "POST"])
-def api_component_query_v12(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
-    needles = [
-        str(x).strip()
-        for x in (query_needles or body_needles or _COMPONENT_V12_DEFAULT_NEEDLES)
-        if str(x).strip()
-    ]
-    try:
-        result = _run_async_isolated(
-            _component_v12_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "display-eeprom-component-serial-reader-v12",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-@app.route("/api/component-query-v12/<udid>/report", methods=["GET"])
-def api_component_query_v12_report(udid):
-    needles = request.args.getlist("needle") or list(_COMPONENT_V12_DEFAULT_NEEDLES)
-    try:
-        result = _run_async_isolated(
-            _component_v12_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "display-eeprom-component-serial-reader-v12",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
 # ─── AKTIVACE JEDNOTLIVÉHO ZAŘÍZENÍ ──────────────────────────────────────────
 # Standardní Apple aktivace (mobileactivationd) pro JEDEN konkrétní telefon
 # (podle UDID daného slotu). Používá skip_apple_id_query=True, takže knihovna
@@ -2181,7 +937,8 @@ def _run_async_isolated(awaitable, timeout=90):
     loop = asyncio.new_event_loop()
     try:
         asyncio.set_event_loop(loop)
-        return loop.run_until_complete(asyncio.wait_for(awaitable, timeout=timeout))
+        with _usbmux_lock:
+            return loop.run_until_complete(asyncio.wait_for(awaitable, timeout=timeout))
     finally:
         asyncio.set_event_loop(None)
         loop.close()
@@ -2207,6 +964,168 @@ def api_device_activate_single():
     locked = result['status'] == 'OWNER_AUTH_REQUIRED'
     return jsonify({'ok': ok, 'locked': locked, 'status': result['status'],
                     'message': result.get('message', ''), 'result': result}), 200
+
+@app.route('/api/auto-activate-config', methods=['GET'])
+def api_auto_activate_get():
+    return jsonify({'ok': True, 'enabled': get_setting('auto_activate_enabled', '0') == '1'})
+
+@app.route('/api/auto-activate-config', methods=['POST'])
+def api_auto_activate_set():
+    data = request.get_json(silent=True) or {}
+    set_setting('auto_activate_enabled', '1' if data.get('enabled') else '0')
+    return jsonify({'ok': True, 'enabled': bool(data.get('enabled'))})
+
+# ─── AKTUÁLNÍ SÉRIOVÁ ČÍSLA KOMPONENT ────────────────────────────────────────
+# READ-ONLY: cte jen to, co je PRAVE TED nainstalovane v telefonu (IOKit
+# ioregistry). NEPOROVNAVA s tovarni hodnotou - tu nemame odkud legalne vzit
+# (vyzadovalo by pristup k Apple GSX / cizim databazim). Appka proto NIKDY
+# netvrdi "originál" / "vyměněno" - jen ukazuje aktualni stav.
+_COMPONENT_SERIAL_LABELS = {
+    "rear_camera": "Zadní kamera",
+    "front_camera": "Přední kamera",
+    "tele_camera": "Teleobjektiv",
+    "front_ir_camera": "Přední IR kamera",
+    "true_depth_projector": "TrueDepth projektor",
+    "screen": "Displej",
+    "wifi": "Wi-Fi",
+    "bluetooth": "Bluetooth",
+    "cellular": "Mobilní síť",
+    "mainboard": "Základní deska",
+    "battery": "Baterie",
+}
+
+_COMPONENT_SERIAL_GROUPS = {
+    "cameras": {"label": "Kamery", "components": [
+        "rear_camera", "front_camera", "tele_camera",
+        "front_ir_camera", "true_depth_projector"]},
+    "display": {"label": "Displej", "components": ["screen"]},
+    "connectivity": {"label": "Konektivita", "components": ["wifi", "bluetooth", "cellular"]},
+    "hardware": {"label": "Hardware", "components": ["mainboard", "battery"]},
+}
+
+def _component_serial_scalar(value):
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        txt = raw.decode("ascii", errors="ignore").strip("\x00").strip()
+        return txt or raw.hex()
+    if isinstance(value, (str, int, float)):
+        txt = str(value).strip()
+        return txt or None
+    return None
+
+def _component_serial_find(value, wanted_keys):
+    wanted = {str(x).lower() for x in wanted_keys}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if str(key).lower() in wanted:
+                scalar = _component_serial_scalar(child)
+                if scalar:
+                    return scalar
+        for child in value.values():
+            found = _component_serial_find(child, wanted_keys)
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for child in value:
+            found = _component_serial_find(child, wanted_keys)
+            if found:
+                return found
+    return None
+
+def _component_serial_panel_id(value):
+    panel_id = _component_serial_find(value, ("Panel_ID", "PanelID"))
+    if not panel_id:
+        return None
+    first = re.split(r"[\s,;|:/]+", panel_id.strip(), maxsplit=1)[0].strip()
+    return first or None
+
+async def _component_serials_collect(udid):
+    import inspect
+    from pymobiledevice3.services.diagnostics import DiagnosticsService
+
+    ld = await _create_lockdown_for_udid(udid)
+    diag = DiagnosticsService(ld)
+    errors = {}
+
+    values = {}
+    try:
+        all_values = ld.all_values
+        if inspect.isawaitable(all_values):
+            all_values = await all_values
+        if isinstance(all_values, dict):
+            values = all_values
+    except Exception as exc:
+        errors["lockdown"] = f"{type(exc).__name__}: {exc}"
+
+    async def read_ioregistry(label, **kwargs):
+        try:
+            result = diag.ioregistry(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
+        except Exception as exc:
+            errors[label] = f"{type(exc).__name__}: {exc}"
+            return {}
+
+    camera = await read_ioregistry("camera", plane="IOService", ioclass="AppleH10CamIn")
+    pearl = await read_ioregistry("pearl", plane="IOService", ioclass="AppleH10PearlCam")
+    clcd = await read_ioregistry("AppleCLCD", plane="IOService", ioclass="AppleCLCD")
+    battery = await read_ioregistry("AppleSmartBattery", plane="IOService", name="AppleSmartBattery")
+
+    raw = {
+        "rear_camera": _component_serial_find(camera, ("BackCameraModuleSerialNumString", "CameraModuleSerialNumString")),
+        "front_camera": _component_serial_find(camera, ("FrontCameraModuleSerialNumString",)),
+        "tele_camera": _component_serial_find(camera, ("TeleCameraModuleSerialNumString",)),
+        "front_ir_camera": _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",))
+                          or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)),
+        "true_depth_projector": _component_serial_find(pearl, ("StructuredLightProjectorModuleSerialNumString",))
+                          or _component_serial_find(camera, ("StructuredLightProjectorModuleSerialNumString",)),
+        "screen": _component_serial_panel_id(clcd),
+        "wifi": _component_serial_find(values, ("WiFiAddress", "WifiAddress")),
+        "bluetooth": _component_serial_find(values, ("BluetoothAddress",)),
+        "cellular": _component_serial_find(values, ("InternationalMobileEquipmentIdentity", "MobileEquipmentIdentifier")),
+        "mainboard": _component_serial_find(values, ("MLBSerialNumber", "LogicBoardSerialNumber", "SerialNumber")),
+        "battery": _component_serial_find(battery, ("Serial", "SerialNumber", "BatterySerialNumber")),
+    }
+
+    components = {}
+    for key, label in _COMPONENT_SERIAL_LABELS.items():
+        value = raw.get(key)
+        components[key] = {"key": key, "label": label, "value": value, "available": bool(value)}
+
+    groups = []
+    for group_key, spec in _COMPONENT_SERIAL_GROUPS.items():
+        group_components = [components[key] for key in spec["components"]]
+        groups.append({
+            "key": group_key, "label": spec["label"], "components": group_components,
+            "available_count": sum(1 for item in group_components if item["available"]),
+        })
+
+    try:
+        close_result = diag.close()
+        if inspect.isawaitable(close_result):
+            await close_result
+    except Exception:
+        pass
+
+    return {
+        "ok": True, "udid": udid, "components": components, "groups": groups,
+        "summary": {
+            "components_total": len(components),
+            "components_available": sum(1 for item in components.values() if item["available"]),
+        },
+        "errors": errors,
+    }
+
+@app.route('/api/component-serials/<udid>', methods=['GET'])
+def api_component_serials(udid):
+    try:
+        result = _run_async_isolated(_component_serials_collect(udid), timeout=90)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
 
 @app.route('/api/detect-printer')
 def api_detect_printer():
@@ -2351,6 +1270,11 @@ def api_device_vals(udid):
             'com.apple.mobile.iTunes.store',
             'com.apple.mobile.data_sync',
             'com.apple.xcode.developerdomain',
+            'com.apple.mobile.internal',
+            'com.apple.fmip',
+            'com.apple.mobile.dolgen',
+            'com.apple.mobile.software_behavior',
+            'com.apple.mobile.chaperone',
         ]
 
         for domain in domains:
@@ -2367,11 +1291,32 @@ def api_device_vals(udid):
             except Exception as e:
                 result[domain or 'default'] = {'error': str(e)}
 
+        # IOKit ioregentry AppleSmartBattery – syrovy vypis (Serial, Manufacturer,
+        # DeviceName atd. – hledame cokoli, co by naznacovalo puvod/originalitu baterie)
+        try:
+            import inspect as _insp
+            from pymobiledevice3.services.diagnostics import DiagnosticsService
+            diag = DiagnosticsService(ld)
+            if _insp.iscoroutinefunction(DiagnosticsService):
+                diag = await DiagnosticsService(ld)
+            for entry_name in ('AppleSmartBattery', 'AppleARMPMUCharger', 'AppleSMC'):
+                try:
+                    ioreg = diag.ioregentry(entry_name)
+                    if asyncio.iscoroutine(ioreg):
+                        ioreg = await ioreg
+                    if isinstance(ioreg, dict):
+                        result['ioreg_' + entry_name] = {k: str(v) for k, v in ioreg.items()}
+                except Exception as e2:
+                    result['ioreg_' + entry_name + '_error'] = str(e2)
+        except Exception as e:
+            result['ioreg_error'] = str(e)
+
         return result
 
     loop = asyncio.new_event_loop()
     try:
-        result = loop.run_until_complete(_fetch())
+        with _usbmux_lock:
+            result = loop.run_until_complete(_fetch())
         return jsonify(result)
     except Exception as e:
         return jsonify({'error': str(e)})
@@ -2959,475 +1904,6 @@ def api_restore_logs():
     return app.response_class(generate(), mimetype='text/event-stream',
                                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
 
-
-
-# ─── DISPLAY SERIAL + EEPROM DISCOVERY V13 ───────────────────────────────────
-# READ-ONLY. Finds every IORegistry node whose name/class/path/property keys look
-# EEPROM/NVM/display related, then performs direct ioregistry(name=/ioclass=)
-# queries. Preserves ALL returned values, including bytes as HEX + Base64, and
-# extracts serial-like ASCII strings for display-SN hunting.
-
-_EEPROM_V13_NODE_TERMS = (
-    "eeprom", "norflash", "nvm", "nvram", "flash",
-    "display", "lcd", "oled", "panel", "screen", "dcp",
-    "touch", "multitouch", "clcd", "summit", "mipi", "dsid",
-)
-
-_EEPROM_V13_KEY_TERMS = (
-    "serial", "sn", "mtsn", "lcm", "panel", "display", "lcd", "oled",
-    "eeprom", "nvm", "nvram", "flash", "factory", "vendor", "manufacturer",
-    "part", "module", "calibration", "calibr", "data", "blob", "memory",
-    "reg", "address", "size", "length",
-)
-
-_EEPROM_V13_SERIAL_RE = re.compile(r"(?<![A-Z0-9])[A-Z0-9]{14,24}(?![A-Z0-9])")
-
-def _eeprom_v13_safe(value, depth=0):
-    import base64
-    if depth > 24:
-        return "<max-depth>"
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        raw = bytes(value)
-        return {
-            "__type__": "bytes",
-            "__bytes_len__": len(raw),
-            "__bytes_hex__": raw.hex(),
-            "__bytes_base64__": base64.b64encode(raw).decode("ascii"),
-            "__ascii_strings__": [
-                x.decode("ascii", errors="ignore")
-                for x in re.findall(rb"[\x20-\x7e]{4,}", raw)
-            ],
-        }
-    if isinstance(value, dict):
-        return {str(k): _eeprom_v13_safe(v, depth + 1)
-                for k, v in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_eeprom_v13_safe(v, depth + 1) for v in value]
-    return {"__type__": type(value).__name__, "__repr__": repr(value)}
-
-def _eeprom_v13_scan(value, path="$", found=None, serials=None, stats=None):
-    if found is None:
-        found = []
-    if serials is None:
-        serials = []
-    if stats is None:
-        stats = {"byte_properties": 0, "binary_bytes": 0}
-
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            key_l = str(key).lower()
-            if any(term in key_l for term in _EEPROM_V13_KEY_TERMS):
-                found.append({
-                    "path": child_path,
-                    "key": str(key),
-                    "value": _eeprom_v13_safe(child),
-                })
-            _eeprom_v13_scan(child, child_path, found, serials, stats)
-    elif isinstance(value, (list, tuple)):
-        for i, child in enumerate(value):
-            _eeprom_v13_scan(child, f"{path}[{i}]", found, serials, stats)
-    else:
-        texts = []
-        if isinstance(value, (bytes, bytearray, memoryview)):
-            raw = bytes(value)
-            stats["byte_properties"] += 1
-            stats["binary_bytes"] += len(raw)
-            texts.extend(
-                x.decode("ascii", errors="ignore")
-                for x in re.findall(rb"[\x20-\x7e]{6,}", raw)
-            )
-        elif isinstance(value, str):
-            texts.append(value)
-
-        for scalar in texts:
-            for match in _EEPROM_V13_SERIAL_RE.findall(scalar.upper()):
-                serials.append({
-                    "path": path,
-                    "value": match,
-                    "source_text": scalar[:1000],
-                })
-
-    return found, serials, stats
-
-def _eeprom_v13_walk_tree(node, path="IOService", nodes=None):
-    if nodes is None:
-        nodes = []
-    if not isinstance(node, dict):
-        return nodes
-
-    name = str(node.get("name") or node.get("className") or "<unnamed>")
-    cls = str(node.get("className") or "")
-    current = f"{path}/{name}"
-    reg = node.get("regEntry")
-    searchable = " ".join((name, cls, current)).lower()
-
-    matched = sorted({
-        term for term in _EEPROM_V13_NODE_TERMS if term in searchable
-    })
-    if matched:
-        props = reg if isinstance(reg, dict) else {}
-        key_hits, serials, stats = _eeprom_v13_scan(props)
-        nodes.append({
-            "path": current,
-            "name": name,
-            "className": cls or None,
-            "inheritance": _eeprom_v13_safe(node.get("inheritance")),
-            "matched_terms": matched,
-            "property_count": len(props),
-            "properties": _eeprom_v13_safe(props),
-            "interesting_values": key_hits,
-            "serial_candidates": serials,
-            "stats": stats,
-        })
-
-    children = node.get("children")
-    if isinstance(children, list):
-        for child in children:
-            _eeprom_v13_walk_tree(child, current, nodes)
-    elif isinstance(children, dict):
-        for child_name, child in children.items():
-            _eeprom_v13_walk_tree(child, f"{current}/{child_name}", nodes)
-    return nodes
-
-async def _eeprom_v13_collect(udid, needles):
-    import inspect
-    import time
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-    out = {
-        "ok": True,
-        "probe": "display-serial-eeprom-discovery-v13",
-        "udid": udid,
-        "goal": "find display serial and dump every EEPROM/NVM/display IORegistry value exposed by diagnostics",
-        "needles": list(needles),
-        "tree_nodes": [],
-        "direct_queries": [],
-        "serial_candidates": [],
-        "needle_hits": [],
-        "summary": {},
-        "errors": {},
-    }
-
-    try:
-        tree = diag.ioregistry(plane="IOService")
-        if inspect.isawaitable(tree):
-            tree = await tree
-        if not isinstance(tree, dict):
-            raise TypeError(f"IOService tree expected dict, got {type(tree).__name__}")
-
-        nodes = _eeprom_v13_walk_tree(tree)
-        out["tree_nodes"] = nodes
-
-        targets = []
-        seen = set()
-        for node in nodes:
-            for kind, value in (("name", node.get("name")),
-                                ("ioclass", node.get("className"))):
-                if value and (kind, value) not in seen:
-                    seen.add((kind, value))
-                    targets.append((kind, value))
-
-        # Also force the nodes already proven useful in earlier probes.
-        for value in (
-            "display-eeprom", "display-eeprom-data",
-            "display-eeprom-generic-data", "AppleEmbeddedTouchEEPROMDriver",
-            "lcd", "AppleSummitLCD", "AppleCLCD",
-        ):
-            if ("name", value) not in seen:
-                seen.add(("name", value))
-                targets.append(("name", value))
-
-        needle_upper = [str(n).upper() for n in needles if str(n).strip()]
-
-        for kind, value in targets:
-            started = time.perf_counter()
-            label = f"{kind}:{value}"
-            item = {"label": label, kind: value}
-            try:
-                response = diag.ioregistry(**{kind: value})
-                if inspect.isawaitable(response):
-                    response = await response
-                key_hits, serials, stats = _eeprom_v13_scan(response)
-
-                # Search known screen serial(s) in plain text and raw-byte hex.
-                safe_response = _eeprom_v13_safe(response)
-                serialized = json.dumps(safe_response, ensure_ascii=False).upper()
-                hits = []
-                for needle in needle_upper:
-                    ascii_hex = needle.encode("ascii", errors="ignore").hex().upper()
-                    if needle in serialized or (ascii_hex and ascii_hex in serialized):
-                        hits.append(needle)
-                        out["needle_hits"].append({
-                            "call": label,
-                            "needle": needle,
-                        })
-
-                item.update({
-                    "ok": True,
-                    "elapsed_ms": round((time.perf_counter() - started) * 1000, 2),
-                    "stats": stats,
-                    "interesting_values": key_hits,
-                    "serial_candidates": serials,
-                    "needle_hits": hits,
-                    "response": safe_response,
-                })
-                for candidate in serials:
-                    out["serial_candidates"].append({
-                        "call": label,
-                        **candidate,
-                    })
-            except Exception as exc:
-                err = f"{type(exc).__name__}: {exc}"
-                item.update({"ok": False, "error": err})
-                out["errors"][label] = err
-            out["direct_queries"].append(item)
-
-        # Add candidates found in the full IOService tree.
-        for node in out["tree_nodes"]:
-            for candidate in node.get("serial_candidates", []):
-                out["serial_candidates"].append({
-                    "call": f"tree:{node['path']}",
-                    **candidate,
-                })
-
-        # Deduplicate candidates while preserving source/path.
-        dedup = {}
-        for item in out["serial_candidates"]:
-            dedup[(item.get("call"), item.get("path"), item.get("value"))] = item
-        out["serial_candidates"] = list(dedup.values())
-
-        out["summary"] = {
-            "tree_nodes_found": len(out["tree_nodes"]),
-            "direct_queries_total": len(out["direct_queries"]),
-            "direct_queries_ok": sum(1 for x in out["direct_queries"] if x.get("ok")),
-            "direct_queries_failed": sum(1 for x in out["direct_queries"] if not x.get("ok")),
-            "binary_properties": sum(
-                x.get("stats", {}).get("byte_properties", 0)
-                for x in out["direct_queries"]
-            ),
-            "binary_bytes": sum(
-                x.get("stats", {}).get("binary_bytes", 0)
-                for x in out["direct_queries"]
-            ),
-            "serial_candidates": len(out["serial_candidates"]),
-            "needle_hits": len(out["needle_hits"]),
-        }
-    except Exception as exc:
-        out["ok"] = False
-        out["errors"]["collector"] = f"{type(exc).__name__}: {exc}"
-    finally:
-        try:
-            close_result = diag.close()
-            if inspect.isawaitable(close_result):
-                await close_result
-        except Exception:
-            pass
-
-    return out
-
-@app.route("/api/eeprom-display-v13/<udid>", methods=["GET", "POST"])
-def api_eeprom_display_v13(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
-    needles = [
-        str(x).strip()
-        for x in (query_needles or body_needles)
-        if str(x).strip()
-    ]
-    try:
-        result = _run_async_isolated(
-            _eeprom_v13_collect(udid, needles),
-            timeout=300,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "display-serial-eeprom-discovery-v13",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-@app.route("/api/eeprom-display-v13/<udid>/report", methods=["GET", "POST"])
-def api_eeprom_display_v13_report(udid):
-    data = request.get_json(silent=True) or {}
-    query_needles = request.args.getlist("needle")
-    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
-    needles = [
-        str(x).strip()
-        for x in (query_needles or body_needles)
-        if str(x).strip()
-    ]
-    try:
-        result = _run_async_isolated(
-            _eeprom_v13_collect(udid, needles),
-            timeout=300,
-        )
-        # Compact report: keep discovered values/candidates, omit full raw replies.
-        for call in result.get("direct_queries", []):
-            call.pop("response", None)
-        for node in result.get("tree_nodes", []):
-            node.pop("properties", None)
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "display-serial-eeprom-discovery-v13",
-            "udid": udid,
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
-
-
-# ─── DISPLAY SERIAL VERIFY V14 ───────────────────────────────────────────────
-# READ-ONLY. Reads AppleCLCD.Panel_ID, splits '+' segments and verifies that
-# the first segment is the display serial used by the reference value.
-
-def _display_v14_scalar(value):
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (bytes, bytearray, memoryview)):
-        return bytes(value).decode("ascii", errors="ignore").rstrip("\x00")
-    return None
-
-def _display_v14_find_panel_id(value, path="$"):
-    if isinstance(value, dict):
-        for key, child in value.items():
-            child_path = f"{path}.{key}"
-            if str(key).lower() == "panel_id":
-                scalar = _display_v14_scalar(child)
-                if scalar:
-                    return child_path, scalar
-            found = _display_v14_find_panel_id(child, child_path)
-            if found:
-                return found
-    elif isinstance(value, (list, tuple)):
-        for i, child in enumerate(value):
-            found = _display_v14_find_panel_id(child, f"{path}[{i}]")
-            if found:
-                return found
-    return None
-
-async def _display_v14_collect(udid, expected_serial=None, expected_panel_id=None):
-    import inspect
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
-
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-    out = {
-        "ok": False,
-        "probe": "display-serial-verifier-v14",
-        "udid": udid,
-        "source": "DiagnosticsService.ioregistry(name='AppleCLCD')",
-        "property": "Panel_ID",
-        "expected_serial": expected_serial,
-        "expected_panel_id": expected_panel_id,
-        "panel_id": None,
-        "panel_id_path": None,
-        "segments": [],
-        "display_serial": None,
-        "serial_match": None,
-        "panel_id_match": None,
-        "verification": "NOT_READ",
-        "errors": {},
-    }
-    try:
-        value = diag.ioregistry(name="AppleCLCD")
-        if inspect.isawaitable(value):
-            value = await value
-
-        found = _display_v14_find_panel_id(value)
-        if not found:
-            out["verification"] = "PANEL_ID_NOT_FOUND"
-            out["errors"]["Panel_ID"] = "Panel_ID was not exposed by AppleCLCD"
-            return out
-
-        path, panel_id = found
-        segments = panel_id.split("+")
-        display_serial = segments[0].strip() if segments else None
-
-        out["ok"] = True
-        out["panel_id"] = panel_id
-        out["panel_id_path"] = path
-        out["segments"] = [
-            {"index": i, "value": segment, "length": len(segment)}
-            for i, segment in enumerate(segments)
-        ]
-        out["display_serial"] = display_serial
-
-        if expected_serial:
-            out["serial_match"] = (
-                display_serial.upper() == str(expected_serial).strip().upper()
-            )
-        if expected_panel_id:
-            out["panel_id_match"] = (
-                panel_id == str(expected_panel_id).strip()
-            )
-
-        if expected_serial and expected_panel_id:
-            out["verification"] = (
-                "VERIFIED"
-                if out["serial_match"] and out["panel_id_match"]
-                else "MISMATCH"
-            )
-        elif expected_serial:
-            out["verification"] = (
-                "VERIFIED" if out["serial_match"] else "MISMATCH"
-            )
-        elif expected_panel_id:
-            out["verification"] = (
-                "VERIFIED" if out["panel_id_match"] else "MISMATCH"
-            )
-        else:
-            out["verification"] = "READ_OK_UNVERIFIED"
-
-        return out
-    except Exception as exc:
-        out["verification"] = "ERROR"
-        out["errors"]["collector"] = f"{type(exc).__name__}: {exc}"
-        return out
-    finally:
-        try:
-            close_result = diag.close()
-            if inspect.isawaitable(close_result):
-                await close_result
-        except Exception:
-            pass
-
-@app.route("/api/display-verify-v14/<udid>", methods=["GET", "POST"])
-def api_display_verify_v14(udid):
-    data = request.get_json(silent=True) or {}
-    expected_serial = (
-        request.args.get("expected_serial")
-        or data.get("expected_serial")
-    )
-    expected_panel_id = (
-        request.args.get("expected_panel_id")
-        or data.get("expected_panel_id")
-    )
-    try:
-        result = _run_async_isolated(
-            _display_v14_collect(
-                udid,
-                expected_serial=expected_serial,
-                expected_panel_id=expected_panel_id,
-            ),
-            timeout=120,
-        )
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({
-            "ok": False,
-            "probe": "display-serial-verifier-v14",
-            "udid": udid,
-            "verification": "ERROR",
-            "error": f"{type(exc).__name__}: {exc}",
-        }), 200
 
 # ─── START ───────────────────────────────────────────────────────────────────
 
