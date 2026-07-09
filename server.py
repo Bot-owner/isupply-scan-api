@@ -791,7 +791,7 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'hardware-discovery-v17',
+    return jsonify({'ok': True, 'build': 'extended-hardware-discovery-v18',
                     'endpoints': ['activation-diag']})
 
 @app.route('/api/activation-diag', methods=['POST'])
@@ -1337,6 +1337,164 @@ def api_dot_projector_factory_probe(udid):
     except Exception as exc:
         return jsonify({"ok": False, "probe": "dot-projector-ex-factory-discovery-v1",
                         "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
+
+
+
+# ─── EXTENDED HARDWARE VALUE DISCOVERY V18 ───────────────────────────────────
+# READ-ONLY discovery probe for values that are visible in 3uTools but whose
+# exact pymobiledevice3 / IORegistry property path has not yet been confirmed.
+_DISCOVERY_EXPECTED = {
+    "distance_sensor": "FWP8311CBQ1H6CW20",
+    "ambient_light_sensor": "3E-85DF2320",
+    "vibrator_number": "FTN838245WQJGJN84+XMAYM1",
+}
+
+def _discovery_value_forms(value):
+    forms = []
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        forms.append(("bytes_hex", raw.hex()))
+        forms.append(("bytes_ascii", raw.decode("ascii", errors="ignore").strip("\x00")))
+    elif isinstance(value, (str, int, float, bool)):
+        forms.append(("scalar", str(value)))
+    return forms
+
+def _discovery_norm(value):
+    return re.sub(r"[^A-Z0-9+]", "", str(value).upper())
+
+def _discovery_walk(value, path="$"):
+    rows = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            rows.append((child_path, str(key), child))
+            rows.extend(_discovery_walk(child, child_path))
+    elif isinstance(value, (list, tuple)):
+        for idx, child in enumerate(value):
+            rows.extend(_discovery_walk(child, f"{path}[{idx}]"))
+    return rows
+
+async def _extended_hw_discovery_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors = {}
+    sources = []
+    hits = []
+    candidates = []
+
+    async def add_source(label, query_fn):
+        try:
+            result = query_fn()
+            if inspect.isawaitable(result):
+                result = await result
+            sources.append({"source": label, "ok": bool(result), "result_type": type(result).__name__})
+            if result:
+                scan_source(label, result)
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            sources.append({"source": label, "ok": False, "error": err})
+
+    def scan_source(label, result):
+        expected_norm = {k: _discovery_norm(v) for k, v in _DISCOVERY_EXPECTED.items()}
+        tokens = (
+            "distance", "dist", "prox", "ambient", "light", "als",
+            "vibr", "haptic", "taptic", "nand", "flash", "storage",
+            "manufacturer", "vendor", "serial", "baseband", "chip"
+        )
+        for path, key, value in _discovery_walk(result):
+            key_hay = f"{path} {key}".lower()
+            forms = _discovery_value_forms(value)
+            for form, rendered in forms:
+                norm = _discovery_norm(rendered)
+                for goal, expected in expected_norm.items():
+                    if expected and expected in norm:
+                        hits.append({
+                            "goal": goal, "expected": _DISCOVERY_EXPECTED[goal],
+                            "source": label, "path": path, "key": key,
+                            "form": form, "value": rendered,
+                        })
+                if any(token in key_hay for token in tokens):
+                    candidates.append({
+                        "source": label, "path": path, "key": key,
+                        "form": form, "value": rendered,
+                    })
+
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        sources.append({"source": "lockdown:all_values", "ok": bool(av), "result_type": type(av).__name__})
+        if av:
+            scan_source("lockdown:all_values", av)
+    except Exception as exc:
+        errors["lockdown:all_values"] = f"{type(exc).__name__}: {exc}"
+
+    # Broad IOService tree is especially important: V17 proved that guessed
+    # class names are insufficient for DistSens / ALS / vibrator / NAND.
+    await add_source("ioregistry:plane:IOService",
+                     lambda: diag.ioregistry(plane="IOService"))
+
+    targets = (
+        "AppleH10CamIn", "AppleH10PearlCam", "AppleCLCD", "AppleSmartBattery",
+        "AppleProxDriver", "AppleALSDriver", "AppleHapticsSupportLEAP",
+        "AppleNANDConfigAccess", "AppleANS2NVMeController", "AppleANS2Controller",
+        "AppleEmbeddedNVMeController", "AppleNVMeController",
+        "AppleTapticEngine", "AppleHaptics", "AppleProximitySensor",
+        "AppleAmbientLightSensor",
+    )
+    for target in targets:
+        await add_source(f"ioregistry:name:{target}",
+                         lambda target=target: diag.ioregistry(name=target))
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    # Deduplicate and keep payload manageable.
+    def dedup(items, keys):
+        seen, out = set(), []
+        for item in items:
+            ident = tuple(str(item.get(k)) for k in keys)
+            if ident not in seen:
+                seen.add(ident)
+                out.append(item)
+        return out
+
+    hits = dedup(hits, ("goal", "source", "path", "form", "value"))
+    candidates = dedup(candidates, ("source", "path", "key", "form", "value"))
+
+    return {
+        "ok": True,
+        "probe": "extended-hardware-discovery-v18",
+        "read_only": True,
+        "udid": udid,
+        "expected": _DISCOVERY_EXPECTED,
+        "exact_value_hits": hits,
+        "candidates": candidates[:1500],
+        "sources": sources,
+        "errors": errors,
+        "summary": {
+            "exact_value_hits": len(hits),
+            "candidates": len(candidates),
+            "sources_total": len(sources),
+            "sources_ok": sum(1 for s in sources if s.get("ok")),
+        },
+    }
+
+@app.route('/api/extended-hardware-discovery/<udid>', methods=['GET'])
+def api_extended_hardware_discovery(udid):
+    try:
+        result = _run_async_isolated(_extended_hw_discovery_collect(udid), timeout=240)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "extended-hardware-discovery-v18",
+            "udid": udid, "error": f"{type(exc).__name__}: {exc}"
+        }), 200
 
 
 # ─── HARDWARE REPORT (agregace do sémantických sekcí) ────────────────────────
