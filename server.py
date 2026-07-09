@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'diagnostics-relay-sensor-discovery-v19',
-                    'endpoints': ['activation-diag']})
+    return jsonify({'ok': True, 'build': 'deep-syscfg-mobilegestalt-binary-sensor-discovery-v20',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1697,6 +1697,232 @@ def api_v19_sensor_discovery(udid):
         return jsonify({
             "ok": False,
             "probe": "diagnostics-relay-sensor-discovery-v19",
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V20 DEEP SYSCFG / MOBILEGESTALT / BINARY SENSOR DISCOVERY ───────────────
+# READ-ONLY rekonstrukcni probe. Cilem je dohledat zdroj hodnot, ktere 3uTools
+# zobrazuje jako Distance Sensor / Ambient Light / Vibrator Number.
+# Nic nezapisuje do telefonu a nemeni SysCfg ani kalibrace.
+_V20_EXPECTED = {
+    "distance_sensor": "FWP8311CBQ1H6CW20",
+    "ambient_light_sensor": "3E-85DF2320",
+    "vibrator_number": "FTN838245WQJGJN84+XMAYM1",
+}
+
+_V20_KEYS = [
+    "SysCfg", "SysCfgDict", "syscfg", "DeviceTree", "IODeviceTree",
+    "RosalineSerialNumber", "SavageSerialNumber", "YonkersSerialNumber",
+    "VibratorNumber", "VibratorSerialNumber", "HapticSerialNumber",
+    "TapticEngineSerialNumber", "VibratorCapability",
+    "DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
+    "AmbientLightSensorSerialNumber", "ALSSerialNumber",
+    "ProximitySensorCalibration", "AmbientLightSensorCalibration",
+    "CalibrationData", "SensorCalibrationData", "PearlCalibrationData",
+]
+
+_V20_NAMES = [
+    "AppleH10CamIn", "AppleH10PearlCam", "AppleCLCD", "AppleSmartBattery",
+    "AppleProxDriver", "AppleALSDriver", "AppleHapticsSupportLEAP",
+    "AppleTapticEngine", "AppleHaptics", "AppleProximitySensor",
+    "AppleAmbientLightSensor", "prox", "proximity", "als",
+    "ambient-light-sensor", "haptics", "vibrator", "taptic",
+    "rosaline", "Rosaline", "savage", "Savage", "yonkers", "Yonkers",
+]
+
+def _v20_norm(value):
+    return re.sub(r"[^A-Z0-9+]", "", str(value).upper())
+
+def _v20_printable_runs(raw, min_len=4):
+    if not isinstance(raw, (bytes, bytearray, memoryview)):
+        return []
+    data = bytes(raw)
+    return [m.decode("ascii", errors="ignore") for m in
+            re.findall(rb"[\x20-\x7e]{%d,}" % min_len, data)]
+
+def _v20_forms(value):
+    forms = []
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        forms.append(("bytes_hex", raw.hex()))
+        forms.append(("bytes_ascii", raw.decode("ascii", errors="ignore").strip("\x00")))
+        for i, run in enumerate(_v20_printable_runs(raw)):
+            forms.append((f"printable_run:{i}", run))
+        # nektere serialy mohou byt uvnitr UTF-16LE payloadu
+        try:
+            forms.append(("utf16le", raw.decode("utf-16le", errors="ignore").strip("\x00")))
+        except Exception:
+            pass
+    elif isinstance(value, (str, int, float, bool)):
+        forms.append(("scalar", str(value)))
+    return [(kind, rendered) for kind, rendered in forms if rendered]
+
+def _v20_walk(value, path="$"):
+    rows = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            p = f"{path}.{key}"
+            rows.append((p, str(key), child))
+            rows.extend(_v20_walk(child, p))
+    elif isinstance(value, (list, tuple)):
+        for idx, child in enumerate(value):
+            rows.extend(_v20_walk(child, f"{path}[{idx}]"))
+    return rows
+
+async def _v20_deep_sensor_discovery_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls, exact_hits, candidates = {}, [], [], []
+    expected = {k: _v20_norm(v) for k, v in _V20_EXPECTED.items()}
+    tokens = (
+        "syscfg", "rosaline", "savage", "yonkers", "distance", "dist",
+        "prox", "ambient", "light", "als", "vibr", "haptic", "taptic",
+        "serial", "calibration", "sensor", "pearl"
+    )
+
+    def scan(label, obj):
+        for path, key, value in _v20_walk(obj):
+            hay = f"{path} {key}".lower()
+            for form, rendered in _v20_forms(value):
+                norm = _v20_norm(rendered)
+                for goal, needle in expected.items():
+                    if needle and needle in norm:
+                        exact_hits.append({
+                            "goal": goal, "expected": _V20_EXPECTED[goal],
+                            "source": label, "path": path, "key": key,
+                            "form": form, "value": rendered,
+                        })
+                if any(token in hay for token in tokens):
+                    candidates.append({
+                        "source": label, "path": path, "key": key,
+                        "form": form, "value": rendered[:4096],
+                    })
+
+    async def call(label, fn):
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                result = await result
+            calls.append({"source": label, "ok": result is not None,
+                          "result_type": type(result).__name__})
+            if result is not None:
+                scan(label, result)
+            return result
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            calls.append({"source": label, "ok": False, "error": err})
+            return None
+
+    # Lockdown all_values + vybrane domeny. Neznamou domenu pouze CTEME.
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        calls.append({"source": "lockdown:all_values", "ok": isinstance(av, dict),
+                      "result_type": type(av).__name__})
+        if av:
+            scan("lockdown:all_values", av)
+    except Exception as exc:
+        errors["lockdown:all_values"] = f"{type(exc).__name__}: {exc}"
+
+    for domain in (
+        "com.apple.mobile.battery", "com.apple.disk_usage",
+        "com.apple.mobile.iTunes", "com.apple.mobile.internal",
+        "com.apple.mobile.lockdown", "com.apple.mobile.gestalt",
+    ):
+        await call(f"lockdown:domain:{domain}",
+                   lambda domain=domain: ld.get_value(domain=domain))
+
+    # Standardni diagnostics a raw MobileGestalt, batch i jednotlive klice.
+    await call("diagnostics:get_diagnostics", lambda: diag.get_diagnostics())
+    await call("diagnostics:raw_mobilegestalt:batch",
+               lambda: diag._send_recv({
+                   "Request": "MobileGestalt",
+                   "MobileGestaltKeys": _V20_KEYS,
+               }))
+    for key in _V20_KEYS:
+        await call(f"diagnostics:raw_mobilegestalt:{key}",
+                   lambda key=key: diag._send_recv({
+                       "Request": "MobileGestalt",
+                       "MobileGestaltKeys": [key],
+                   }))
+
+    # Syrove diagnosticke requesty, ktere ruzne verze diagnostics_relay mohou
+    # podporovat. Neznamy request se pouze zaloguje jako chyba.
+    for request_name in (
+        "Diagnostics", "MobileGestalt", "IORegistry", "GasGauge",
+        "NAND", "WiFi", "All",
+    ):
+        payload = {"Request": request_name}
+        if request_name == "IORegistry":
+            payload.update({"CurrentPlane": "IOService"})
+        elif request_name == "MobileGestalt":
+            payload.update({"MobileGestaltKeys": _V20_KEYS})
+        await call(f"diagnostics:raw_request:{request_name}",
+                   lambda payload=payload: diag._send_recv(payload))
+
+    # Cele stromy jsou dulezite kvuli binarnim payloadum a dynamickym nazvum.
+    for plane in ("IODeviceTree", "IOService", "IOPower"):
+        await call(f"ioregistry:plane:{plane}",
+                   lambda plane=plane: diag.ioregistry(plane=plane))
+
+    for name in _V20_NAMES:
+        await call(f"ioregistry:name:{name}",
+                   lambda name=name: diag.ioregistry(name=name))
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    def dedup(items, fields):
+        seen, out = set(), []
+        for item in items:
+            ident = tuple(str(item.get(f)) for f in fields)
+            if ident not in seen:
+                seen.add(ident)
+                out.append(item)
+        return out
+
+    exact_hits = dedup(exact_hits, ("goal", "source", "path", "form", "value"))
+    candidates = dedup(candidates, ("source", "path", "key", "form", "value"))
+
+    return {
+        "ok": True,
+        "probe": "deep-syscfg-mobilegestalt-binary-sensor-discovery-v20",
+        "read_only": True,
+        "udid": udid,
+        "goal": "Locate exact source/path for Distance Sensor, Ambient Light Sensor and Vibrator Number",
+        "expected": _V20_EXPECTED,
+        "exact_value_hits": exact_hits,
+        "candidates": candidates[:5000],
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "exact_value_hits": len(exact_hits),
+            "candidates": len(candidates),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+@app.route('/api/deep-sensor-discovery/<udid>', methods=['GET'])
+def api_v20_deep_sensor_discovery(udid):
+    try:
+        result = _run_async_isolated(
+            _v20_deep_sensor_discovery_collect(udid), timeout=420
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "probe": "deep-syscfg-mobilegestalt-binary-sensor-discovery-v20",
             "udid": udid,
             "error": f"{type(exc).__name__}: {exc}",
         }), 200
