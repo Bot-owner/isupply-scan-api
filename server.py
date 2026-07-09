@@ -863,43 +863,54 @@ def api_device_skip_setup():
     dovolil, at podle toho vime, co jde na kterem iOS."""
     report = {'attempts': [], 'ok': False}
     try:
-        from pymobiledevice3.lockdown import create_using_usbmux
-        ld = create_using_usbmux()
-    except Exception as e:
-        return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 500
-
-    # AFC: co vubec vidime + pokus dosahnout na purplebuddy plist
-    try:
-        from pymobiledevice3.services.afc import AfcService
-        afc = AfcService(ld)
         try:
-            report['afc_root'] = afc.listdir('/')
+            from pymobiledevice3.lockdown import create_using_usbmux
+            ld = create_using_usbmux()
         except Exception as e:
-            report['afc_root_error'] = str(e)
-        candidates = [
-            'Library/Preferences/com.apple.purplebuddy.plist',
-            '../Library/Preferences/com.apple.purplebuddy.plist',
-            '/var/mobile/Library/Preferences/com.apple.purplebuddy.plist',
-        ]
-        for c in candidates:
-            try:
-                data = afc.get_file_contents(c)
-                report['reach'] = {'path': c, 'read_ok': True, 'size': len(data)}
-                report['ok'] = True
-                break
-            except Exception as e:
-                report['attempts'].append({'method': 'afc-read', 'path': c, 'error': str(e)})
-    except Exception as e:
-        report['attempts'].append({'method': 'afc-service', 'error': str(e)})
+            return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 200
 
-    if report['ok']:
-        report['note'] = ('AFC DOSAHL na purplebuddy plist! Dalsi krok: zapsat priznaky '
-                          'SetupDone/SetupFinishedAllSteps. Napis mi to a dopisu zapis.')
-    else:
-        report['note'] = ('AFC nedosahl na Library/Preferences (na stock telefonu ocekavane - '
-                          'AFC vidi jen slozku Media). Cisty purplebuddy zapis pres USB takhle '
-                          'nejde. Zkus jiny/starsi iOS - vypis attempts ukazuje presne chyby.')
-    return jsonify(report)
+        # AFC: co vubec vidime + pokus dosahnout na purplebuddy plist
+        try:
+            from pymobiledevice3.services.afc import AfcService
+            afc = AfcService(ld)
+            try:
+                root = afc.listdir('/')
+                # sanitizace na str (nektere verze vraci bytes -> jinak spadne jsonify)
+                report['afc_root'] = [str(x) for x in list(root)][:40]
+            except Exception as e:
+                report['afc_root_error'] = str(e)
+            candidates = [
+                'Library/Preferences/com.apple.purplebuddy.plist',
+                '../Library/Preferences/com.apple.purplebuddy.plist',
+                '/var/mobile/Library/Preferences/com.apple.purplebuddy.plist',
+            ]
+            for c in candidates:
+                try:
+                    data = afc.get_file_contents(c)
+                    report['reach'] = {'path': c, 'read_ok': True, 'size': len(data)}
+                    report['ok'] = True
+                    break
+                except Exception as e:
+                    report['attempts'].append({'method': 'afc-read', 'path': c, 'error': str(e)})
+        except Exception as e:
+            report['attempts'].append({'method': 'afc-service', 'error': str(e)})
+
+        if report['ok']:
+            report['note'] = ('AFC DOSAHL na purplebuddy plist! Dalsi krok: zapsat priznaky '
+                              'SetupDone/SetupFinishedAllSteps. Napis mi to a dopisu zapis.')
+        else:
+            report['note'] = ('AFC nedosahl na Library/Preferences (na stock telefonu ocekavane - '
+                              'AFC vidi jen slozku Media). Cisty purplebuddy zapis pres USB takhle '
+                              'nejde. Zkus jiny/starsi iOS - vypis attempts ukazuje presne chyby.')
+    except Exception as e:
+        report = {'ok': False, 'error': 'skip-setup vyjimka: ' + str(e), 'note': str(e)}
+
+    # VZDY vratit JSON (i kdyby serializace selhala)
+    try:
+        return jsonify(report), 200
+    except Exception as e:
+        return jsonify({'ok': False, 'error': 'nelze serializovat report: ' + str(e),
+                        'note': 'serializacni chyba - reci mi to'}), 200
 
 @app.route('/api/detect-printer')
 def api_detect_printer():

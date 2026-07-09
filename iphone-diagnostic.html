@@ -1936,8 +1936,11 @@ async function fetchJSON(url, options, timeoutMs) {
     const res = await fetch(url, Object.assign({signal: ctrl.signal}, options||{}));
     const ct = res.headers.get('content-type') || '';
     if (!ct.includes('application/json')) {
-      // endpoint neexistuje / vraci HTML -> nejspis stary server.py v buildu
-      throw new Error('ENDPOINT_MISSING:' + res.status);
+      let txt = '';
+      try { txt = await res.text(); } catch(_) {}
+      if (res.status === 404) throw new Error('ENDPOINT_MISSING:404');
+      // jina ne-JSON odpoved (napr. 500) - ukaz skutecnou chybu, ne "endpoint chybi"
+      throw new Error('HTTP ' + res.status + ' (ne-JSON): ' + String(txt).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180));
     }
     return await res.json();
   } finally { clearTimeout(to); }
