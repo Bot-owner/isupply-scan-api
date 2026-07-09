@@ -800,7 +800,7 @@ def _get_activation_service():
 @app.route('/api/version')
 def api_version():
     """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
-    return jsonify({'ok': True, 'build': 'supervise-v4',
+    return jsonify({'ok': True, 'build': 'supervise-v5',
                     'endpoints': ['device-activate', 'device-activation-state',
                                   'device-skip-setup', 'device-supervise']})
 
@@ -999,7 +999,7 @@ def api_device_supervise():
     async def _call(m, *a):
         r = m(*a)
         if _aio.iscoroutine(r):
-            return await r
+            return await _aio.wait_for(r, timeout=40)
         return r
 
     async def _flow():
@@ -1049,6 +1049,8 @@ def api_device_supervise():
     ready = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
 
     # 4) restart, aby Setup Assistant znovu nacetl konfiguraci a preskocil setup
+    #    POZOR: pri restartu spadne USB spojeni a ds.restart() by cekal donekonecna ->
+    #    dame mu kratky timeout, at request vzdy vrati vysledek (supervise/IsSupervised uz mame).
     if do_restart and ready:
         try:
             from pymobiledevice3.services.diagnostics import DiagnosticsService
@@ -1057,7 +1059,7 @@ def api_device_supervise():
             async def _do_restart():
                 r = ds.restart()
                 if _aio.iscoroutine(r):
-                    return await r
+                    return await _aio.wait_for(r, timeout=8)
                 return r
 
             _l2 = _aio.new_event_loop()
@@ -1071,6 +1073,9 @@ def api_device_supervise():
                     pass
                 _aio.set_event_loop(None)
             steps.append({'step': 'restart', 'ok': True})
+        except _aio.TimeoutError:
+            # restart nejspis probehl, jen USB spadlo a nedostali jsme potvrzeni - to je OK
+            steps.append({'step': 'restart', 'ok': True, 'note': 'odeslano (bez potvrzeni - USB spadlo pri restartu)'})
         except Exception as e:
             steps.append({'step': 'restart', 'ok': False, 'error': str(e)})
 
