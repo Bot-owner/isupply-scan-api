@@ -800,7 +800,7 @@ def _get_activation_service():
 @app.route('/api/version')
 def api_version():
     """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
-    return jsonify({'ok': True, 'build': 'supervise-v2',
+    return jsonify({'ok': True, 'build': 'supervise-v3',
                     'endpoints': ['device-activate', 'device-activation-state',
                                   'device-skip-setup', 'device-supervise']})
 
@@ -1024,12 +1024,22 @@ def api_device_supervise():
     except Exception as e:
         steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
 
-    # kontrola supervised stavu (metoda je async -> await)
+    # kontrola supervised stavu (metoda je async -> await, nekdy i vnorene)
     try:
-        cur = _maybe_await(mc.get_cloud_configuration()) or {}
-        steps.append({'step': 'get_cloud_configuration', 'ok': True,
-                      'IsSupervised': bool(cur.get('IsSupervised')),
-                      'cloud': {k: cur.get(k) for k in ('IsSupervised', 'OrganizationName') if isinstance(cur, dict)}})
+        import asyncio as _a2
+        cur = mc.get_cloud_configuration()
+        # opakovane rozbal coroutine, dokud neni to slovnik
+        _guard = 0
+        while _a2.iscoroutine(cur) and _guard < 3:
+            _loop = _a2.new_event_loop()
+            try:
+                cur = _loop.run_until_complete(cur)
+            finally:
+                _loop.close()
+            _guard += 1
+        cur = cur or {}
+        is_sup = bool(cur.get('IsSupervised')) if isinstance(cur, dict) else None
+        steps.append({'step': 'get_cloud_configuration', 'ok': True, 'IsSupervised': is_sup})
     except Exception as e:
         steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
 
