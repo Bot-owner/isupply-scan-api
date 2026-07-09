@@ -866,6 +866,209 @@ def api_activation_diag():
                                  'trace': traceback.format_exc()})
     return jsonify(out), 200
 
+
+# ─── FACTORY VALUE PROBE ─────────────────────────────────────────────────────
+# READ-ONLY diagnostika: hledá známé 3uTools Ex-factory / current serialy
+# v hodnotách dostupných přes lockdown a DiagnosticsService.
+FACTORY_PROBE_DEFAULT_NEEDLES = [
+    "F8Y83860U9GJT00Q2", "F5D4277HSTZYT00A8",
+    "DN883779V9YHYMX5T", "GCF918708MRHYMX5U",
+    "DNM83850UJWJH834W", "F3X8405016AJVN7A",
+]
+
+FACTORY_PROBE_KEYWORDS = [
+    "serial", "camera", "battery", "mlb", "logicboard", "board", "syscfg",
+    "factory", "manufact", "display", "lcd", "panel", "gauss", "mtsn", "lcm",
+    "fdr", "calibration", "pearl", "mesa", "savage", "yonkers", "rear",
+    "front", "nand", "wifi", "bluetooth", "macaddress", "part", "component",
+]
+
+FACTORY_PROBE_DOMAINS = [
+    None,
+    "com.apple.disk_usage",
+    "com.apple.disk_usage.factory",
+    "com.apple.mobile.battery",
+    "com.apple.mobile.iTunes",
+    "com.apple.mobile.iTunes.store",
+    "com.apple.mobile.data_sync",
+    "com.apple.xcode.developerdomain",
+    "com.apple.mobile.lockdown_cache",
+    "com.apple.mobile.internal",
+    "com.apple.mobile.factory",
+    "com.apple.factory",
+    "com.apple.mobilegestalt",
+]
+
+def _factory_probe_json_safe(value, depth=0):
+    if depth > 8:
+        return "<max-depth>"
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, bytes):
+        return {"__bytes_hex__": value.hex(), "__bytes_len__": len(value)}
+    if isinstance(value, dict):
+        return {str(k): _factory_probe_json_safe(v, depth + 1)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_factory_probe_json_safe(v, depth + 1) for v in value]
+    return str(value)
+
+def _factory_probe_walk(value, path="$"):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            yield child_path, str(key), child
+            yield from _factory_probe_walk(child, child_path)
+    elif isinstance(value, (list, tuple)):
+        for idx, child in enumerate(value):
+            child_path = f"{path}[{idx}]"
+            yield child_path, str(idx), child
+            yield from _factory_probe_walk(child, child_path)
+
+def _factory_probe_analyze(source, value, needles):
+    exact_hits = []
+    candidate_keys = []
+    wanted = [str(x).upper() for x in needles if str(x).strip()]
+
+    for path, key, child in _factory_probe_walk(value):
+        if isinstance(child, bytes):
+            scalar_text = child.hex()
+        elif isinstance(child, (str, int, float, bool)):
+            scalar_text = str(child)
+        else:
+            scalar_text = ""
+
+        upper_value = scalar_text.upper()
+        for needle in wanted:
+            if needle in upper_value:
+                exact_hits.append({
+                    "source": source,
+                    "path": path,
+                    "needle": needle,
+                    "value": scalar_text[:1000],
+                })
+
+        if any(word in key.lower() for word in FACTORY_PROBE_KEYWORDS):
+            candidate_keys.append({
+                "source": source,
+                "path": path,
+                "key": key,
+                "value": _factory_probe_json_safe(child),
+            })
+
+    return exact_hits, candidate_keys
+
+async def _factory_probe_collect(udid, needles):
+    ld = await _create_lockdown_for_udid(udid)
+    sources = {}
+    errors = {}
+
+    for domain in FACTORY_PROBE_DOMAINS:
+        source = "lockdown:default" if domain is None else f"lockdown:{domain}"
+        try:
+            value = ld.all_values if domain is None else ld.get_value(domain=domain)
+            if asyncio.iscoroutine(value):
+                value = await value
+            sources[source] = _factory_probe_json_safe(value)
+        except Exception as exc:
+            errors[source] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        from pymobiledevice3.services.diagnostics import DiagnosticsService
+        diag = DiagnosticsService(ld)
+
+        diag_jobs = [
+            ("diagnostics", "get_diagnostics", ()),
+            ("battery", "get_battery_diagnostics", ()),
+            ("mobilegestalt", "mobilegestalt", (FACTORY_PROBE_KEYWORDS,)),
+        ]
+
+        for label, method_name, args in diag_jobs:
+            source = f"diagnostics:{label}"
+            try:
+                method = getattr(diag, method_name, None)
+                if method is None:
+                    errors[source] = f"method {method_name} unavailable"
+                    continue
+                value = method(*args)
+                if asyncio.iscoroutine(value):
+                    value = await value
+                sources[source] = _factory_probe_json_safe(value)
+            except Exception as exc:
+                errors[source] = f"{type(exc).__name__}: {exc}"
+    except Exception as exc:
+        errors["diagnostics:init"] = f"{type(exc).__name__}: {exc}"
+
+    exact_hits = []
+    candidate_keys = []
+    for source, value in sources.items():
+        hits, candidates = _factory_probe_analyze(source, value, needles)
+        exact_hits.extend(hits)
+        candidate_keys.extend(candidates)
+
+    dedup = {
+        (item["source"], item["path"]): item
+        for item in candidate_keys
+    }
+
+    return {
+        "ok": True,
+        "udid": udid,
+        "needles": needles,
+        "summary": {
+            "sources_read": len(sources),
+            "sources_failed": len(errors),
+            "exact_hits": len(exact_hits),
+            "candidate_keys": len(dedup),
+        },
+        "exact_hits": exact_hits,
+        "candidate_keys": list(dedup.values()),
+        "errors": errors,
+        "sources": sources,
+    }
+
+@app.route("/api/factory-probe/<udid>", methods=["GET", "POST"])
+def api_factory_probe(udid):
+    data = request.get_json(silent=True) or {}
+    query_needles = request.args.getlist("needle")
+    body_needles = data.get("needles") if isinstance(data.get("needles"), list) else []
+    needles = [
+        str(x).strip()
+        for x in (query_needles or body_needles or FACTORY_PROBE_DEFAULT_NEEDLES)
+        if str(x).strip()
+    ]
+
+    try:
+        result = _run_async_isolated(
+            _factory_probe_collect(udid, needles),
+            timeout=120,
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+@app.route("/api/factory-probe/<udid>/report", methods=["GET"])
+def api_factory_probe_report(udid):
+    needles = request.args.getlist("needle") or FACTORY_PROBE_DEFAULT_NEEDLES
+    try:
+        result = _run_async_isolated(
+            _factory_probe_collect(udid, needles),
+            timeout=120,
+        )
+        result.pop("sources", None)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
 # ─── AKTIVACE JEDNOTLIVÉHO ZAŘÍZENÍ ──────────────────────────────────────────
 # Standardní Apple aktivace (mobileactivationd) pro JEDEN konkrétní telefon
 # (podle UDID daného slotu). Používá skip_apple_id_query=True, takže knihovna
