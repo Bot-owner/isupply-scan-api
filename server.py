@@ -783,308 +783,88 @@ def api_driver_check():
         pass
     return jsonify({'installed': False})
 
-# ══════════════════════════════════════════════════════════════════
-#  AKTIVACE ZARIZENI (jako 3uTools)
-#  DULEZITE: Provadi POUZE standardni Apple aktivacni handshake pro
-#  zarizeni, ktere NENI zamcene na iCloud (Activation Lock / Find My).
-#  NEOBCHAZI a NEUMI obejit Activation Lock - to nelze a nedelame to.
-#  Vyzaduje pripojeni k internetu (kontaktuje albert.apple.com).
-#  POZOR: netestovano na realnem zarizeni v tomto prostredi - overit!
-# ══════════════════════════════════════════════════════════════════
-def _get_activation_service():
-    from pymobiledevice3.lockdown import create_using_usbmux
-    from pymobiledevice3.services.mobile_activation import MobileActivationService
-    ld = create_using_usbmux()
-    return ld, MobileActivationService(ld)
-
 @app.route('/api/version')
 def api_version():
-    """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
-    return jsonify({'ok': True, 'build': 'supervise-v5',
-                    'endpoints': ['device-activate', 'device-activation-state',
-                                  'device-skip-setup', 'device-supervise']})
+    return jsonify({'ok': True, 'build': 'activation-diag-v1',
+                    'endpoints': ['activation-diag']})
 
-@app.route('/api/device-activation-state')
-def api_device_activation_state():
-    """Vrati stav aktivace + indikaci Find My (Activation Lock)."""
-    try:
-        ld, svc = _get_activation_service()
-        try:
-            state = str(svc.state)
-        except Exception:
-            state = 'unknown'
-        find_my = None
-        for domain, key in (('com.apple.fmip', 'IsAssociated'),
-                            ('com.apple.mobile.chaperone', 'IsAssociated')):
+@app.route('/api/activation-diag', methods=['POST'])
+def api_activation_diag():
+    """DIAGNOSTIKA aktivace: zkusi precist aktivacni stav + provest aktivaci
+    a vrati VSECHNO syrove (stav, chyby, traceback), at vidime PROC to neprochazi.
+    Nic neobchazi - jen standardni Apple activation handshake."""
+    import traceback
+    out = {'ok': True, 'steps': []}
+
+    def _run(coro_or_val):
+        import asyncio as _a
+        if _a.iscoroutine(coro_or_val):
+            loop = _a.new_event_loop()
             try:
-                v = ld.get_value(domain=domain, key=key)
-                if v is not None:
-                    find_my = bool(v)
-                    break
-            except Exception:
-                pass
-        return jsonify({'ok': True, 'state': state, 'find_my_associated': find_my})
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+                _a.set_event_loop(loop)
+                return loop.run_until_complete(_a.wait_for(coro_or_val, timeout=60))
+            finally:
+                loop.close(); _a.set_event_loop(None)
+        return coro_or_val
 
-@app.route('/api/device-activate', methods=['POST'])
-def api_device_activate():
-    """Provede standardni Apple aktivaci u NEZAMCENEHO zarizeni."""
-    try:
-        ld, svc = _get_activation_service()
-        try:
-            state = str(svc.state)
-        except Exception:
-            state = 'unknown'
-        # Uz aktivovano -> nic nedelame
-        if state.lower().startswith('activ'):
-            return jsonify({'ok': True, 'already': True, 'state': state})
-        # Bezpecnostni brzda: kdyz je zarizeni asociovane s Apple ID (Find My),
-        # aktivaci NEProvadime (je to iCloud-locked).
-        for domain, key in (('com.apple.fmip', 'IsAssociated'),
-                            ('com.apple.mobile.chaperone', 'IsAssociated')):
-            try:
-                if ld.get_value(domain=domain, key=key):
-                    return jsonify({'ok': False, 'locked': True,
-                        'error': 'Zarizeni je uzamceno na iCloud (Find My). Aktivaci nelze provest.'}), 409
-            except Exception:
-                pass
-        # Standardni handshake s Apple aktivacnim serverem (nutny internet)
-        svc.activate()
-        try:
-            new_state = str(_get_activation_service()[1].state)
-        except Exception:
-            new_state = 'unknown'
-        return jsonify({'ok': True, 'activated': True, 'state': new_state})
-    except Exception as e:
-        # Casta pricina: zarizeni je Activation-Locked -> Apple vrati challenge
-        return jsonify({'ok': False, 'error': str(e),
-            'hint': 'Muze byt uzamceno na iCloud, nebo neni internet.'}), 500
-
-@app.route('/api/device-skip-setup', methods=['POST'])
-def api_device_skip_setup():
-    """EXPERIMENTALNI (beta): pokus o preskoceni Setup Assistanta pres purplebuddy.
-    Neni to bypass - jen 'odklikani' pruvodce, jako 3uTools Skip Setup.
-    POZOR: na stock telefonech je AFC omezene na slozku Media, takze zapis do
-    Library/Preferences casto NEPROJDE. Endpoint presne reportuje, co telefon
-    dovolil, at podle toho vime, co jde na kterem iOS."""
-    report = {'attempts': [], 'ok': False}
-    try:
-        try:
-            from pymobiledevice3.lockdown import create_using_usbmux
-            ld = create_using_usbmux()
-        except Exception as e:
-            return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 200
-
-        # AFC: co vubec vidime + pokus dosahnout na purplebuddy plist
-        try:
-            from pymobiledevice3.services.afc import AfcService
-            afc = AfcService(ld)
-            try:
-                root = afc.listdir('/')
-                # sanitizace na str (nektere verze vraci bytes -> jinak spadne jsonify)
-                report['afc_root'] = [str(x) for x in list(root)][:40]
-            except Exception as e:
-                report['afc_root_error'] = str(e)
-            candidates = [
-                'Library/Preferences/com.apple.purplebuddy.plist',
-                '../Library/Preferences/com.apple.purplebuddy.plist',
-                '/var/mobile/Library/Preferences/com.apple.purplebuddy.plist',
-            ]
-            for c in candidates:
-                try:
-                    data = afc.get_file_contents(c)
-                    report['reach'] = {'path': c, 'read_ok': True, 'size': len(data)}
-                    report['ok'] = True
-                    break
-                except Exception as e:
-                    report['attempts'].append({'method': 'afc-read', 'path': c, 'error': str(e)})
-        except Exception as e:
-            report['attempts'].append({'method': 'afc-service', 'error': str(e)})
-
-        if report['ok']:
-            report['note'] = ('AFC DOSAHL na purplebuddy plist! Dalsi krok: zapsat priznaky '
-                              'SetupDone/SetupFinishedAllSteps. Napis mi to a dopisu zapis.')
-        else:
-            report['note'] = ('AFC nedosahl na Library/Preferences (na stock telefonu ocekavane - '
-                              'AFC vidi jen slozku Media). Cisty purplebuddy zapis pres USB takhle '
-                              'nejde. Zkus jiny/starsi iOS - vypis attempts ukazuje presne chyby.')
-    except Exception as e:
-        report = {'ok': False, 'error': 'skip-setup vyjimka: ' + str(e), 'note': str(e)}
-
-    # VZDY vratit JSON (i kdyby serializace selhala)
-    try:
-        return jsonify(report), 200
-    except Exception as e:
-        return jsonify({'ok': False, 'error': 'nelze serializovat report: ' + str(e),
-                        'note': 'serializacni chyba - reci mi to'}), 200
-
-@app.route('/api/device-supervise', methods=['POST'])
-def api_device_supervise():
-    """BETA: supervised 'prepare' jako Apple Configurator.
-    Udela zarizeni supervised + nastavi SkipSetup + jazyk/locale, pak SMAZE telefon.
-    Po smazani a restartu telefon preskoci vetsinu Setup Assistanta a naskoci na plochu.
-    NENI to bypass - oficialni supervised mechanismus. POZOR: SMAZE TELEFON.
-    Bezpecnostni pojistka: erase probehne JEN kdyz supervise/cloud-config prosel."""
-    data = request.get_json(silent=True) or {}
-    if not data.get('confirm'):
-        return jsonify({'ok': False, 'error': 'Chybi potvrzeni. Toto SMAZE telefon.'}), 200
-    org = (data.get('organization') or 'iSupply trade s.r.o.').strip()
-    language = (data.get('language') or 'en').strip()
-    locale = (data.get('locale') or 'en_US').strip()
-    do_erase = bool(data.get('erase', False))     # default: NEMAZAT (telefon je na Hello screenu)
-    do_restart = bool(data.get('restart', True))   # restart, aby Setup Assistant nacetl skip config
-    steps = []
+    # 1) pripojeni
     try:
         from pymobiledevice3.lockdown import create_using_usbmux
         ld = create_using_usbmux()
+        out['steps'].append({'step': 'connect', 'ok': True})
     except Exception as e:
-        return jsonify({'ok': False, 'error': 'Nelze se pripojit k telefonu: ' + str(e)}), 200
+        out['steps'].append({'step': 'connect', 'ok': False, 'error': str(e),
+                              'trace': traceback.format_exc()})
+        return jsonify(out), 200
+
+    # 2) precti zakladni lockdown hodnoty (stav aktivace, FMi)
+    info = {}
+    for key in ('ActivationState', 'ActivationStateAcknowledged', 'BrickState',
+                'DeviceClass', 'ProductVersion', 'ProductType', 'UniqueDeviceID',
+                'SerialNumber', 'InternationalMobileEquipmentIdentity'):
+        try:
+            info[key] = ld.get_value(key=key)
+        except Exception as e:
+            info[key] = 'ERR:' + str(e)
+    for domain, k in (('com.apple.fmip', 'IsAssociated'),
+                      ('com.apple.mobile.chaperone', 'IsAssociated')):
+        try:
+            info[domain + '/' + k] = ld.get_value(domain=domain, key=k)
+        except Exception as e:
+            info[domain + '/' + k] = 'ERR:' + str(e)
+    out['lockdown_info'] = {kk: (str(vv)[:120] if not isinstance(vv, (bool, int, type(None))) else vv)
+                            for kk, vv in info.items()}
+
+    # 3) aktivacni stav pres mobile_activation
     try:
-        from pymobiledevice3.services.mobile_config import MobileConfigService
-        mc = MobileConfigService(ld)
+        from pymobiledevice3.services.mobile_activation import MobileActivationService
+        svc = MobileActivationService(ld)
+        try:
+            state = _run(svc.state)
+        except Exception as e:
+            state = 'ERR:' + str(e)
+        out['activation_state'] = str(state)
+        out['steps'].append({'step': 'read_state', 'ok': True, 'state': str(state)})
     except Exception as e:
-        return jsonify({'ok': False, 'error': 'Nelze otevrit mobile_config sluzbu: ' + str(e),
-                        'note': 'Mozna jiny nazev API v teto verzi pymobiledevice3 - reci mi to.'}), 200
+        out['steps'].append({'step': 'read_state', 'ok': False, 'error': str(e),
+                             'trace': traceback.format_exc()})
+        svc = None
 
-    skip_panes = ['Location', 'Restore', 'Android', 'AppleID', 'TOS', 'Siri', 'Diagnostics',
-                  'SoftwareUpdate', 'iMessageAndFaceTime', 'Passcode', 'Biometric', 'Payment',
-                  'Zoom', 'DisplayTone', 'MessagingActivationUsingPhoneNumber', 'WatchMigration',
-                  'ScreenTime', 'Appearance', 'Privacy', 'SIMSetup', 'OnBoarding', 'Welcome',
-                  'Keyboard', 'PreferredLanguage', 'DeviceToDeviceMigration', 'Wallpaper',
-                  'HomeButtonSensitivity', 'CloudStorage', 'ScreenSaver', 'TapToSetup',
-                  'AppStore', 'Safety', 'Multitasking', 'ActionButton', 'TermsOfAddress',
-                  'ExpressLanguage', 'Language', 'Region', 'FileVault', 'iCloudDiagnostics',
-                  'iCloudStorage', 'Accessibility', 'UpdateCompleted', 'RestoreCompleted']
-    cloud_cfg = {
-        'CloudConfigurationUIComplete': True,
-        'PostSetupProfileWasInstalled': True,
-        'SkipSetup': skip_panes,
-        'OrganizationName': org,
-        'IsSupervised': True,
-        'AllowPairing': True,
-        'Language': language,
-        'Locale': locale,
-    }
-
-    # 0) vygeneruj supervision identitu (keybag) - self-signed, jako Apple Configurator
-    keybag_path = None
-    try:
-        import tempfile, datetime as _dt
-        from cryptography import x509
-        from cryptography.x509.oid import NameOID
-        from cryptography.hazmat.primitives import hashes, serialization
-        from cryptography.hazmat.primitives.asymmetric import rsa
-        from cryptography.hazmat.primitives.serialization import pkcs12
-        _key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        _name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, org)])
-        _cert = (x509.CertificateBuilder()
-                 .subject_name(_name).issuer_name(_name).public_key(_key.public_key())
-                 .serial_number(x509.random_serial_number())
-                 .not_valid_before(_dt.datetime.utcnow() - _dt.timedelta(days=1))
-                 .not_valid_after(_dt.datetime.utcnow() + _dt.timedelta(days=3650))
-                 .sign(_key, hashes.SHA256()))
-        _p12 = pkcs12.serialize_key_and_certificates(org.encode(), _key, _cert, None,
-                                                     serialization.NoEncryption())
-        _fd, keybag_path = tempfile.mkstemp(suffix='.p12')
-        with os.fdopen(_fd, 'wb') as _f:
-            _f.write(_p12)
-        steps.append({'step': 'generate_identity', 'ok': True})
-    except Exception as e:
-        steps.append({'step': 'generate_identity', 'ok': False, 'error': str(e)})
-
-    # === vsechny mobile_config operace v JEDNOM event loopu (jinak 'different loop') ===
-    import asyncio as _aio
-
-    async def _call(m, *a):
-        r = m(*a)
-        if _aio.iscoroutine(r):
-            return await _aio.wait_for(r, timeout=40)
-        return r
-
-    async def _flow():
-        # supervise (s vygenerovanou identitou)
+    # 4) POKUS o aktivaci - a hlavne CHYT presnou chybu z Apple serveru
+    if svc is not None:
         try:
-            if keybag_path:
-                await _call(mc.supervise, org, keybag_path)
-            else:
-                await _call(mc.supervise, org)
-            steps.append({'step': 'supervise', 'ok': True})
-        except Exception as e:
-            steps.append({'step': 'supervise', 'ok': False, 'error': str(e)})
-        # cloud configuration se SkipSetup + jazyk/locale
-        try:
-            await _call(mc.set_cloud_configuration, cloud_cfg)
-            steps.append({'step': 'set_cloud_configuration', 'ok': True})
-        except Exception as e:
-            steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
-        # kontrola supervised stavu (IsSupervised)
-        try:
-            cur = await _call(mc.get_cloud_configuration)
-            cur = cur or {}
-            is_sup = bool(cur.get('IsSupervised')) if isinstance(cur, dict) else None
-            steps.append({'step': 'get_cloud_configuration', 'ok': True, 'IsSupervised': is_sup})
-        except Exception as e:
-            steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
-        # erase JEN kdyz vyslovne pozadovano
-        _rdy = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
-        if do_erase and _rdy:
+            _run(svc.activate())
             try:
-                await _call(mc.erase_device)
-                steps.append({'step': 'erase_device', 'ok': True})
-            except Exception as e:
-                steps.append({'step': 'erase_device', 'ok': False, 'error': str(e)})
-
-    _loop = _aio.new_event_loop()
-    try:
-        _aio.set_event_loop(_loop)
-        _loop.run_until_complete(_flow())
-    finally:
-        try:
-            _loop.close()
-        except Exception:
-            pass
-        _aio.set_event_loop(None)
-
-    ready = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
-
-    # 4) restart, aby Setup Assistant znovu nacetl konfiguraci a preskocil setup
-    #    POZOR: pri restartu spadne USB spojeni a ds.restart() by cekal donekonecna ->
-    #    dame mu kratky timeout, at request vzdy vrati vysledek (supervise/IsSupervised uz mame).
-    if do_restart and ready:
-        try:
-            from pymobiledevice3.services.diagnostics import DiagnosticsService
-            ds = DiagnosticsService(ld)
-
-            async def _do_restart():
-                r = ds.restart()
-                if _aio.iscoroutine(r):
-                    return await _aio.wait_for(r, timeout=8)
-                return r
-
-            _l2 = _aio.new_event_loop()
-            try:
-                _aio.set_event_loop(_l2)
-                _l2.run_until_complete(_do_restart())
-            finally:
-                try:
-                    _l2.close()
-                except Exception:
-                    pass
-                _aio.set_event_loop(None)
-            steps.append({'step': 'restart', 'ok': True})
-        except _aio.TimeoutError:
-            # restart nejspis probehl, jen USB spadlo a nedostali jsme potvrzeni - to je OK
-            steps.append({'step': 'restart', 'ok': True, 'note': 'odeslano (bez potvrzeni - USB spadlo pri restartu)'})
+                new_state = _run(MobileActivationService(ld).state)
+            except Exception:
+                new_state = '?'
+            out['steps'].append({'step': 'activate', 'ok': True, 'new_state': str(new_state)})
         except Exception as e:
-            steps.append({'step': 'restart', 'ok': False, 'error': str(e)})
-
-    ok = ready  # uspech = supervise/cloud-config prosel (ne mazani)
-    return jsonify({'ok': ok, 'organization': org, 'language': language, 'locale': locale,
-                    'erased': do_erase, 'steps': steps,
-                    'note': ('Konfigurace nastavena (supervised + SkipSetup). Telefon se restartuje a '
-                             'mel by preskocit vetsinu Setup Assistanta na plochu. Kdyz nektery krok '
-                             'selhal, posli mi steps - podle chyby doladime nazvy API.')})
+            out['steps'].append({'step': 'activate', 'ok': False,
+                                 'error': str(e),
+                                 'error_type': type(e).__name__,
+                                 'trace': traceback.format_exc()})
+    return jsonify(out), 200
 
 @app.route('/api/detect-printer')
 def api_detect_printer():
