@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'deep-syscfg-mobilegestalt-binary-sensor-discovery-v20',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery']})
+    return jsonify({'ok': True, 'build': 'raw-source-binary-reconstruction-v21',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1923,6 +1923,215 @@ def api_v20_deep_sensor_discovery(udid):
         return jsonify({
             "ok": False,
             "probe": "deep-syscfg-mobilegestalt-binary-sensor-discovery-v20",
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V21 RAW SOURCE CAPTURE / BINARY RECONSTRUCTION ──────────────────────────
+# READ-ONLY. Uklada syrove odpovedi z lockdown/diagnostics/IORegistry vedle
+# serveru, aby bylo mozne offline porovnat binarni payloady s referencnimi
+# hodnotami z 3uTools. Do telefonu NIC nezapisuje.
+_V21_EXPECTED = {
+    "distance_sensor": "FWP8311CBQ1H6CW20",
+    "ambient_light_sensor": "3E-85DF2320",
+    "vibrator_number": "FTN838245WQJGJN84+XMAYM1",
+}
+
+_V21_IOREG_NAMES = (
+    "prox", "als", "AppleCLCD", "AppleH10CamIn", "AppleH10PearlCam",
+    "AppleSmartBattery", "AppleProxDriver", "AppleALSDriver",
+    "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics",
+    "vibrator", "taptic", "haptics", "rosaline", "Rosaline",
+    "savage", "Savage", "yonkers", "Yonkers",
+)
+
+_V21_MG_KEYS = list(dict.fromkeys(_V20_KEYS + [
+    "DeviceTree", "IODeviceTree", "SysCfg", "SysCfgDict",
+    "ProximitySensorCalibration", "AmbientLightSensorCalibration",
+    "RosalineSerialNumber", "VibratorNumber", "VibratorSerialNumber",
+    "HapticSerialNumber", "TapticEngineSerialNumber",
+]))
+
+def _v21_jsonable(value, max_binary=4 * 1024 * 1024):
+    import base64
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        cut = raw[:max_binary]
+        return {
+            "_type": "bytes",
+            "length": len(raw),
+            "hex": cut.hex(),
+            "base64": base64.b64encode(cut).decode("ascii"),
+            "ascii": cut.decode("ascii", errors="replace").replace("\x00", "\\0"),
+            "truncated": len(raw) > max_binary,
+        }
+    if isinstance(value, dict):
+        return {str(k): _v21_jsonable(v, max_binary) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_v21_jsonable(v, max_binary) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+def _v21_raw_forms(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        yield "raw", raw
+        yield "hex_ascii", raw.hex().encode("ascii")
+        try:
+            yield "utf16le_text", raw.decode("utf-16le", errors="ignore").encode("utf-8")
+        except Exception:
+            pass
+    elif isinstance(value, str):
+        yield "utf8", value.encode("utf-8", errors="ignore")
+    elif isinstance(value, (int, float, bool)):
+        yield "scalar", str(value).encode("ascii", errors="ignore")
+
+def _v21_find_exact(label, obj):
+    hits = []
+    needles = {goal: expected.encode("ascii") for goal, expected in _V21_EXPECTED.items()}
+    for path, key, value in _v20_walk(obj):
+        for form, raw in _v21_raw_forms(value):
+            upper = raw.upper()
+            for goal, needle in needles.items():
+                pos = upper.find(needle.upper())
+                if pos >= 0:
+                    hits.append({
+                        "goal": goal, "expected": _V21_EXPECTED[goal],
+                        "source": label, "path": path, "key": key,
+                        "form": form, "offset": pos,
+                    })
+    return hits
+
+async def _v21_raw_capture_collect(udid):
+    import inspect
+    import datetime as _dt
+    ld, diag = await _open_diag(udid)
+    errors, calls, exact_hits, captured = {}, [], [], {}
+
+    async def capture(label, fn):
+        try:
+            value = fn()
+            if inspect.isawaitable(value):
+                value = await value
+            ok = value is not None
+            calls.append({"source": label, "ok": ok, "result_type": type(value).__name__})
+            if ok:
+                captured[label] = _v21_jsonable(value)
+                exact_hits.extend(_v21_find_exact(label, value))
+            return value
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            calls.append({"source": label, "ok": False, "error": err})
+            return None
+
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        calls.append({"source": "lockdown:all_values", "ok": isinstance(av, dict),
+                      "result_type": type(av).__name__})
+        if av is not None:
+            captured["lockdown:all_values"] = _v21_jsonable(av)
+            exact_hits.extend(_v21_find_exact("lockdown:all_values", av))
+    except Exception as exc:
+        errors["lockdown:all_values"] = f"{type(exc).__name__}: {exc}"
+
+    for domain in (
+        "com.apple.mobile.battery", "com.apple.disk_usage",
+        "com.apple.mobile.internal", "com.apple.mobile.lockdown",
+        "com.apple.mobile.gestalt", "com.apple.mobile.iTunes",
+    ):
+        await capture(f"lockdown:domain:{domain}",
+                      lambda domain=domain: ld.get_value(domain=domain))
+
+    await capture("diagnostics:mobilegestalt:batch",
+                  lambda: diag._send_recv({
+                      "Request": "MobileGestalt",
+                      "MobileGestaltKeys": _V21_MG_KEYS,
+                  }))
+
+    for request_name in ("Diagnostics", "MobileGestalt", "IORegistry",
+                         "GasGauge", "NAND", "WiFi", "All"):
+        payload = {"Request": request_name}
+        if request_name == "IORegistry":
+            payload["CurrentPlane"] = "IOService"
+        elif request_name == "MobileGestalt":
+            payload["MobileGestaltKeys"] = _V21_MG_KEYS
+        await capture(f"diagnostics:raw:{request_name}",
+                      lambda payload=payload: diag._send_recv(payload))
+
+    for plane in ("IODeviceTree", "IOService", "IOPower"):
+        await capture(f"ioregistry:plane:{plane}",
+                      lambda plane=plane: diag.ioregistry(plane=plane))
+
+    for name in _V21_IOREG_NAMES:
+        await capture(f"ioregistry:name:{name}",
+                      lambda name=name: diag.ioregistry(name=name))
+
+    # Zaznamename API lockdown objektu a DiagnosticsService. To ukaze presne,
+    # jake service/start metody ma nainstalovana verze pymobiledevice3.
+    captured["python_api:lockdown_methods"] = sorted(
+        n for n in dir(ld) if "service" in n.lower() or "value" in n.lower()
+    )
+    captured["python_api:diagnostics_methods"] = sorted(
+        n for n in dir(diag) if not n.startswith("__")
+    )
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v21", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+
+    index = {}
+    for idx, (label, value) in enumerate(captured.items(), 1):
+        filename = f"{idx:03d}_{re.sub(r'[^A-Za-z0-9._-]+', '_', label)[:120]}.json"
+        path = os.path.join(capture_dir, filename)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(value, fh, ensure_ascii=False, indent=2)
+        index[label] = filename
+
+    manifest = {
+        "ok": True,
+        "probe": "raw-source-binary-reconstruction-v21",
+        "read_only": True,
+        "udid": udid,
+        "expected": _V21_EXPECTED,
+        "capture_dir": capture_dir,
+        "files": index,
+        "exact_value_hits": exact_hits,
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "files_written": len(index),
+            "exact_value_hits": len(exact_hits),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, ensure_ascii=False, indent=2)
+    return manifest
+
+@app.route('/api/v21-raw-capture/<udid>', methods=['GET'])
+def api_v21_raw_capture(udid):
+    try:
+        result = _run_async_isolated(_v21_raw_capture_collect(udid), timeout=600)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "probe": "raw-source-binary-reconstruction-v21",
             "udid": udid,
             "error": f"{type(exc).__name__}: {exc}",
         }), 200
