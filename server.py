@@ -1127,6 +1127,159 @@ def api_component_serials(udid):
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
 
+
+# ─── HARDWARE REPORT (agregace do sémantických sekcí) ────────────────────────
+# Sjednocuje uz existujici cteni do jedne odpovedi rozdelene podle VYZNAMU:
+# identita zarizeni / komponenty (serialy) / baterie (diagnostika) /
+# konektivita (ADRESY, ne serialy) / displej / uloziste.
+# Cte JEN to, co telefon realne vyda; chybejici pole ma available:false.
+def _hw_field(label, value, source=None):
+    scalar = _component_serial_scalar(value) if value is not None else None
+    out = {"label": label, "value": scalar, "available": bool(scalar)}
+    if source:
+        out["source"] = source
+    return out
+
+async def _hardware_report_collect(udid):
+    import inspect
+    from pymobiledevice3.services.diagnostics import DiagnosticsService
+
+    ld = await _create_lockdown_for_udid(udid)
+    diag = DiagnosticsService(ld)
+    errors = {}
+
+    values = {}
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        if isinstance(av, dict):
+            values = av
+    except Exception as exc:
+        errors["lockdown"] = f"{type(exc).__name__}: {exc}"
+
+    async def read_ioregistry(label, **kwargs):
+        try:
+            result = diag.ioregistry(**kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            return result or {}
+        except Exception as exc:
+            errors[label] = f"{type(exc).__name__}: {exc}"
+            return {}
+
+    camera = await read_ioregistry("camera", plane="IOService", ioclass="AppleH10CamIn")
+    pearl = await read_ioregistry("pearl", plane="IOService", ioclass="AppleH10PearlCam")
+    clcd = await read_ioregistry("AppleCLCD", plane="IOService", ioclass="AppleCLCD")
+    battery = await read_ioregistry("AppleSmartBattery", plane="IOService", name="AppleSmartBattery")
+
+    def lv(*keys):  # lockdown value
+        return _component_serial_find(values, keys)
+    def bv(*keys):  # battery ioreg value
+        return _component_serial_find(battery, keys)
+
+    # doplnkove info z cache (model/a_number uz vyresil get_device_info)
+    cached = connected_devices.get(udid, {}) or {}
+
+    # ── IDENTITA ZAŘÍZENÍ ──
+    device = {
+        "serial_number": _hw_field("Sériové číslo", lv("SerialNumber"), "lockdown"),
+        "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+        "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
+        "product_type": _hw_field("ProductType", lv("ProductType"), "lockdown"),
+        "model": _hw_field("Model", cached.get("model") or lv("ProductType"), "resolved"),
+        "a_number": _hw_field("Model number (A)", cached.get("a_number"), "resolved"),
+        "ios": _hw_field("iOS", lv("ProductVersion"), "lockdown"),
+        "build": _hw_field("Build", lv("BuildVersion"), "lockdown"),
+    }
+
+    # ── KOMPONENTY (fyzická sériová čísla dílů) ──
+    components = {
+        "rear_camera": _hw_field("Zadní kamera", _component_serial_find(camera, ("BackCameraModuleSerialNumString", "CameraModuleSerialNumString")), "AppleH10CamIn"),
+        "front_camera": _hw_field("Přední kamera", _component_serial_find(camera, ("FrontCameraModuleSerialNumString",)), "AppleH10CamIn"),
+        "tele_camera": _hw_field("Teleobjektiv", _component_serial_find(camera, ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString")), "AppleH10CamIn"),
+        "front_ir_camera": _hw_field("Přední IR kamera", _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",)) or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)), "AppleH10PearlCam"),
+        "true_depth_projector": _hw_field("TrueDepth projektor", _component_serial_find(pearl, ("StructuredLightProjectorModuleSerialNumString",)) or _component_serial_find(camera, ("StructuredLightProjectorModuleSerialNumString",)), "AppleH10PearlCam"),
+        "screen": _hw_field("Displej", _component_serial_panel_id(clcd), "AppleCLCD.Panel_ID"),
+        "battery": _hw_field("Baterie", bv("Serial", "SerialNumber", "BatterySerialNumber"), "AppleSmartBattery"),
+        "mainboard": _hw_field("Základní deska", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
+    }
+
+    # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
+    def _int_or_none(v):
+        try:
+            return int(v)
+        except Exception:
+            return None
+    design = _int_or_none(bv("DesignCapacity"))
+    nominal = _int_or_none(bv("NominalChargeCapacity") or bv("AppleRawMaxCapacity"))
+    mcp = _int_or_none(bv("MaximumCapacityPercent"))
+    health = mcp
+    if health is None and design and nominal and design > 0:
+        health = min(100, round(nominal / design * 100))
+    battery_diag = {
+        "serial": _hw_field("Sériové číslo", bv("Serial", "SerialNumber", "BatterySerialNumber")),
+        "health_percent": _hw_field("Kondice (%)", str(health) if health is not None else None),
+        "cycle_count": _hw_field("Počet cyklů", bv("CycleCount", "AppleRawCycleCount")),
+        "design_capacity": _hw_field("Návrhová kapacita (mAh)", str(design) if design else None),
+        "nominal_capacity": _hw_field("Aktuální kapacita (mAh)", str(nominal) if nominal else None),
+        "is_charging": _hw_field("Nabíjí se", bv("IsCharging")),
+        "fully_charged": _hw_field("Plně nabito", bv("FullyCharged")),
+        "external_connected": _hw_field("Napájení připojeno", bv("ExternalConnected")),
+        "temperature_raw": _hw_field("Teplota (raw)", bv("Temperature")),
+        "voltage_raw": _hw_field("Napětí (raw)", bv("Voltage")),
+    }
+
+    # ── KONEKTIVITA / BASEBAND (ADRESY a identifikatory, NE serialy dilu) ──
+    connectivity = {
+        "wifi_address": _hw_field("Wi-Fi adresa (MAC)", lv("WiFiAddress", "WifiAddress"), "lockdown"),
+        "bluetooth_address": _hw_field("Bluetooth adresa (MAC)", lv("BluetoothAddress"), "lockdown"),
+        "ethernet_address": _hw_field("Ethernet adresa (MAC)", lv("EthernetAddress"), "lockdown"),
+        "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+        "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
+    }
+
+    # ── DISPLEJ ──
+    panel_id_full = _component_serial_find(clcd, ("Panel_ID", "PanelID"))
+    display = {
+        "serial": _hw_field("Sériové číslo displeje", _component_serial_panel_id(clcd), "AppleCLCD.Panel_ID"),
+        "panel_id": _hw_field("Panel ID (zkráceno)", (panel_id_full[:48] + "…") if panel_id_full and len(panel_id_full) > 48 else panel_id_full, "AppleCLCD"),
+    }
+
+    # ── ÚLOŽIŠTĚ / HARDWARE ──
+    storage = {
+        "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
+    }
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    sections = {
+        "device": device, "components": components, "battery": battery_diag,
+        "connectivity": connectivity, "display": display, "storage": storage,
+    }
+    total = sum(len(s) for s in sections.values())
+    available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
+
+    return {
+        "ok": True, "udid": udid,
+        "sections": sections,
+        "summary": {"fields_total": total, "fields_available": available},
+        "errors": errors,
+    }
+
+@app.route('/api/hardware-report/<udid>', methods=['GET'])
+def api_hardware_report(udid):
+    try:
+        result = _run_async_isolated(_hardware_report_collect(udid), timeout=120)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""

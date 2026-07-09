@@ -2061,24 +2061,29 @@ async function activateDevice(id) {
   }
 }
 
-// ═══ SÉRIOVÁ ČÍSLA KOMPONENT ═══
-// DNES: /api/component-serials vrací jen AKTUÁLNÍ hodnotu (value/available).
-// Karty jsou ale připravené i na budoucí verifikační pole (factory_value,
-// current_value, match, status) - až je backend jednou bude vracet, karty je
-// samy vykreslí jako Originál/Možná vyměněno. Dokud tahle pole chybí, appka
-// si NEVYMÝŠLÍ verdikt - ukazuje jen "aktuální stav".
+// ═══ HARDWARE REPORT (sémantické sekce) ═══
+// Čte /api/hardware-report/<udid> a zobrazuje data rozdělená podle VÝZNAMU:
+// identita / komponenty (sériová čísla dílů) / baterie / konektivita (ADRESY,
+// ne sériová čísla) / displej / úložiště. Appka NEURČUJE originál/vyměněno -
+// jen zobrazuje aktuální stav. Karty komponent jsou ale připravené na budoucí
+// factory_value/current_value/match/status (viz renderComponentCard).
 const COMPONENT_ICONS = {
   rear_camera:'📷', front_camera:'🤳', tele_camera:'🔭', front_ir_camera:'👁️',
-  true_depth_projector:'✨', screen:'📱', wifi:'📶', bluetooth:'🔵',
-  cellular:'📡', mainboard:'🔧', battery:'🔋',
+  true_depth_projector:'✨', screen:'📱', mainboard:'🔧', battery:'🔋',
 };
+const HW_SECTIONS = [
+  {key:'device',       icon:'🆔', label:'Identifikace zařízení', kind:'rows'},
+  {key:'components',   icon:'🧩', label:'Komponenty (sériová čísla dílů)', kind:'cards'},
+  {key:'battery',      icon:'🔋', label:'Baterie', kind:'rows'},
+  {key:'connectivity', icon:'📡', label:'Konektivita a baseband', kind:'rows'},
+  {key:'display',      icon:'📱', label:'Displej', kind:'rows'},
+  {key:'storage',      icon:'💾', label:'Úložiště / hardware', kind:'rows'},
+];
 
-function renderComponentCard(c) {
-  const icon = COMPONENT_ICONS[c.key] || '🔩';
+function renderComponentCard(key, c) {
+  const icon = COMPONENT_ICONS[key] || '🔩';
   const hasVerification = c.status !== undefined && c.status !== null;
-
   if (hasVerification) {
-    // Budoucí stav: backend jednou vrati factory_value/current_value/match/status
     const cfg = {
       MATCH:                    {badge:'✓ Originál', bg:'#f0fdf4', bd:'#bbf7d0', fg:'#16a34a'},
       MISMATCH:                 {badge:'✕ Možná vyměněno', bg:'#fef2f2', bd:'#fecaca', fg:'#dc2626'},
@@ -2088,7 +2093,7 @@ function renderComponentCard(c) {
     }[c.status] || {badge:c.status, bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'};
     return `<div style="border:1.5px solid ${cfg.bd};background:${cfg.bg};border-radius:11px;padding:12px 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${c.label}</span>
+        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(c.label)}</span>
         <span style="font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
       </div>
       <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
@@ -2097,16 +2102,21 @@ function renderComponentCard(c) {
       </div>
     </div>`;
   }
-
-  // Dnesni stav: jen aktualni hodnota, zadny verdikt
   return `<div style="border:1.5px solid #e8e8e8;border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fafafa'}">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${c.label}</span>
-      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;color:#9ca3af;letter-spacing:.04em">AKTUÁLNÍ STAV</span>
+      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(c.label)}</span>
+      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;color:#9ca3af;letter-spacing:.04em">AKTUÁLNÍ</span>
     </div>
     <div style="font-family:var(--mono,monospace);font-size:12.5px;${c.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'};word-break:break-all">
       ${c.available ? esc(c.value) : 'nedostupné'}
     </div>
+  </div>`;
+}
+
+function renderHwRow(f) {
+  return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;font-size:12.5px;border-top:1px solid #f0f0f0">
+    <span style="color:#374151;white-space:nowrap">${esc(f.label)}</span>
+    <span style="font-family:var(--mono,monospace);font-size:12px;text-align:right;word-break:break-all;${f.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'}">${f.available ? esc(f.value) : 'nedostupné'}</span>
   </div>`;
 }
 
@@ -2121,46 +2131,60 @@ async function openComponentSerialsModal(id) {
     document.body.appendChild(m);
   }
   m.style.display = 'flex';
-  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:680px;width:100%;max-height:86vh;overflow:auto;border-radius:16px;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
+  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:720px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
       <div>
-        <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Sériová čísla komponent</div>
+        <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Hardwarový report</div>
         <div style="font-size:18px;font-weight:700">${esc(slot.device.model || 'iPhone')}</div>
       </div>
       <button onclick="document.getElementById('comp-serials-modal').style.display='none'" style="background:#f4f4f5;border:none;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer;color:#6b7280;line-height:1">×</button>
     </div>
     <div style="font-size:12px;color:#6b7280;line-height:1.6;margin:12px 0 18px;padding:10px 12px;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:9px">
-      🔎 Appka <b>nemá přístup k tovární databázi Apple</b>, proto zatím <b>neurčuje</b>, jestli je díl
-      originál nebo vyměněný — jen zobrazuje, co je v telefonu nainstalováno teď.
+      🔎 Appka <b>nemá přístup k tovární databázi Apple</b>, proto <b>neurčuje</b>, jestli je díl originál
+      nebo vyměněný — zobrazuje jen to, co telefon aktuálně hlásí. Wi-Fi/Bluetooth jsou <b>MAC adresy</b>,
+      IMEI je identifikátor zařízení — nejsou to sériová čísla dílů.
     </div>
     <div id="comp-serials-body" style="text-align:center;padding:40px 0;color:#9ca3af;font-family:var(--mono,monospace);font-size:12px">Načítám…</div>
   </div>`;
 
   try {
-    const r = await fetchJSON(`/api/component-serials/${encodeURIComponent(slot.device.udid)}`, {}, 60000);
+    const r = await fetchJSON(`/api/hardware-report/${encodeURIComponent(slot.device.udid)}`, {}, 90000);
     const body = document.getElementById('comp-serials-body');
     if (!body) return;
-    if (!r || !r.ok || !r.groups) {
+    if (!r || !r.ok || !r.sections) {
       body.innerHTML = `<div style="color:#dc2626">Nepodařilo se načíst: ${esc((r && r.error) || 'neznámá chyba')}</div>`;
       return;
     }
     body.style.padding = '0'; body.style.textAlign = 'left';
-    body.innerHTML = r.groups.map(g => `
-      <div style="margin-bottom:18px">
-        <div style="font-family:var(--mono,monospace);font-size:11px;font-weight:700;color:#0a0a0a;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:8px">
-          ${g.label}
-          <span style="font-weight:400;color:#9ca3af">${g.available_count}/${g.components.length}</span>
+    body.innerHTML = HW_SECTIONS.map(sec => {
+      const data = r.sections[sec.key];
+      if (!data || !Object.keys(data).length) return '';
+      const entries = Object.entries(data);
+      const availCount = entries.filter(([,f]) => f.available).length;
+      let inner;
+      if (sec.kind === 'cards') {
+        inner = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+          ${entries.map(([k,f]) => renderComponentCard(k, f)).join('')}
+        </div>`;
+      } else {
+        inner = `<div style="border:1.5px solid #e8e8e8;border-radius:10px;overflow:hidden;border-top:none">
+          ${entries.map(([,f]) => renderHwRow(f)).join('')}
+        </div>`;
+      }
+      return `<div style="margin-bottom:20px">
+        <div style="font-family:var(--mono,monospace);font-size:11px;font-weight:700;color:#0a0a0a;letter-spacing:.05em;text-transform:uppercase;margin-bottom:9px;display:flex;align-items:center;gap:8px">
+          <span>${sec.icon}</span>${sec.label}
+          <span style="font-weight:400;color:#9ca3af">${availCount}/${entries.length}</span>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-          ${g.components.map(renderComponentCard).join('')}
-        </div>
-      </div>`).join('') +
+        ${inner}
+      </div>`;
+    }).join('') +
       `<div style="font-family:var(--mono,monospace);font-size:10.5px;color:#9ca3af;margin-top:4px;text-align:center">
-        Načteno komponent: ${r.summary.components_available} / ${r.summary.components_total}
+        Přečteno hodnot: ${r.summary.fields_available} / ${r.summary.fields_total}
       </div>`;
   } catch (e) {
     const body = document.getElementById('comp-serials-body');
-    if (body) body.innerHTML = `<div style="color:#dc2626">Chyba: ${String(e.message||e)}</div>`;
+    if (body) body.innerHTML = `<div style="color:#dc2626">Chyba: ${esc(String(e.message||e))}</div>`;
   }
 }
 function esc(s){ const d=document.createElement('div'); d.textContent=String(s); return d.innerHTML; }
