@@ -866,6 +866,98 @@ def api_activation_diag():
                                  'trace': traceback.format_exc()})
     return jsonify(out), 200
 
+# ─── AKTIVACE JEDNOTLIVÉHO ZAŘÍZENÍ ──────────────────────────────────────────
+# Standardní Apple aktivace (mobileactivationd) pro JEDEN konkrétní telefon
+# (podle UDID daného slotu). Používá skip_apple_id_query=True, takže knihovna
+# sama vyhodí čistou výjimku, když Apple vyžaduje ověření vlastníka – appka
+# NIKDY nežádá ani neukládá Apple ID heslo.
+
+async def _create_lockdown_for_udid(udid):
+    from pymobiledevice3.lockdown import create_using_usbmux
+    import inspect
+    sig = inspect.signature(create_using_usbmux)
+    params = sig.parameters
+    if 'serial' in params:
+        value = create_using_usbmux(serial=udid)
+    elif 'udid' in params:
+        value = create_using_usbmux(udid=udid)
+    else:
+        value = create_using_usbmux(udid)
+    return await value if inspect.isawaitable(value) else value
+
+async def _activate_one_standard(udid):
+    from pymobiledevice3.services.mobile_activation import MobileActivationService
+    from pymobiledevice3.exceptions import MobileActivationException
+
+    ld = await _create_lockdown_for_udid(udid)
+    svc = MobileActivationService(ld)
+    before = await svc.state()
+
+    if str(before).lower() == 'activated':
+        return {'status': 'ALREADY_ACTIVATED', 'before': str(before), 'after': str(before)}
+
+    try:
+        # Žádný interaktivní prompt na Apple ID – při BuddyML auth requestu
+        # pymobiledevice3 vyhodí MobileActivationException("Device is iCloud locked").
+        await svc.activate(skip_apple_id_query=True)
+    except MobileActivationException as exc:
+        msg = str(exc)
+        if 'icloud locked' in msg.lower():
+            return {
+                'status': 'OWNER_AUTH_REQUIRED',
+                'before': str(before),
+                'after': str(before),
+                'message': 'Apple vyžaduje ověření vlastníka na zařízení.'
+            }
+        return {'status': 'ACTIVATION_ERROR', 'before': str(before), 'message': msg}
+    except Exception as exc:
+        return {
+            'status': 'ACTIVATION_ERROR',
+            'before': str(before),
+            'message': f'{type(exc).__name__}: {exc}'
+        }
+
+    after = await MobileActivationService(ld).state
+    if str(after).lower() == 'activated':
+        return {'status': 'ACTIVATED', 'before': str(before), 'after': str(after)}
+    return {
+        'status': 'ACTIVATION_ERROR',
+        'before': str(before),
+        'after': str(after),
+        'message': 'Aktivační handshake doběhl, ale zařízení není ve stavu Activated.'
+    }
+
+def _run_async_isolated(awaitable, timeout=90):
+    loop = asyncio.new_event_loop()
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(asyncio.wait_for(awaitable, timeout=timeout))
+    finally:
+        asyncio.set_event_loop(None)
+        loop.close()
+
+@app.route('/api/device-activate', methods=['POST'])
+def api_device_activate_single():
+    """Aktivuje JEDEN telefon podle UDID (posílá frontend z konkrétního slotu)."""
+    data = request.get_json(silent=True) or {}
+    udid = (data.get('udid') or '').strip()
+    if not udid:
+        return jsonify({'ok': False, 'error': 'Chybí udid.'}), 400
+    try:
+        result = _run_async_isolated(_activate_one_standard(udid), timeout=90)
+    except Exception as e:
+        return jsonify({'ok': False, 'error': f'{type(e).__name__}: {e}'}), 200
+
+    if udid in connected_devices:
+        connected_devices[udid]['activation_result'] = result['status']
+        if result['status'] in ('ACTIVATED', 'ALREADY_ACTIVATED'):
+            connected_devices[udid]['activation'] = 'Activated'
+
+    ok = result['status'] in ('ACTIVATED', 'ALREADY_ACTIVATED')
+    locked = result['status'] == 'OWNER_AUTH_REQUIRED'
+    return jsonify({'ok': ok, 'locked': locked, 'status': result['status'],
+                    'message': result.get('message', ''), 'result': result}), 200
+
 @app.route('/api/detect-printer')
 def api_detect_printer():
     """Detekuje připojenou tiskárnu přes WMI (Windows) nebo lpstat (Linux/Mac)."""
@@ -1616,167 +1708,6 @@ def api_restore_logs():
                 yield 'data: {"type":"ping"}\n\n'
     return app.response_class(generate(), mimetype='text/event-stream',
                                headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
-
-
-
-# ─── BATCH ACTIVATION – STANDARD APPLE ACTIVATION FLOW ───────────────────────
-# Aktivuje pouze zařízení, která Apple dovolí standardně aktivovat.
-# Pokud Apple vrátí BuddyML požadavek na Apple Account, zařízení je označeno
-# OWNER_AUTH_REQUIRED. Backend hesla Apple Account nepřijímá ani neukládá.
-
-batch_activation_lock = threading.Lock()
-batch_activation_jobs = {}
-
-def _run_async_isolated(awaitable, timeout=120):
-    loop = asyncio.new_event_loop()
-    try:
-        asyncio.set_event_loop(loop)
-        return loop.run_until_complete(asyncio.wait_for(awaitable, timeout=timeout))
-    finally:
-        asyncio.set_event_loop(None)
-        loop.close()
-
-async def _create_lockdown_for_udid(udid):
-    from pymobiledevice3.lockdown import create_using_usbmux
-    import inspect
-    sig = inspect.signature(create_using_usbmux)
-    params = sig.parameters
-    if 'serial' in params:
-        value = create_using_usbmux(serial=udid)
-    elif 'udid' in params:
-        value = create_using_usbmux(udid=udid)
-    else:
-        value = create_using_usbmux(udid)
-    return await value if inspect.isawaitable(value) else value
-
-async def _activate_one_standard(udid):
-    from pymobiledevice3.services.mobile_activation import MobileActivationService
-    from pymobiledevice3.exceptions import MobileActivationException
-
-    ld = await _create_lockdown_for_udid(udid)
-    svc = MobileActivationService(ld)
-    before = await svc.state()
-
-    if str(before).lower() == 'activated':
-        return {'status': 'ALREADY_ACTIVATED', 'before': str(before), 'after': str(before)}
-
-    try:
-        # Důležité: žádný interaktivní terminálový prompt na Apple ID.
-        # Aktuální pymobiledevice3 při BuddyML auth requestu vyhodí
-        # MobileActivationException("Device is iCloud locked").
-        await svc.activate(skip_apple_id_query=True)
-    except MobileActivationException as exc:
-        msg = str(exc)
-        if 'icloud locked' in msg.lower():
-            return {
-                'status': 'OWNER_AUTH_REQUIRED',
-                'before': str(before),
-                'after': str(before),
-                'message': 'Apple vyžaduje ověření vlastníka na zařízení.'
-            }
-        return {'status': 'ACTIVATION_ERROR', 'before': str(before), 'message': msg}
-    except Exception as exc:
-        return {
-            'status': 'ACTIVATION_ERROR',
-            'before': str(before),
-            'message': f'{type(exc).__name__}: {exc}'
-        }
-
-    after = await MobileActivationService(ld).state
-    if str(after).lower() == 'activated':
-        return {'status': 'ACTIVATED', 'before': str(before), 'after': str(after)}
-    return {
-        'status': 'ACTIVATION_ERROR',
-        'before': str(before),
-        'after': str(after),
-        'message': 'Aktivační handshake doběhl, ale zařízení není ve stavu Activated.'
-    }
-
-def _batch_activation_worker(job_id, udids):
-    job = batch_activation_jobs[job_id]
-    job['state'] = 'RUNNING'
-    job['started_at'] = datetime.datetime.now().isoformat(timespec='seconds')
-
-    for udid in udids:
-        job['results'][udid] = {'status': 'ACTIVATING'}
-        job['updated_at'] = datetime.datetime.now().isoformat(timespec='seconds')
-        try:
-            result = _run_async_isolated(_activate_one_standard(udid), timeout=120)
-        except Exception as exc:
-            result = {'status': 'ACTIVATION_ERROR',
-                      'message': f'{type(exc).__name__}: {exc}'}
-        job['results'][udid] = result
-
-        if udid in connected_devices:
-            connected_devices[udid]['activation_result'] = result['status']
-            if result['status'] in ('ACTIVATED', 'ALREADY_ACTIVATED'):
-                connected_devices[udid]['activation'] = 'Activated'
-
-        usb_event_queue.put({
-            'event': 'activation_result',
-            'job_id': job_id,
-            'udid': udid,
-            'result': result
-        })
-        job['updated_at'] = datetime.datetime.now().isoformat(timespec='seconds')
-
-    job['state'] = 'DONE'
-    job['finished_at'] = datetime.datetime.now().isoformat(timespec='seconds')
-
-@app.route('/batch-activation')
-def batch_activation_page():
-    return send_from_directory(_resource_dir('batch-activation.html'),
-                               'batch-activation.html')
-
-@app.route('/api/batch-activation/start', methods=['POST'])
-def api_batch_activation_start():
-    import uuid
-    data = request.get_json() or {}
-    requested = data.get('udids')
-
-    if requested is None:
-        udids = list(connected_devices.keys())
-    elif not isinstance(requested, list):
-        return jsonify({'ok': False, 'error': 'udids musí být pole.'}), 400
-    else:
-        udids = [str(x).strip() for x in requested if str(x).strip()]
-
-    # Jen fyzicky aktuálně evidovaná USB zařízení.
-    udids = list(dict.fromkeys(u for u in udids if u in connected_devices))
-    if not udids:
-        return jsonify({'ok': False, 'error': 'Není vybrán žádný připojený iPhone.'}), 400
-
-    with batch_activation_lock:
-        if any(j.get('state') == 'RUNNING' for j in batch_activation_jobs.values()):
-            return jsonify({'ok': False, 'error': 'Batch activation už běží.'}), 409
-
-        job_id = uuid.uuid4().hex
-        batch_activation_jobs[job_id] = {
-            'id': job_id,
-            'state': 'QUEUED',
-            'created_at': datetime.datetime.now().isoformat(timespec='seconds'),
-            'updated_at': datetime.datetime.now().isoformat(timespec='seconds'),
-            'udids': udids,
-            'results': {u: {'status': 'QUEUED'} for u in udids}
-        }
-
-    threading.Thread(target=_batch_activation_worker,
-                     args=(job_id, udids), daemon=True).start()
-    return jsonify({'ok': True, 'job_id': job_id, 'count': len(udids)}), 202
-
-@app.route('/api/batch-activation/<job_id>', methods=['GET'])
-def api_batch_activation_status(job_id):
-    job = batch_activation_jobs.get(job_id)
-    if not job:
-        return jsonify({'ok': False, 'error': 'Job nenalezen.'}), 404
-    return jsonify({'ok': True, 'job': job})
-
-@app.route('/api/batch-activation/latest', methods=['GET'])
-def api_batch_activation_latest():
-    if not batch_activation_jobs:
-        return jsonify({'ok': True, 'job': None})
-    job = max(batch_activation_jobs.values(), key=lambda x: x['created_at'])
-    return jsonify({'ok': True, 'job': job})
 
 
 # ─── START ───────────────────────────────────────────────────────────────────

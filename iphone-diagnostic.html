@@ -1325,7 +1325,7 @@ function renderSlot(slot) {
   const isDone = slot.state==='done-pass'||slot.state==='done-fail';
   const printBtn = isDone ? `<button class="btn-icon" onclick="event.stopPropagation();openPrintModal(${slot.id})" title="Tisk štítku">🖨️</button>` : '';
   const excelBtn = isDone ? `<button class="btn-icon excel" onclick="event.stopPropagation();exportSlotToExcel(${slot.id})" title="Export do Excelu">📊</button>` : '';
-  const hasDev = slot.state!=='empty' && slot.device;
+  const hasDev = slot.state!=='empty' && slot.device && slot.device.udid;
   const activateBtn = hasDev ? `<button class="btn-icon" onclick="event.stopPropagation();activateDevice(${slot.id})" title="Aktivovat zařízení">⚡</button>` : '';
   return `<div class="slot ${slot.state}" id="slot-${slot.id}">
     <div class="slot-header">
@@ -1884,8 +1884,9 @@ function setManualTape(size) {
   if (printSlotId !== null) renderLabelPreview(slots[printSlotId], currentTapeSize);
 }
 
-// ═══ AKTIVACE ZARIZENI ═══
-// Cista aktivace pro telefony BEZ Find My. U zamcenych jen nasmerujeme na Apple.
+// ═══ AKTIVACE ZAŘÍZENÍ (jednotlivě, podle slotu) ═══
+// Standardní Apple aktivace. Zamčené (iCloud/Find My) zařízení appka NEAKTIVUJE
+// a nikdy nežádá ani neukládá Apple ID heslo — jen nasměruje na Apple.
 function actModal(title, body, opts) {
   opts = opts || {};
   let m = document.getElementById('act-status-modal');
@@ -1897,110 +1898,15 @@ function actModal(title, body, opts) {
   }
   m.style.display = 'flex';
   const spin = opts.spinner ? '<div style="width:26px;height:26px;border:3px solid #eee;border-top-color:#ec4899;border-radius:50%;margin:0 auto 14px;animation:aspin 1s linear infinite"></div>' : '';
-  const extraBtn = opts.extraLabel ? '<button onclick="'+opts.extraOnclick+'" style="background:#ec4899;color:#fff;border:none;padding:9px 16px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;margin-right:8px">'+opts.extraLabel+'</button>' : '';
-  const closeBtn = opts.close ? '<button onclick="document.getElementById(\'act-status-modal\').style.display=\'none\'" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button>' : '';
-  const btnRow = (extraBtn||closeBtn) ? '<div style="text-align:center;margin-top:16px">'+extraBtn+closeBtn+'</div>' : '';
+  const closeBtn = opts.close ? '<div style="text-align:center;margin-top:16px"><button onclick="document.getElementById(\'act-status-modal\').style.display=\'none\'" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button></div>' : '';
   m.innerHTML = '<div style="background:#fff;color:#0a0a0a;max-width:440px;width:92%;border-radius:14px;padding:26px;font-family:var(--sans,sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:center">'
     + '<style>@keyframes aspin{to{transform:rotate(360deg)}}</style>'
     + spin
     + '<div style="font-size:17px;font-weight:700;margin-bottom:8px">' + title + '</div>'
     + '<div style="font-size:13px;line-height:1.6;color:#6b7280">' + (body||'') + '</div>'
-    + btnRow + '</div>';
+    + closeBtn + '</div>';
 }
 function actClose(){ const m=document.getElementById('act-status-modal'); if(m) m.style.display='none'; }
-
-async function skipSetup(id){
-  actModal('Zkouším přeskočit průvodce…','Experiment – čtu, co telefon přes USB dovolí. Chvilku.',{spinner:true});
-  try{
-    const r = await fetchJSON('/api/device-skip-setup',{method:'POST'},60000);
-    if(r && r.ok){
-      actModal('✅ Průvodce možná přeskočen','Zkontroluj telefon, jestli naskočil na plochu.<br><br><span style="font-size:11px;color:#9ca3af">'+(r.note||'')+'</span>',{close:true});
-    } else {
-      actModal('ℹ️ Přeskočení zatím nejde',(r && r.note ? r.note : 'Telefon to přes USB nedovolil.')+'<br><br><span style="font-size:11px;color:#9ca3af">Na stock telefonech očekávané. Pošli mi tenhle text a zkusíme jiný iOS / jiný postup.</span>',{close:true});
-    }
-  }catch(e){
-    if(String(e.message).startsWith('ENDPOINT_MISSING')){
-      actModal('⚠️ Endpoint chybí v buildu','V EXE je starý server.py bez /api/device-skip-setup. Dej do build složky nový server.py a rebuildni.',{close:true});
-    } else if (e.name==='AbortError'){
-      actModal('⏱️ Vypršel čas','Telefon neodpověděl včas.',{close:true});
-    } else {
-      actModal('❌ Chyba',String(e.message||e),{close:true});
-    }
-  }
-}
-
-async function fetchJSON(url, options, timeoutMs) {
-  const ctrl = new AbortController();
-  const to = setTimeout(() => ctrl.abort(), timeoutMs || 30000);
-  try {
-    const res = await fetch(url, Object.assign({signal: ctrl.signal}, options||{}));
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('application/json')) {
-      let txt = '';
-      try { txt = await res.text(); } catch(_) {}
-      if (res.status === 404) throw new Error('ENDPOINT_MISSING:404');
-      // jina ne-JSON odpoved (napr. 500) - ukaz skutecnou chybu, ne "endpoint chybi"
-      throw new Error('HTTP ' + res.status + ' (ne-JSON): ' + String(txt).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180));
-    }
-    return await res.json();
-  } finally { clearTimeout(to); }
-}
-
-async function activateDevice(id) {
-  const slot = slots[id];
-  if (!slot || !slot.device) return;
-  actModal('Kontroluji stav zařízení…', 'Chvilku strčej, čtu aktivační stav z telefonu.', {spinner:true});
-  try {
-    const st = await fetchJSON('/api/device-activation-state', {}, 30000);
-    if (st && st.find_my_associated) { actClose(); showActivationLockModal(); return; }
-    if (st && String(st.state||'').toLowerCase().startsWith('activ')) {
-      actModal('Zařízení je již aktivované', 'Nic dél se nedělá.', {close:true}); return;
-    }
-    actModal('Aktivuji zařízení…', 'Probíhá handshake s Apple serverem (nutný internet).', {spinner:true});
-    const r = await fetchJSON('/api/device-activate', {method:'POST'}, 60000);
-    if (r && r.ok && (r.activated || r.already)) {
-      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.<br><br>Chceš telefon rovnou <b>přeskočit setup až na plochu</b>? (nemaze data)', {close:true, extraLabel:'Přeskočit setup na plochu', extraOnclick:'confirmSupervise('+id+')'});
-    } else if (r && r.locked) {
-      actClose(); showActivationLockModal();
-    } else {
-      actModal('❌ Aktivace selhala', ((r && r.error) || 'Neznámá chyba') + '<br><br><span style="font-size:11px;color:#9ca3af">Tip: musí být internet. Pokud chyba zmiňuje \'No module named ...mobile_activation\', přidej do BUILD_WINDOWS.bat: --hidden-import pymobiledevice3.services.mobile_activation</span>', {close:true});
-    }
-  } catch (e) {
-    if (String(e.message).startsWith('ENDPOINT_MISSING')) {
-      actModal('⚠️ Endpoint chybí v buildu', 'Frontend (nové HTML) volal /api/device-activate, ale <b>server.py v tomto EXE ho nezná</b>.<br><br>V build složce je starý <code>server.py</code>. Dej tam ten nejnovější (obsahuje <code>api_device_activate</code>) a znovu buildni.', {close:true});
-    } else if (e.name === 'AbortError') {
-      actModal('⏱️ Vypršel čas', 'Zařízení neodpovědělo včas. Zkontroluj připojení telefonu a internet, pak zkus znovu.', {close:true});
-    } else {
-      actModal('❌ Aktivaci nelze provést', String(e.message||e), {close:true});
-    }
-  }
-}
-
-function confirmSupervise(id){
-  actModal('⚠️ Supervise + přeskočit setup','Nastaví telefon jako supervised (správce: iSupply trade s.r.o.) a přeskočí většinu Setup Assistanta až na plochu. <b>Nemaze data</b> (telefon je stejně na Hello screenu). Pak se restartuje. Pokračovat?',{extraLabel:'Ano, přeskočit setup', extraOnclick:'doSupervise('+id+')', close:true});
-}
-
-async function doSupervise(id){
-  actModal('Supervise probíhá…','Erase → supervise → skip setup. Nech telefon připojený, může se restartovat. Chvilku.',{spinner:true});
-  try{
-    const r = await fetchJSON('/api/device-supervise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true, erase:false, restart:true, organization:'iSupply trade s.r.o.', language:'en', locale:'en_US'})}, 180000);
-    if(r && r.ok){
-      actModal('✅ Hotovo – konfigurace nastavena','Telefon se restartuje a měl by přeskočit setup až na plochu (supervised). Chvilku počkej.',{close:true});
-    } else {
-      let stepsTxt='';
-      if(r && r.steps){ stepsTxt = r.steps.map(function(s){return (s.ok?'✓':'✗')+' '+s.step+(s.error?': '+s.error:'');}).join('<br>'); }
-      actModal('ℹ️ Supervise neproběhlo celé', (r && r.error ? r.error : 'Některý krok selhal.')+'<br><br><span style="font-size:11px;color:#9ca3af;text-align:left;display:block">'+stepsTxt+'</span><br><span style="font-size:11px;color:#9ca3af">Pošli mi tenhle výpis kroků – podle chyby doladím názvy API.</span>',{close:true});
-    }
-  }catch(e){
-    if(String(e.message).startsWith('ENDPOINT_MISSING')){
-      actModal('⚠️ Endpoint chybí v buildu','V EXE je starý server.py bez /api/device-supervise. Rebuildni s novým server.py.',{close:true});
-    } else if(e.name==='AbortError'){
-      actModal('⏱️ Vypršel čas','Supervise trvalo moc dlouho. Telefon možná stále pracuje – zkontroluj ho.',{close:true});
-    } else {
-      actModal('❌ Chyba', String(e.message||e), {close:true});
-    }
-  }
-}
 
 function showActivationLockModal() {
   let m = document.getElementById('activation-lock-modal');
@@ -2024,6 +1930,50 @@ function showActivationLockModal() {
       </div>
     </div>`;
   document.body.appendChild(m);
+}
+
+async function fetchJSON(url, options, timeoutMs) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeoutMs || 30000);
+  try {
+    const res = await fetch(url, Object.assign({signal: ctrl.signal}, options||{}));
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      let txt = '';
+      try { txt = await res.text(); } catch(_) {}
+      if (res.status === 404) throw new Error('ENDPOINT_MISSING:404');
+      throw new Error('HTTP ' + res.status + ' (ne-JSON): ' + String(txt).replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,180));
+    }
+    return await res.json();
+  } finally { clearTimeout(to); }
+}
+
+async function activateDevice(id) {
+  const slot = slots[id];
+  if (!slot || !slot.device || !slot.device.udid) return;
+  actModal('Aktivuji zařízení…', 'Probíhá handshake s Apple serverem (nutný internet). Chvilku.', {spinner:true});
+  try {
+    const r = await fetchJSON('/api/device-activate', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({udid: slot.device.udid})
+    }, 95000);
+    if (r && r.locked) {
+      actClose(); showActivationLockModal();
+    } else if (r && r.ok) {
+      const msg = r.status === 'ALREADY_ACTIVATED' ? 'Zařízení bylo již dříve aktivováno.' : 'Telefon by měl pokračovat přes aktivační obrazovku.';
+      actModal('✅ Zařízení aktivováno', msg, {close:true});
+    } else {
+      actModal('❌ Aktivace selhala', (r && (r.message || r.error)) || 'Neznámá chyba', {close:true});
+    }
+  } catch (e) {
+    if (String(e.message).startsWith('ENDPOINT_MISSING')) {
+      actModal('⚠️ Endpoint chybí v buildu', 'V EXE je starý server.py bez /api/device-activate. Rebuildni s novým server.py.', {close:true});
+    } else if (e.name === 'AbortError') {
+      actModal('⏱️ Vypršel čas', 'Zařízení neodpovědělo včas. Zkontroluj připojení a internet, pak zkus znovu.', {close:true});
+    } else {
+      actModal('❌ Aktivaci nelze provést', String(e.message||e), {close:true});
+    }
+  }
 }
 
 function openPrintModal(id) {
