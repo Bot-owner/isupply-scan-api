@@ -1041,43 +1041,87 @@ def _component_serial_panel_id(value):
     first = re.split(r"[\s,;|:/]+", panel_id.strip(), maxsplit=1)[0].strip()
     return first or None
 
-async def _component_serials_collect(udid):
+async def _open_diag(udid):
     import inspect
     from pymobiledevice3.services.diagnostics import DiagnosticsService
-
     ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
+    if inspect.iscoroutinefunction(DiagnosticsService):
+        diag = await DiagnosticsService(ld)
+    else:
+        diag = DiagnosticsService(ld)
+    return ld, diag
+
+async def _read_ioreg(diag, label, target, errors):
+    """Cte IOKit uzel. Zkousi POTVRZENOU formu name= (V14 overil name='AppleCLCD'),
+    pak fallback na plane+ioclass. Vraci prvni neprazdny vysledek."""
+    import inspect
+    attempts = [
+        {"name": target},
+        {"plane": "IOService", "ioclass": target},
+        {"plane": "IOService", "name": target},
+    ]
+    last_err = None
+    for kw in attempts:
+        try:
+            result = diag.ioregistry(**kw)
+            if inspect.isawaitable(result):
+                result = await result
+            if result:
+                return result
+        except Exception as exc:
+            last_err = f"{type(exc).__name__}: {exc}"
+    if last_err:
+        errors[label] = last_err
+    return {}
+
+async def _read_hw_sources(udid):
+    """Otevre JEDNO spojeni a precte vsechny syrove zdroje (lockdown + IOKit uzly).
+    Sdilene pro _component_serials_collect i _hardware_report_collect - zadne
+    duplicitni ani opakovane cteni."""
+    import inspect
     errors = {}
+    ld, diag = await _open_diag(udid)
 
     values = {}
     try:
-        all_values = ld.all_values
-        if inspect.isawaitable(all_values):
-            all_values = await all_values
-        if isinstance(all_values, dict):
-            values = all_values
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        if isinstance(av, dict):
+            values = av
     except Exception as exc:
         errors["lockdown"] = f"{type(exc).__name__}: {exc}"
 
-    async def read_ioregistry(label, **kwargs):
-        try:
-            result = diag.ioregistry(**kwargs)
-            if inspect.isawaitable(result):
-                result = await result
-            return result
-        except Exception as exc:
-            errors[label] = f"{type(exc).__name__}: {exc}"
-            return {}
+    camera = await _read_ioreg(diag, "camera", "AppleH10CamIn", errors)
+    pearl = await _read_ioreg(diag, "pearl", "AppleH10PearlCam", errors)
+    clcd = await _read_ioreg(diag, "AppleCLCD", "AppleCLCD", errors)
+    battery = await _read_ioreg(diag, "AppleSmartBattery", "AppleSmartBattery", errors)
 
-    camera = await read_ioregistry("camera", plane="IOService", ioclass="AppleH10CamIn")
-    pearl = await read_ioregistry("pearl", plane="IOService", ioclass="AppleH10PearlCam")
-    clcd = await read_ioregistry("AppleCLCD", plane="IOService", ioclass="AppleCLCD")
-    battery = await read_ioregistry("AppleSmartBattery", plane="IOService", name="AppleSmartBattery")
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    return {"values": values, "camera": camera, "pearl": pearl,
+            "clcd": clcd, "battery": battery, "errors": errors}
+
+async def _component_serials_collect(udid, sources=None):
+    # Pokud uz mame syrove zdroje (napr. z hardware-report), pouzij je - jinak precti.
+    if sources is None:
+        sources = await _read_hw_sources(udid)
+    values = sources.get("values", {})
+    camera = sources.get("camera", {})
+    pearl = sources.get("pearl", {})
+    clcd = sources.get("clcd", {})
+    battery = sources.get("battery", {})
+    errors = dict(sources.get("errors", {}))
 
     raw = {
         "rear_camera": _component_serial_find(camera, ("BackCameraModuleSerialNumString", "CameraModuleSerialNumString")),
         "front_camera": _component_serial_find(camera, ("FrontCameraModuleSerialNumString",)),
-        "tele_camera": _component_serial_find(camera, ("TeleCameraModuleSerialNumString",)),
+        "tele_camera": _component_serial_find(camera, ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString")),
         "front_ir_camera": _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",))
                           or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)),
         "true_depth_projector": _component_serial_find(pearl, ("StructuredLightProjectorModuleSerialNumString",))
@@ -1102,13 +1146,6 @@ async def _component_serials_collect(udid):
             "key": group_key, "label": spec["label"], "components": group_components,
             "available_count": sum(1 for item in group_components if item["available"]),
         })
-
-    try:
-        close_result = diag.close()
-        if inspect.isawaitable(close_result):
-            await close_result
-    except Exception:
-        pass
 
     return {
         "ok": True, "udid": udid, "components": components, "groups": groups,
@@ -1141,44 +1178,31 @@ def _hw_field(label, value, source=None):
     return out
 
 async def _hardware_report_collect(udid):
-    import inspect
-    from pymobiledevice3.services.diagnostics import DiagnosticsService
+    # AGREGÁTOR: precte syrove zdroje JEDNOU a znovupouzije potvrzeny component
+    # reader. Nedu­plikuje IORegistry logiku - jen agreguje a sémanticky trídí.
+    sources = await _read_hw_sources(udid)
+    values = sources.get("values", {})
+    battery = sources.get("battery", {})
+    clcd = sources.get("clcd", {})
+    errors = dict(sources.get("errors", {}))
 
-    ld = await _create_lockdown_for_udid(udid)
-    diag = DiagnosticsService(ld)
-    errors = {}
+    # komponenty z POTVRZENÉHO readeru (stejné zdroje, žádné druhé čtení)
+    comp_result = await _component_serials_collect(udid, sources=sources)
+    comp = comp_result.get("components", {})
 
-    values = {}
-    try:
-        av = ld.all_values
-        if inspect.isawaitable(av):
-            av = await av
-        if isinstance(av, dict):
-            values = av
-    except Exception as exc:
-        errors["lockdown"] = f"{type(exc).__name__}: {exc}"
-
-    async def read_ioregistry(label, **kwargs):
-        try:
-            result = diag.ioregistry(**kwargs)
-            if inspect.isawaitable(result):
-                result = await result
-            return result or {}
-        except Exception as exc:
-            errors[label] = f"{type(exc).__name__}: {exc}"
-            return {}
-
-    camera = await read_ioregistry("camera", plane="IOService", ioclass="AppleH10CamIn")
-    pearl = await read_ioregistry("pearl", plane="IOService", ioclass="AppleH10PearlCam")
-    clcd = await read_ioregistry("AppleCLCD", plane="IOService", ioclass="AppleCLCD")
-    battery = await read_ioregistry("AppleSmartBattery", plane="IOService", name="AppleSmartBattery")
-
-    def lv(*keys):  # lockdown value
+    def lv(*keys):   # lockdown value
         return _component_serial_find(values, keys)
-    def bv(*keys):  # battery ioreg value
+    def bv(*keys):   # battery ioreg value
         return _component_serial_find(battery, keys)
+    def from_comp(key, label):
+        c = comp.get(key, {})
+        out = {"label": label, "value": c.get("value"), "available": bool(c.get("value"))}
+        # zachovej pripadna budouci verifikacni pole (forward-kompatibilita)
+        for k in ("factory_value", "current_value", "match", "status"):
+            if k in c:
+                out[k] = c[k]
+        return out
 
-    # doplnkove info z cache (model/a_number uz vyresil get_device_info)
     cached = connected_devices.get(udid, {}) or {}
 
     # ── IDENTITA ZAŘÍZENÍ ──
@@ -1193,16 +1217,16 @@ async def _hardware_report_collect(udid):
         "build": _hw_field("Build", lv("BuildVersion"), "lockdown"),
     }
 
-    # ── KOMPONENTY (fyzická sériová čísla dílů) ──
+    # ── KOMPONENTY (fyzická sériová čísla dílů) – z potvrzeného readeru ──
     components = {
-        "rear_camera": _hw_field("Zadní kamera", _component_serial_find(camera, ("BackCameraModuleSerialNumString", "CameraModuleSerialNumString")), "AppleH10CamIn"),
-        "front_camera": _hw_field("Přední kamera", _component_serial_find(camera, ("FrontCameraModuleSerialNumString",)), "AppleH10CamIn"),
-        "tele_camera": _hw_field("Teleobjektiv", _component_serial_find(camera, ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString")), "AppleH10CamIn"),
-        "front_ir_camera": _hw_field("Přední IR kamera", _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",)) or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)), "AppleH10PearlCam"),
-        "true_depth_projector": _hw_field("TrueDepth projektor", _component_serial_find(pearl, ("StructuredLightProjectorModuleSerialNumString",)) or _component_serial_find(camera, ("StructuredLightProjectorModuleSerialNumString",)), "AppleH10PearlCam"),
-        "screen": _hw_field("Displej", _component_serial_panel_id(clcd), "AppleCLCD.Panel_ID"),
-        "battery": _hw_field("Baterie", bv("Serial", "SerialNumber", "BatterySerialNumber"), "AppleSmartBattery"),
-        "mainboard": _hw_field("Základní deska", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
+        "rear_camera": from_comp("rear_camera", "Zadní kamera"),
+        "front_camera": from_comp("front_camera", "Přední kamera"),
+        "tele_camera": from_comp("tele_camera", "Teleobjektiv"),
+        "front_ir_camera": from_comp("front_ir_camera", "Přední IR kamera"),
+        "true_depth_projector": from_comp("true_depth_projector", "TrueDepth projektor"),
+        "screen": from_comp("screen", "Displej"),
+        "battery": from_comp("battery", "Baterie"),
+        "mainboard": from_comp("mainboard", "Základní deska"),
     }
 
     # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
@@ -1242,7 +1266,7 @@ async def _hardware_report_collect(udid):
     # ── DISPLEJ ──
     panel_id_full = _component_serial_find(clcd, ("Panel_ID", "PanelID"))
     display = {
-        "serial": _hw_field("Sériové číslo displeje", _component_serial_panel_id(clcd), "AppleCLCD.Panel_ID"),
+        "serial": from_comp("screen", "Sériové číslo displeje"),
         "panel_id": _hw_field("Panel ID (zkráceno)", (panel_id_full[:48] + "…") if panel_id_full and len(panel_id_full) > 48 else panel_id_full, "AppleCLCD"),
     }
 
@@ -1250,13 +1274,6 @@ async def _hardware_report_collect(udid):
     storage = {
         "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
     }
-
-    try:
-        cr = diag.close()
-        if inspect.isawaitable(cr):
-            await cr
-    except Exception:
-        pass
 
     sections = {
         "device": device, "components": components, "battery": battery_diag,
