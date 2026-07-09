@@ -885,55 +885,6 @@ async def _create_lockdown_for_udid(udid):
         value = create_using_usbmux(udid)
     return await value if inspect.isawaitable(value) else value
 
-async def _skip_setup_assistant_supported(ld, organization="iSupply"):
-    """
-    Použije supervision/cloud-configuration flow z pymobiledevice3.
-    MobileConfigService.supervise() zapisuje CloudConfiguration se SkipSetup
-    seznamem včetně Welcome, LanguageAndLocale, Region, WiFi, AppleID atd.
-
-    POZOR: zařízení po tomto kroku bude supervised organizací `organization`.
-    """
-    import tempfile
-    from pathlib import Path
-    from pymobiledevice3.ca import create_keybag_file
-    from pymobiledevice3.services.mobile_config import MobileConfigService
-
-    with tempfile.TemporaryDirectory(prefix="isupply-supervision-") as temp_dir:
-        keybag = Path(temp_dir) / "supervision-keybag.pem"
-        create_keybag_file(keybag, organization)
-
-        mc = MobileConfigService(lockdown=ld)
-
-        # Pokud už cloud configuration existuje, nejdřív zjistíme její stav.
-        existing = None
-        try:
-            existing = await mc.get_cloud_configuration()
-        except Exception:
-            existing = None
-
-        if existing and existing.get("CloudConfigurationUIComplete"):
-            skip = existing.get("SkipSetup") or []
-            return {
-                "status": "SETUP_ALREADY_CONFIGURED",
-                "supervised": bool(existing.get("IsSupervised")),
-                "skip_count": len(skip),
-            }
-
-        await mc.supervise(organization, keybag)
-
-        applied = None
-        try:
-            applied = await MobileConfigService(lockdown=ld).get_cloud_configuration()
-        except Exception:
-            applied = None
-
-        return {
-            "status": "SETUP_SKIPPED",
-            "supervised": bool((applied or {}).get("IsSupervised", True)),
-            "skip_count": len((applied or {}).get("SkipSetup") or []),
-        }
-
-
 async def _activate_one_standard(udid):
     from pymobiledevice3.services.mobile_activation import MobileActivationService
     from pymobiledevice3.exceptions import MobileActivationException
@@ -942,73 +893,38 @@ async def _activate_one_standard(udid):
     svc = MobileActivationService(ld)
     before = await svc.state()
 
-    activation_status = "ALREADY_ACTIVATED"
+    if str(before).lower() == 'activated':
+        return {'status': 'ALREADY_ACTIVATED', 'before': str(before), 'after': str(before)}
 
-    if str(before).lower() != "activated":
-        try:
-            # Standardní Apple activation flow.
-            # Při Activation Lock / BuddyML owner-auth požadavku skončíme
-            # OWNER_AUTH_REQUIRED a Setup Assistant se neupravuje.
-            await svc.activate(skip_apple_id_query=True)
-            activation_status = "ACTIVATED"
-        except MobileActivationException as exc:
-            msg = str(exc)
-            if "icloud locked" in msg.lower():
-                return {
-                    "status": "OWNER_AUTH_REQUIRED",
-                    "before": str(before),
-                    "after": str(before),
-                    "setup_status": "NOT_ATTEMPTED",
-                    "message": "Apple vyžaduje ověření vlastníka na zařízení.",
-                }
-            return {
-                "status": "ACTIVATION_ERROR",
-                "before": str(before),
-                "setup_status": "NOT_ATTEMPTED",
-                "message": msg,
-            }
-        except Exception as exc:
-            return {
-                "status": "ACTIVATION_ERROR",
-                "before": str(before),
-                "setup_status": "NOT_ATTEMPTED",
-                "message": f"{type(exc).__name__}: {exc}",
-            }
-
-    after = await MobileActivationService(ld).state()
-    if str(after).lower() != "activated":
-        return {
-            "status": "ACTIVATION_ERROR",
-            "before": str(before),
-            "after": str(after),
-            "setup_status": "NOT_ATTEMPTED",
-            "message": "Aktivační handshake doběhl, ale zařízení není ve stavu Activated.",
-        }
-
-    # Aktivace je hotová -> přeskoč Setup Assistant / Hello.
     try:
-        setup_result = await _skip_setup_assistant_supported(
-            ld,
-            organization="iSupply",
-        )
+        # Žádný interaktivní prompt na Apple ID – při BuddyML auth requestu
+        # pymobiledevice3 vyhodí MobileActivationException("Device is iCloud locked").
+        await svc.activate(skip_apple_id_query=True)
+    except MobileActivationException as exc:
+        msg = str(exc)
+        if 'icloud locked' in msg.lower():
+            return {
+                'status': 'OWNER_AUTH_REQUIRED',
+                'before': str(before),
+                'after': str(before),
+                'message': 'Apple vyžaduje ověření vlastníka na zařízení.'
+            }
+        return {'status': 'ACTIVATION_ERROR', 'before': str(before), 'message': msg}
     except Exception as exc:
         return {
-            "status": activation_status,
-            "before": str(before),
-            "after": str(after),
-            "setup_status": "SETUP_SKIP_ERROR",
-            "message": f"Aktivace OK, ale skip Hello/Setup Assistant selhal: "
-                       f"{type(exc).__name__}: {exc}",
+            'status': 'ACTIVATION_ERROR',
+            'before': str(before),
+            'message': f'{type(exc).__name__}: {exc}'
         }
 
+    after = await MobileActivationService(ld).state
+    if str(after).lower() == 'activated':
+        return {'status': 'ACTIVATED', 'before': str(before), 'after': str(after)}
     return {
-        "status": activation_status,
-        "before": str(before),
-        "after": str(after),
-        "setup_status": setup_result["status"],
-        "supervised": setup_result["supervised"],
-        "skip_count": setup_result["skip_count"],
-        "message": "Aktivace dokončena a Setup Assistant/Hello byl nakonfigurován k přeskočení.",
+        'status': 'ACTIVATION_ERROR',
+        'before': str(before),
+        'after': str(after),
+        'message': 'Aktivační handshake doběhl, ale zařízení není ve stavu Activated.'
     }
 
 def _run_async_isolated(awaitable, timeout=90):
@@ -1040,9 +956,17 @@ def api_device_activate_single():
     ok = result['status'] in ('ACTIVATED', 'ALREADY_ACTIVATED')
     locked = result['status'] == 'OWNER_AUTH_REQUIRED'
     return jsonify({'ok': ok, 'locked': locked, 'status': result['status'],
-                    'setup_status': result.get('setup_status'),
-                    'supervised': result.get('supervised'),
                     'message': result.get('message', ''), 'result': result}), 200
+
+@app.route('/api/auto-activate-config', methods=['GET'])
+def api_auto_activate_get():
+    return jsonify({'ok': True, 'enabled': get_setting('auto_activate_enabled', '0') == '1'})
+
+@app.route('/api/auto-activate-config', methods=['POST'])
+def api_auto_activate_set():
+    data = request.get_json(silent=True) or {}
+    set_setting('auto_activate_enabled', '1' if data.get('enabled') else '0')
+    return jsonify({'ok': True, 'enabled': bool(data.get('enabled'))})
 
 @app.route('/api/detect-printer')
 def api_detect_printer():

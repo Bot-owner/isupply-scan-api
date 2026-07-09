@@ -418,6 +418,20 @@
     <div class="lang-switcher" id="lang-switcher"></div>
     <button class="nav-btn active" id="btn-diag" onclick="switchView('diag')" data-i18n="nav_diag">🔬 Deep Diagnostics</button>
     <button class="nav-btn db-btn" id="btn-db"   onclick="switchView('db')" data-i18n="nav_db">📋 Database</button>
+    <div style="position:relative">
+      <button class="btn-header" id="btn-activation" onclick="toggleActivationPanel(event)" style="border-color:rgba(236,72,153,.3);color:var(--pink-dark)">⚡ Aktivace iPhonu</button>
+      <div id="activation-panel" style="display:none;position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:16px;width:290px;box-shadow:0 12px 30px rgba(0,0,0,.15);z-index:500;text-align:left">
+        <div style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ AKTIVACE IPHONU</div>
+        <p style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:12px">
+          Standardní Apple aktivace. Zamčené (iCloud) zařízení se neaktivují — appka nasměruje na Apple, žádné heslo se nikde nezadává.
+        </p>
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:12.5px;cursor:pointer;padding:10px;background:var(--surface2);border-radius:8px;border:1.5px solid var(--border)">
+          <input type="checkbox" id="auto-activate-cb" onchange="setAutoActivate(this.checked)" style="margin-top:2px;accent-color:var(--pink-dark)" />
+          <span>Automaticky aktivovat <b>otestovaná</b> zařízení (bez ručního klikání na ⚡)</span>
+        </label>
+        <div id="auto-activate-status" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:8px"></div>
+      </div>
+    </div>
     <a class="btn-header" href="/support" target="_blank" style="text-decoration:none">🛟 Support</a>
     <button class="btn-header logout" onclick="doLogout()" data-i18n="logout">Log out</button>
   </div>
@@ -1325,12 +1339,10 @@ function renderSlot(slot) {
   const isDone = slot.state==='done-pass'||slot.state==='done-fail';
   const printBtn = isDone ? `<button class="btn-icon" onclick="event.stopPropagation();openPrintModal(${slot.id})" title="Tisk štítku">🖨️</button>` : '';
   const excelBtn = isDone ? `<button class="btn-icon excel" onclick="event.stopPropagation();exportSlotToExcel(${slot.id})" title="Export do Excelu">📊</button>` : '';
-  const hasDev = slot.state!=='empty' && slot.device && slot.device.udid;
-  const activateBtn = hasDev ? `<button class="btn-icon" onclick="event.stopPropagation();activateDevice(${slot.id})" title="Aktivovat zařízení">⚡</button>` : '';
   return `<div class="slot ${slot.state}" id="slot-${slot.id}">
     <div class="slot-header">
       <span class="slot-num">SLOT ${String(slot.id+1).padStart(2,'0')}</span>
-      <div class="slot-header-right">${printBtn}${excelBtn}${activateBtn}${renderBadge(slot)}</div>
+      <div class="slot-header-right">${printBtn}${excelBtn}${renderBadge(slot)}</div>
     </div>
     <div class="slot-body">${renderBody(slot)}</div>
   </div>`;
@@ -1657,6 +1669,9 @@ function finishTesting(id) {
   addToDatabase(slot);
   render();
   showToast(`${t('toast_done')} ${slot.device.model}`);
+  if (autoActivateEnabled && slot.device && slot.device.udid) {
+    setTimeout(() => activateDevice(id), 600);
+  }
 }
 
 // ═══ PRINT ═══
@@ -1947,6 +1962,55 @@ async function fetchJSON(url, options, timeoutMs) {
     return await res.json();
   } finally { clearTimeout(to); }
 }
+
+// ═══ PANEL "AKTIVACE IPHONU" (nahoře v hlavičce) ═══
+let autoActivateEnabled = false;
+
+function toggleActivationPanel(ev){
+  ev.stopPropagation();
+  const p = document.getElementById('activation-panel');
+  p.style.display = (p.style.display === 'none' || !p.style.display) ? 'block' : 'none';
+}
+document.addEventListener('click', (ev) => {
+  const p = document.getElementById('activation-panel');
+  const btn = document.getElementById('btn-activation');
+  if (!p || p.style.display === 'none') return;
+  if (!p.contains(ev.target) && ev.target !== btn) p.style.display = 'none';
+});
+
+async function loadAutoActivateConfig(){
+  try{
+    const r = await fetchJSON('/api/auto-activate-config', {}, 10000);
+    autoActivateEnabled = !!(r && r.enabled);
+    const cb = document.getElementById('auto-activate-cb');
+    if (cb) cb.checked = autoActivateEnabled;
+    updateAutoActivateStatus();
+  }catch(e){ /* tiché selhání, výchozí = vypnuto */ }
+}
+
+async function setAutoActivate(checked){
+  autoActivateEnabled = checked;
+  updateAutoActivateStatus('Ukládám…');
+  try{
+    await fetchJSON('/api/auto-activate-config', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({enabled: checked})
+    }, 10000);
+    updateAutoActivateStatus();
+  }catch(e){
+    updateAutoActivateStatus('⚠ Nepodařilo se uložit: ' + e.message);
+  }
+}
+
+function updateAutoActivateStatus(msg){
+  const el = document.getElementById('auto-activate-status');
+  if (!el) return;
+  el.textContent = msg || (autoActivateEnabled ? '✓ Zapnuto — nové otestované kusy se aktivují samy' : 'Vypnuto — aktivace se nespouští automaticky');
+}
+
+document.addEventListener('DOMContentLoaded', loadAutoActivateConfig);
+if (document.readyState !== 'loading') loadAutoActivateConfig();
+
 
 async function activateDevice(id) {
   const slot = slots[id];
