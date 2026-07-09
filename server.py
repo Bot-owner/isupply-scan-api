@@ -1165,6 +1165,140 @@ def api_component_serials(udid):
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
 
 
+
+# ─── DOT / TRUEDEPTH PROJECTOR EX-FACTORY DISCOVERY ─────────────────────────
+_DOT_PROJECTOR_TARGETS = (
+    "AppleH10CamIn", "AppleH10PearlCam", "PearlCam", "ApplePearlCam",
+    "AppleH10PearlCamInterface", "AppleH10Pearl",
+    "AppleH10PearlProjector", "AppleH10PearlFlood",
+)
+
+def _dot_json_safe(value, max_binary=8192):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        clipped = raw[:max_binary]
+        return {"_type": "bytes", "length": len(raw), "hex": clipped.hex(),
+                "ascii": clipped.decode("ascii", errors="replace").replace("\x00", "\\0"),
+                "truncated": len(raw) > max_binary}
+    if isinstance(value, dict):
+        return {str(k): _dot_json_safe(v, max_binary) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_dot_json_safe(v, max_binary) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+def _dot_walk(value, path="$"):
+    rows = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = f"{path}.{key}"
+            rows.append((child_path, str(key), child))
+            rows.extend(_dot_walk(child, child_path))
+    elif isinstance(value, (list, tuple)):
+        for idx, child in enumerate(value):
+            rows.extend(_dot_walk(child, f"{path}[{idx}]"))
+    return rows
+
+def _dot_score(path, key):
+    hay = f"{path} {key}".lower().replace("-", "").replace("_", "")
+    weights = {"dot": 8, "projector": 10, "structuredlight": 10, "truedepth": 8,
+               "pearl": 5, "factory": 10, "exfactory": 14, "serial": 6,
+               "calibration": 5, "module": 3, "current": 2}
+    return sum(weight for token, weight in weights.items() if token in hay)
+
+async def _dot_projector_factory_probe_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls, candidates, exact_named = {}, [], [], []
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        if isinstance(av, dict):
+            for path, key, value in _dot_walk(av):
+                score = _dot_score(path, key)
+                if score:
+                    candidates.append({"source": "lockdown:all_values", "path": path,
+                                       "key": key, "score": score, "value": _dot_json_safe(value)})
+    except Exception as exc:
+        errors["lockdown"] = f"{type(exc).__name__}: {exc}"
+
+    exact_keys = {
+        "structuredlightprojectormoduleserialnumstring",
+        "frontirstructuredlightprojectorserialnumstring",
+        "dotprojectorserialnumstring", "projectormoduleserialnumstring",
+        "dotprojectorexfactoryvalue", "projectorexfactoryvalue", "exfactoryvalue",
+    }
+    for target in _DOT_PROJECTOR_TARGETS:
+        try:
+            result = diag.ioregistry(name=target)
+            if inspect.isawaitable(result):
+                result = await result
+            calls.append({"target": target,
+                          "query": f"DiagnosticsService.ioregistry(name='{target}')",
+                          "ok": bool(result), "result_type": type(result).__name__})
+            if result:
+                for path, key, value in _dot_walk(result):
+                    score = _dot_score(path, key)
+                    key_norm = str(key).lower().replace("-", "").replace("_", "")
+                    item = {"source": f"ioregistry:name:{target}", "path": path,
+                            "key": key, "value": _dot_json_safe(value)}
+                    if key_norm in exact_keys:
+                        exact_named.append(item)
+                    if score:
+                        candidates.append({**item, "score": score})
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[f"name:{target}"] = err
+            calls.append({"target": target, "ok": False, "error": err})
+
+    try:
+        result = diag.ioregistry(plane="IOService")
+        if inspect.isawaitable(result):
+            result = await result
+        calls.append({"target": "IOService", "query": "DiagnosticsService.ioregistry(plane='IOService')",
+                      "ok": bool(result), "result_type": type(result).__name__})
+        if result:
+            for path, key, value in _dot_walk(result):
+                score = _dot_score(path, key)
+                if score >= 8:
+                    candidates.append({"source": "ioregistry:plane:IOService", "path": path,
+                                       "key": key, "score": score, "value": _dot_json_safe(value)})
+    except Exception as exc:
+        errors["plane:IOService"] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    dedup = {}
+    for item in candidates:
+        ident = (item["source"], item["path"], item["key"])
+        if ident not in dedup or item["score"] > dedup[ident]["score"]:
+            dedup[ident] = item
+    candidates = sorted(dedup.values(), key=lambda x: (-x["score"], x["source"], x["path"]))
+
+    return {"ok": True, "probe": "dot-projector-ex-factory-discovery-v1", "udid": udid,
+            "goal": "Locate DOT/Structured Light projector Ex-factory value and exact IORegistry source",
+            "read_only": True, "exact_named_hits": exact_named, "candidates": candidates[:500],
+            "calls": calls, "errors": errors,
+            "summary": {"exact_named_hits": len(exact_named), "candidates": len(candidates),
+                        "calls_total": len(calls), "calls_ok": sum(1 for c in calls if c.get("ok"))}}
+
+@app.route('/api/dot-projector-factory-probe/<udid>', methods=['GET'])
+def api_dot_projector_factory_probe(udid):
+    try:
+        result = _run_async_isolated(_dot_projector_factory_probe_collect(udid), timeout=180)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "probe": "dot-projector-ex-factory-discovery-v1",
+                        "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
+
+
 # ─── HARDWARE REPORT (agregace do sémantických sekcí) ────────────────────────
 # Sjednocuje uz existujici cteni do jedne odpovedi rozdelene podle VYZNAMU:
 # identita zarizeni / komponenty (serialy) / baterie (diagnostika) /
