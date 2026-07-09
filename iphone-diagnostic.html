@@ -1886,26 +1886,68 @@ function setManualTape(size) {
 
 // ═══ AKTIVACE ZARIZENI ═══
 // Cista aktivace pro telefony BEZ Find My. U zamcenych jen nasmerujeme na Apple.
+function actModal(title, body, opts) {
+  opts = opts || {};
+  let m = document.getElementById('act-status-modal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'act-status-modal';
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center';
+    document.body.appendChild(m);
+  }
+  m.style.display = 'flex';
+  const spin = opts.spinner ? '<div style="width:26px;height:26px;border:3px solid #eee;border-top-color:#ec4899;border-radius:50%;margin:0 auto 14px;animation:aspin 1s linear infinite"></div>' : '';
+  const closeBtn = opts.close ? '<div style="text-align:center;margin-top:16px"><button onclick="document.getElementById(\'act-status-modal\').style.display=\'none\'" style="background:none;border:1.5px solid #e8e8e8;color:#6b7280;padding:8px 18px;border-radius:8px;font-size:12px;cursor:pointer">Zavřít</button></div>' : '';
+  m.innerHTML = '<div style="background:#fff;color:#0a0a0a;max-width:440px;width:92%;border-radius:14px;padding:26px;font-family:var(--sans,sans-serif);box-shadow:0 10px 40px rgba(0,0,0,.3);text-align:center">'
+    + '<style>@keyframes aspin{to{transform:rotate(360deg)}}</style>'
+    + spin
+    + '<div style="font-size:17px;font-weight:700;margin-bottom:8px">' + title + '</div>'
+    + '<div style="font-size:13px;line-height:1.6;color:#6b7280">' + (body||'') + '</div>'
+    + closeBtn + '</div>';
+}
+function actClose(){ const m=document.getElementById('act-status-modal'); if(m) m.style.display='none'; }
+
+async function fetchJSON(url, options, timeoutMs) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), timeoutMs || 30000);
+  try {
+    const res = await fetch(url, Object.assign({signal: ctrl.signal}, options||{}));
+    const ct = res.headers.get('content-type') || '';
+    if (!ct.includes('application/json')) {
+      // endpoint neexistuje / vraci HTML -> nejspis stary server.py v buildu
+      throw new Error('ENDPOINT_MISSING:' + res.status);
+    }
+    return await res.json();
+  } finally { clearTimeout(to); }
+}
+
 async function activateDevice(id) {
   const slot = slots[id];
   if (!slot || !slot.device) return;
+  actModal('Kontroluji stav zařízení…', 'Chvilku strčej, čtu aktivační stav z telefonu.', {spinner:true});
   try {
-    const st = await (await fetch('/api/device-activation-state')).json();
-    if (st && st.find_my_associated) { showActivationLockModal(); return; }
+    const st = await fetchJSON('/api/device-activation-state', {}, 30000);
+    if (st && st.find_my_associated) { actClose(); showActivationLockModal(); return; }
     if (st && String(st.state||'').toLowerCase().startsWith('activ')) {
-      showToast('Zařízení je již aktivované'); return;
+      actModal('Zařízení je již aktivované', 'Nic dél se nedělá.', {close:true}); return;
     }
-    showToast('Aktivuji zařízení…');
-    const r = await (await fetch('/api/device-activate', {method:'POST'})).json();
+    actModal('Aktivuji zařízení…', 'Probíhá handshake s Apple serverem (nutný internet).', {spinner:true});
+    const r = await fetchJSON('/api/device-activate', {method:'POST'}, 60000);
     if (r && r.ok && (r.activated || r.already)) {
-      showToast('✅ Zařízení aktivováno');
+      actModal('✅ Zařízení aktivováno', 'Telefon by měl pokračovat přes aktivační obrazovku.', {close:true});
     } else if (r && r.locked) {
-      showActivationLockModal();
+      actClose(); showActivationLockModal();
     } else {
-      showToast('❌ Aktivace selhala: ' + ((r && r.error) || 'chyba'));
+      actModal('❌ Aktivace selhala', ((r && r.error) || 'Neznámá chyba') + '<br><br><span style="font-size:11px;color:#9ca3af">Tip: musí být internet. Pokud chyba zmiňuje \'No module named ...mobile_activation\', přidej do BUILD_WINDOWS.bat: --hidden-import pymobiledevice3.services.mobile_activation</span>', {close:true});
     }
   } catch (e) {
-    showToast('❌ Aktivaci nelze provést: ' + e.message);
+    if (String(e.message).startsWith('ENDPOINT_MISSING')) {
+      actModal('⚠️ Endpoint chybí v buildu', 'Frontend (nové HTML) volal /api/device-activate, ale <b>server.py v tomto EXE ho nezná</b>.<br><br>V build složce je starý <code>server.py</code>. Dej tam ten nejnovější (obsahuje <code>api_device_activate</code>) a znovu buildni.', {close:true});
+    } else if (e.name === 'AbortError') {
+      actModal('⏱️ Vypršel čas', 'Zařízení neodpovědělo včas. Zkontroluj připojení telefonu a internet, pak zkus znovu.', {close:true});
+    } else {
+      actModal('❌ Aktivaci nelze provést', String(e.message||e), {close:true});
+    }
   }
 }
 
