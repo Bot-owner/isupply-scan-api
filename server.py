@@ -18,6 +18,38 @@ import queue
 import asyncio
 import subprocess
 
+# ─── FIX pro zabaleny EXE (PyInstaller onefile) ─────────────────────────────
+# Nektere baliky (napr. readchar, ktery tahne pymobiledevice3) si pri importu
+# ctou svou verzi pres importlib.metadata.version("<jmeno>"). V onefile EXE
+# casto chybi jejich metadata (.dist-info) -> vyjimka "No package metadata was
+# found for readchar" a pad. Obalime version() tak, aby pri selhani vratil
+# nahradni hodnotu misto vyjimky. Meni chovani JEN kdyz realny lookup selze,
+# takze je to bezpecne. Musi bezet PRED importem pymobiledevice3.
+try:
+    import importlib.metadata as _ilm
+    _ilm_version_orig = _ilm.version
+    def _ilm_version_safe(name, *a, **k):
+        try:
+            return _ilm_version_orig(name, *a, **k)
+        except Exception:
+            return '0.0.0'
+    _ilm.version = _ilm_version_safe
+    # nektere baliky pouzivaji i metadata()/distribution() - obalime taky
+    try:
+        _ilm_metadata_orig = _ilm.metadata
+        def _ilm_metadata_safe(name, *a, **k):
+            try:
+                return _ilm_metadata_orig(name, *a, **k)
+            except Exception:
+                from email.message import Message
+                m = Message(); m['Name'] = name; m['Version'] = '0.0.0'
+                return m
+        _ilm.metadata = _ilm_metadata_safe
+    except Exception:
+        pass
+except Exception:
+    pass
+
 
 # ─── APPLE DRIVER CHECK ─────────────────────────────────────────────────────
 def _check_apple_driver():
