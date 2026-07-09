@@ -800,7 +800,7 @@ def _get_activation_service():
 @app.route('/api/version')
 def api_version():
     """Kontrola, ze bezi novy build. Otevri v prohlizeci http://localhost:5000/api/version"""
-    return jsonify({'ok': True, 'build': 'supervise-v3',
+    return jsonify({'ok': True, 'build': 'supervise-v4',
                     'endpoints': ['device-activate', 'device-activation-state',
                                   'device-skip-setup', 'device-supervise']})
 
@@ -967,20 +967,6 @@ def api_device_supervise():
         'Locale': locale,
     }
 
-    # helper: nektere metody mobile_config jsou async (vraci coroutine)
-    def _maybe_await(x):
-        try:
-            import asyncio as _a
-            if _a.iscoroutine(x):
-                loop = _a.new_event_loop()
-                try:
-                    return loop.run_until_complete(x)
-                finally:
-                    loop.close()
-        except Exception:
-            pass
-        return x
-
     # 0) vygeneruj supervision identitu (keybag) - self-signed, jako Apple Configurator
     keybag_path = None
     try:
@@ -1007,61 +993,83 @@ def api_device_supervise():
     except Exception as e:
         steps.append({'step': 'generate_identity', 'ok': False, 'error': str(e)})
 
-    # 1) supervise (s vygenerovanou identitou)
-    try:
-        if keybag_path:
-            _maybe_await(mc.supervise(org, keybag_path))
-        else:
-            _maybe_await(mc.supervise(org))
-        steps.append({'step': 'supervise', 'ok': True})
-    except Exception as e:
-        steps.append({'step': 'supervise', 'ok': False, 'error': str(e)})
+    # === vsechny mobile_config operace v JEDNOM event loopu (jinak 'different loop') ===
+    import asyncio as _aio
 
-    # 2) cloud configuration se SkipSetup + jazyk/locale
-    try:
-        _maybe_await(mc.set_cloud_configuration(cloud_cfg))
-        steps.append({'step': 'set_cloud_configuration', 'ok': True})
-    except Exception as e:
-        steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
+    async def _call(m, *a):
+        r = m(*a)
+        if _aio.iscoroutine(r):
+            return await r
+        return r
 
-    # kontrola supervised stavu (metoda je async -> await, nekdy i vnorene)
-    try:
-        import asyncio as _a2
-        cur = mc.get_cloud_configuration()
-        # opakovane rozbal coroutine, dokud neni to slovnik
-        _guard = 0
-        while _a2.iscoroutine(cur) and _guard < 3:
-            _loop = _a2.new_event_loop()
+    async def _flow():
+        # supervise (s vygenerovanou identitou)
+        try:
+            if keybag_path:
+                await _call(mc.supervise, org, keybag_path)
+            else:
+                await _call(mc.supervise, org)
+            steps.append({'step': 'supervise', 'ok': True})
+        except Exception as e:
+            steps.append({'step': 'supervise', 'ok': False, 'error': str(e)})
+        # cloud configuration se SkipSetup + jazyk/locale
+        try:
+            await _call(mc.set_cloud_configuration, cloud_cfg)
+            steps.append({'step': 'set_cloud_configuration', 'ok': True})
+        except Exception as e:
+            steps.append({'step': 'set_cloud_configuration', 'ok': False, 'error': str(e)})
+        # kontrola supervised stavu (IsSupervised)
+        try:
+            cur = await _call(mc.get_cloud_configuration)
+            cur = cur or {}
+            is_sup = bool(cur.get('IsSupervised')) if isinstance(cur, dict) else None
+            steps.append({'step': 'get_cloud_configuration', 'ok': True, 'IsSupervised': is_sup})
+        except Exception as e:
+            steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
+        # erase JEN kdyz vyslovne pozadovano
+        _rdy = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
+        if do_erase and _rdy:
             try:
-                cur = _loop.run_until_complete(cur)
-            finally:
-                _loop.close()
-            _guard += 1
-        cur = cur or {}
-        is_sup = bool(cur.get('IsSupervised')) if isinstance(cur, dict) else None
-        steps.append({'step': 'get_cloud_configuration', 'ok': True, 'IsSupervised': is_sup})
-    except Exception as e:
-        steps.append({'step': 'get_cloud_configuration', 'ok': False, 'error': str(e)})
-
-    # 3) erase JEN kdyz vyslovne pozadovano (telefon na Hello screenu mazat netreba)
-    ready = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
-    if do_erase:
-        if ready:
-            try:
-                _maybe_await(mc.erase_device())
+                await _call(mc.erase_device)
                 steps.append({'step': 'erase_device', 'ok': True})
             except Exception as e:
                 steps.append({'step': 'erase_device', 'ok': False, 'error': str(e)})
-        else:
-            steps.append({'step': 'erase_device', 'ok': False,
-                          'error': 'PRESKOCENO - supervise/config neprosel, telefon NEMAZU'})
+
+    _loop = _aio.new_event_loop()
+    try:
+        _aio.set_event_loop(_loop)
+        _loop.run_until_complete(_flow())
+    finally:
+        try:
+            _loop.close()
+        except Exception:
+            pass
+        _aio.set_event_loop(None)
+
+    ready = any(s.get('step') in ('supervise', 'set_cloud_configuration') and s.get('ok') for s in steps)
 
     # 4) restart, aby Setup Assistant znovu nacetl konfiguraci a preskocil setup
     if do_restart and ready:
         try:
             from pymobiledevice3.services.diagnostics import DiagnosticsService
             ds = DiagnosticsService(ld)
-            _maybe_await(ds.restart())
+
+            async def _do_restart():
+                r = ds.restart()
+                if _aio.iscoroutine(r):
+                    return await r
+                return r
+
+            _l2 = _aio.new_event_loop()
+            try:
+                _aio.set_event_loop(_l2)
+                _l2.run_until_complete(_do_restart())
+            finally:
+                try:
+                    _l2.close()
+                except Exception:
+                    pass
+                _aio.set_event_loop(None)
             steps.append({'step': 'restart', 'ok': True})
         except Exception as e:
             steps.append({'step': 'restart', 'ok': False, 'error': str(e)})
