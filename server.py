@@ -791,7 +791,7 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'extended-hardware-discovery-v18',
+    return jsonify({'ok': True, 'build': 'diagnostics-relay-sensor-discovery-v19',
                     'endpoints': ['activation-diag']})
 
 @app.route('/api/activation-diag', methods=['POST'])
@@ -1494,6 +1494,211 @@ def api_extended_hardware_discovery(udid):
         return jsonify({
             "ok": False, "probe": "extended-hardware-discovery-v18",
             "udid": udid, "error": f"{type(exc).__name__}: {exc}"
+        }), 200
+
+
+
+# ─── V19 DIAGNOSTICS RELAY / PEARL / SENSOR DISCOVERY ────────────────────────
+# CAP2 reconstruction showed that 3uTools repeatedly uses Apple's diagnostics
+# relay through usbmux. This probe therefore stays on the same service and tests
+# raw diagnostics requests + known Apple codenames instead of guessing another
+# USB protocol.
+_V19_EXPECTED = {
+    "distance_sensor": "FWP8311CBQ1H6CW20",
+    "ambient_light_sensor": "3E-85DF2320",
+    "vibrator_number": "FTN838245WQJGJN84+XMAYM1",
+}
+
+_V19_MG_KEYS = [
+    "RosalineSerialNumber",
+    "SavageSerialNumber",
+    "YonkersSerialNumber",
+    "ScreenSerialNumber",
+    "WirelessBoardSnum",
+    "VibratorCapability",
+    "ambient-light-sensor",
+    "prox-sensor",
+    "proximity-sensor",
+    "haptics",
+    "calibration",
+    "SysCfg",
+    "SysCfgDict",
+]
+
+_V19_NODE_NAMES = [
+    "rosaline", "Rosaline", "savage", "Savage", "yonkers", "Yonkers",
+    "prox", "proximity", "als", "ambient-light-sensor",
+    "haptics", "vibrator", "taptic", "AppleH10CamIn", "AppleH10PearlCam",
+    "AppleCLCD", "AppleSmartBattery",
+]
+
+def _v19_norm(v):
+    return re.sub(r"[^A-Z0-9+]", "", str(v).upper())
+
+def _v19_safe(v, max_binary=32768):
+    if isinstance(v, (bytes, bytearray, memoryview)):
+        raw = bytes(v)
+        cut = raw[:max_binary]
+        return {
+            "_type": "bytes",
+            "length": len(raw),
+            "hex": cut.hex(),
+            "ascii": cut.decode("ascii", errors="replace").replace("\x00", "\\0"),
+            "truncated": len(raw) > max_binary,
+        }
+    if isinstance(v, dict):
+        return {str(k): _v19_safe(x, max_binary) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_v19_safe(x, max_binary) for x in v]
+    if v is None or isinstance(v, (str, int, float, bool)):
+        return v
+    return str(v)
+
+def _v19_walk(v, path="$"):
+    rows = []
+    if isinstance(v, dict):
+        for k, child in v.items():
+            p = f"{path}.{k}"
+            rows.append((p, str(k), child))
+            rows.extend(_v19_walk(child, p))
+    elif isinstance(v, (list, tuple)):
+        for i, child in enumerate(v):
+            rows.extend(_v19_walk(child, f"{path}[{i}]"))
+    return rows
+
+async def _v19_sensor_discovery_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls, exact_hits, candidates = {}, [], [], []
+    expected = {k: _v19_norm(v) for k, v in _V19_EXPECTED.items()}
+    tokens = ("rosaline", "savage", "yonkers", "dist", "prox", "ambient",
+              "light", "als", "vibr", "haptic", "taptic", "serial",
+              "calibration", "syscfg")
+
+    def scan(label, obj):
+        for path, key, value in _v19_walk(obj):
+            forms = []
+            if isinstance(value, (bytes, bytearray, memoryview)):
+                raw = bytes(value)
+                forms = [("bytes_hex", raw.hex()),
+                         ("bytes_ascii", raw.decode("ascii", errors="ignore").strip("\x00"))]
+            elif isinstance(value, (str, int, float, bool)):
+                forms = [("scalar", str(value))]
+            for form, rendered in forms:
+                norm = _v19_norm(rendered)
+                for goal, needle in expected.items():
+                    if needle and needle in norm:
+                        exact_hits.append({
+                            "goal": goal, "expected": _V19_EXPECTED[goal],
+                            "source": label, "path": path, "key": key,
+                            "form": form, "value": rendered,
+                        })
+                hay = f"{path} {key}".lower()
+                if any(t in hay for t in tokens):
+                    candidates.append({
+                        "source": label, "path": path, "key": key,
+                        "form": form, "value": rendered,
+                    })
+
+    async def call(label, fn):
+        try:
+            result = fn()
+            if inspect.isawaitable(result):
+                result = await result
+            calls.append({"source": label, "ok": result is not None,
+                          "result_type": type(result).__name__})
+            if result is not None:
+                scan(label, result)
+            return result
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            calls.append({"source": label, "ok": False, "error": err})
+            return None
+
+    # Normal diagnostics report.
+    await call("diagnostics:get_diagnostics", lambda: diag.get_diagnostics())
+
+    # Raw MobileGestalt request: preserve the raw response even when the wrapper
+    # would raise MobileGestaltDeprecated on iOS >= 17.4.
+    await call(
+        "diagnostics:raw_mobilegestalt",
+        lambda: diag._send_recv({
+            "Request": "MobileGestalt",
+            "MobileGestaltKeys": _V19_MG_KEYS,
+        })
+    )
+
+    # Query each key separately too; some private relay implementations behave
+    # differently for a small key set.
+    for key in _V19_MG_KEYS:
+        await call(
+            f"diagnostics:raw_mobilegestalt:{key}",
+            lambda key=key: diag._send_recv({
+                "Request": "MobileGestalt",
+                "MobileGestaltKeys": [key],
+            })
+        )
+
+    # DeviceTree/IOService planes and Apple codenames.
+    for plane in ("IODeviceTree", "IOService", "IOPower"):
+        await call(f"ioregistry:plane:{plane}",
+                   lambda plane=plane: diag.ioregistry(plane=plane))
+
+    for name in _V19_NODE_NAMES:
+        await call(f"ioregistry:name:{name}",
+                   lambda name=name: diag.ioregistry(name=name))
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    def dedup(items, fields):
+        seen, out = set(), []
+        for item in items:
+            ident = tuple(str(item.get(f)) for f in fields)
+            if ident not in seen:
+                seen.add(ident)
+                out.append(item)
+        return out
+
+    exact_hits = dedup(exact_hits, ("goal", "source", "path", "form", "value"))
+    candidates = dedup(candidates, ("source", "path", "key", "form", "value"))
+
+    return {
+        "ok": True,
+        "probe": "diagnostics-relay-sensor-discovery-v19",
+        "read_only": True,
+        "udid": udid,
+        "capture_conclusion": "CAP2 shows 3uTools using usbmux + Apple diagnostics relay; service payload is TLS-encrypted",
+        "expected": _V19_EXPECTED,
+        "mobilegestalt_keys": _V19_MG_KEYS,
+        "exact_value_hits": exact_hits,
+        "candidates": candidates[:2500],
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "exact_value_hits": len(exact_hits),
+            "candidates": len(candidates),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+@app.route('/api/diagnostics-relay-sensor-discovery/<udid>', methods=['GET'])
+def api_v19_sensor_discovery(udid):
+    try:
+        result = _run_async_isolated(_v19_sensor_discovery_collect(udid), timeout=300)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "probe": "diagnostics-relay-sensor-discovery-v19",
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
         }), 200
 
 
