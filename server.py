@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'als-prox-storage-probe-v31',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe', 'v31-sensor-storage-probe']})
+    return jsonify({'ok': True, 'build': 'exact-sensor-forensic-v32',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe', 'v31-sensor-storage-probe', 'v32-exact-sensor-forensic']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1665,6 +1665,213 @@ def api_v31_sensor_storage_probe(udid):
     except Exception as exc:
         return jsonify({"ok": False, "probe": "als-prox-storage-probe-v31",
                         "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
+
+
+# ─── V32 EXACT SENSOR FORENSIC SCANNER ──────────────────────────────────────
+# READ-ONLY. Exact reference matching only; prints searched values explicitly.
+_V32_DEFAULT_ALS_REF = "0311133F6B07"
+
+def _v32_patterns(ref):
+    ref = str(ref or "").strip()
+    compact = re.sub(r"[^A-Fa-f0-9]", "", ref)
+    out = []
+    def add(name, raw):
+        if raw and not any(x[1] == raw for x in out):
+            out.append((name, raw))
+    add("ascii", ref.encode("ascii", errors="ignore"))
+    add("ascii_upper", ref.upper().encode("ascii", errors="ignore"))
+    add("ascii_lower", ref.lower().encode("ascii", errors="ignore"))
+    try:
+        rawhex = bytes.fromhex(compact)
+        add("hex_bytes", rawhex)
+        add("hex_bytes_reversed", rawhex[::-1])
+        add("hex_nibble_reversed", bytes.fromhex(compact[::-1]))
+    except Exception:
+        pass
+    add("utf16le", ref.encode("utf-16-le"))
+    add("utf16be", ref.encode("utf-16-be"))
+    return out
+
+def _v32_leaf_bytes(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value), "bytes"
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="ignore"), "string"
+    if isinstance(value, int) and value >= 0:
+        n = max(1, (value.bit_length() + 7) // 8)
+        return value.to_bytes(n, "little"), "integer_le"
+    return None, None
+
+def _v32_walk(obj, path="$", depth=0):
+    if depth > 100:
+        return
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            p = f"{path}.{key}"
+            if isinstance(value, (dict, list, tuple)):
+                yield from _v32_walk(value, p, depth + 1)
+            else:
+                yield p, str(key), value
+    elif isinstance(obj, (list, tuple)):
+        for i, value in enumerate(obj):
+            p = f"{path}[{i}]"
+            if isinstance(value, (dict, list, tuple)):
+                yield from _v32_walk(value, p, depth + 1)
+            else:
+                yield p, str(i), value
+
+async def _v32_exact_sensor_forensic_collect(udid, als_ref=None, distance_ref=None):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    refs = {
+        "ambient_light_sensor": als_ref or _V32_DEFAULT_ALS_REF,
+    }
+    if distance_ref:
+        refs["distance_sensor"] = distance_ref
+
+    searched_values = {}
+    patterns = {}
+    for goal, ref in refs.items():
+        pats = _v32_patterns(ref)
+        patterns[goal] = pats
+        searched_values[goal] = {
+            "reference": ref,
+            "patterns": [{"transform": name, "hex": raw.hex().upper(),
+                          "length": len(raw)} for name, raw in pats]
+        }
+
+    calls, errors, hits, interesting = [], {}, [], []
+    targets = (
+        "als", "prox", "AppleProxHIDEventDriver", "AppleALSDriver",
+        "AppleAmbientLightSensor", "AppleHIDALSService", "AppleProxDriver",
+        "AppleProximitySensor", "AppleSPU", "AppleSPUHIDDriver",
+        "AppleAOP", "AppleAOPAudio", "AppleHIDEventDriver"
+    )
+
+    sources = []
+    async def fetch(source, **kwargs):
+        try:
+            obj = diag.ioregistry(**kwargs)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            ok = isinstance(obj, (dict, list, tuple)) and bool(obj)
+            calls.append({"source": source, "ok": ok,
+                          "result_type": type(obj).__name__})
+            if ok:
+                sources.append((source, obj))
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[source] = err
+            calls.append({"source": source, "ok": False, "error": err})
+
+    for plane in ("IOService", "IODeviceTree", "IOPower"):
+        await fetch(f"ioregistry:plane:{plane}", plane=plane)
+    for target in targets:
+        await fetch(f"ioregistry:name:{target}", name=target)
+
+    # Also scan lockdown domains/blobs that may contain calibration data.
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        if isinstance(av, dict):
+            sources.append(("lockdown:all_values", av))
+            calls.append({"source":"lockdown:all_values","ok":True,
+                          "result_type":type(av).__name__})
+    except Exception as exc:
+        errors["lockdown:all_values"] = f"{type(exc).__name__}: {exc}"
+
+    for source, obj in sources:
+        for path, key, value in _v32_walk(obj):
+            raw, value_type = _v32_leaf_bytes(value)
+            if raw is None:
+                continue
+            exact_here = []
+            for goal, pats in patterns.items():
+                for transform, needle in pats:
+                    if not needle:
+                        continue
+                    start = 0
+                    while True:
+                        offset = raw.find(needle, start)
+                        if offset < 0:
+                            break
+                        exact_here.append({
+                            "goal": goal, "reference": refs[goal],
+                            "transform": transform, "offset": offset,
+                            "needle_hex": needle.hex().upper()
+                        })
+                        start = offset + 1
+            if exact_here:
+                hits.append({
+                    "source": source, "path": path, "key": key,
+                    "value_type": value_type, "raw_length": len(raw),
+                    "raw_hex": raw[:32768].hex().upper(),
+                    "ascii": raw[:32768].decode("ascii", errors="replace").replace("\x00","\\0"),
+                    "exact_hits": exact_here,
+                })
+
+            norm = _v29_norm_key(f"{path} {key}")
+            tokens = [t for t in ("als","ambient","light","prox","proximity",
+                                  "distance","sensor","calib","serial","module",
+                                  "factory","vendor","saca") if t in norm]
+            if tokens and len(raw) >= 4:
+                interesting.append({
+                    "source": source, "path": path, "key": key,
+                    "matched_tokens": tokens, "value_type": value_type,
+                    "raw_length": len(raw),
+                    "raw_hex": raw[:8192].hex().upper(),
+                    "ascii": raw[:8192].decode("ascii", errors="replace").replace("\x00","\\0"),
+                })
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    interesting.sort(key=lambda x: (-len(x["matched_tokens"]), -x["raw_length"], x["source"], x["path"]))
+    return {
+        "ok": True,
+        "probe": "exact-sensor-forensic-v32",
+        "read_only": True,
+        "udid": udid,
+        "searched_values": searched_values,
+        "exact_hits": hits,
+        "interesting_blobs": interesting[:1000],
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "searched_references": len(refs),
+            "exact_hits": len(hits),
+            "interesting_blobs": len(interesting),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+@app.route('/api/v32-exact-sensor-forensic/<udid>', methods=['GET'])
+def api_v32_exact_sensor_forensic(udid):
+    als_ref = (request.args.get("als_ref") or _V32_DEFAULT_ALS_REF).strip()
+    distance_ref = (request.args.get("distance_ref") or "").strip() or None
+    try:
+        result = _run_async_isolated(
+            _v32_exact_sensor_forensic_collect(
+                udid, als_ref=als_ref, distance_ref=distance_ref
+            ), timeout=300
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "exact-sensor-forensic-v32",
+            "udid": udid, "searched_values": {
+                "ambient_light_sensor": als_ref,
+                "distance_sensor": distance_ref,
+            },
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
 
 # ─── DOT / TRUEDEPTH PROJECTOR EX-FACTORY DISCOVERY ─────────────────────────
 _DOT_PROJECTOR_TARGETS = (
