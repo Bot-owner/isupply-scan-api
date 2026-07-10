@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'apple-diagnostic-data-syscfg-als-extractor-v23',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data']})
+    return jsonify({'ok': True, 'build': 'syscfg-record-als-decoder-v24',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -2746,6 +2746,230 @@ def api_v23_apple_diagnostic_data(udid):
             "probe": "apple-diagnostic-data-syscfg-als-extractor-v23",
             "udid": udid,
             "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V24 SYSCFG RECORD / ALS VALUE DECODER ───────────────────────────────────
+# READ-ONLY. V23 potvrdil 131072B AppleDiagnosticDataSysCfg v
+# AppleDiagnosticDataAccessReadOnly. V24 nehledata jen ASCII string: rozebira
+# SysCfg po record/slot hranicich a zkousi binarni reprezentace ALS identifikatoru.
+
+_V24_ALS_EXPECTED = "3E-85DF2320"
+
+def _v24_als_parts(value=_V24_ALS_EXPECTED):
+    m = re.fullmatch(r"([0-9A-Fa-f]{2})-([0-9A-Fa-f]{8})", value.strip())
+    if not m:
+        return None
+    return int(m.group(1), 16), int(m.group(2), 16)
+
+def _v24_candidate_forms(prefix, number):
+    import struct
+    p = bytes([prefix])
+    be = struct.pack(">I", number)
+    le = struct.pack("<I", number)
+    p16be = struct.pack(">H", prefix)
+    p16le = struct.pack("<H", prefix)
+    forms = {
+        "prefix_u8+u32be": p + be,
+        "prefix_u8+u32le": p + le,
+        "u32be+prefix_u8": be + p,
+        "u32le+prefix_u8": le + p,
+        "prefix_u16be+u32be": p16be + be,
+        "prefix_u16le+u32le": p16le + le,
+        "u32be": be,
+        "u32le": le,
+        "hex5": bytes.fromhex(f"{prefix:02X}{number:08X}"),
+        "hex5_reversed": bytes.fromhex(f"{prefix:02X}{number:08X}")[::-1],
+    }
+    return forms
+
+def _v24_ascii_tag(raw):
+    if not raw:
+        return None
+    txt = raw.decode("ascii", errors="ignore").strip("\x00").strip()
+    if 2 <= len(txt) <= 16 and all(32 <= ord(c) <= 126 for c in txt):
+        return txt
+    return None
+
+def _v24_record_views(raw):
+    """Generuje vice pohledu na SysCfg. V23 ukazal silnou 20B periodicitu tagu."""
+    views = []
+    # Pevne sloty. Offset 4 je dulezity: prvni pozorovany tag #BLM zacina na 24.
+    for slot in (16, 20, 24, 32, 64):
+        for phase in range(slot):
+            rows = []
+            for off in range(phase, len(raw) - slot + 1, slot):
+                chunk = raw[off:off + slot]
+                printable = sum(1 for b in chunk if 32 <= b <= 126)
+                if printable >= 3:
+                    rows.append((off, chunk))
+            if rows:
+                views.append((f"slot{slot}:phase{phase}", rows))
+
+    # Dynamicke tag-like runy; payload je kontext do dalsiho tagu, max 256 B.
+    tag_re = re.compile(rb"(?<![A-Za-z0-9])[#A-Za-z][A-Za-z0-9_]{2,15}")
+    matches = list(tag_re.finditer(raw))
+    rows = []
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else min(len(raw), m.start() + 256)
+        end = min(end, m.start() + 256)
+        rows.append((m.start(), raw[m.start():end]))
+    if rows:
+        views.append(("dynamic-tags", rows))
+    return views
+
+def _v24_decode_als_from_blob(raw):
+    parts = _v24_als_parts()
+    if not parts:
+        return [], []
+    prefix, number = parts
+    forms = _v24_candidate_forms(prefix, number)
+    exact = []
+    number_hits = []
+
+    for name, needle in forms.items():
+        start = 0
+        while needle:
+            pos = raw.find(needle, start)
+            if pos < 0:
+                break
+            lo, hi = max(0, pos - 32), min(len(raw), pos + len(needle) + 32)
+            item = {
+                "form": name, "offset": pos, "length": len(needle),
+                "context_hex": raw[lo:hi].hex(),
+                "context_ascii": raw[lo:hi].decode("ascii", errors="replace").replace("\x00", "\\0"),
+            }
+            if "prefix" in name or name.startswith("hex5"):
+                exact.append(item)
+            else:
+                number_hits.append(item)
+            start = pos + 1
+    return exact, number_hits
+
+def _v24_rank_records(raw, number_hits):
+    hit_offsets = [x["offset"] for x in number_hits]
+    ranked = []
+    seen = set()
+    tokens = ("als", "ambient", "light", "cal", "sensor", "lcia", "lcig",
+              "came", "lcon", "gclc", "shlc", "brts")
+    for view, rows in _v24_record_views(raw):
+        for off, chunk in rows:
+            tag = _v24_ascii_tag(chunk[:16])
+            ascii_text = chunk.decode("ascii", errors="ignore").replace("\x00", "")
+            near = min((abs(off - h) for h in hit_offsets), default=10**9)
+            score = 0
+            low = ascii_text.lower()
+            score += sum(12 for t in tokens if t in low)
+            if near <= 8: score += 100
+            elif near <= 32: score += 60
+            elif near <= 128: score += 25
+            printable = sum(1 for b in chunk if 32 <= b <= 126)
+            score += min(10, printable // 2)
+            if score <= 0:
+                continue
+            ident = (off, chunk)
+            if ident in seen:
+                continue
+            seen.add(ident)
+            ranked.append({
+                "view": view, "offset": off, "length": len(chunk), "tag": tag,
+                "score": score, "nearest_number_hit": None if near == 10**9 else near,
+                "hex": chunk.hex(), "ascii": ascii_text,
+            })
+    ranked.sort(key=lambda x: (-x["score"], x["offset"]))
+    return ranked[:1000]
+
+async def _v24_syscfg_als_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls = {}, []
+    syscfg = None
+    source = None
+
+    try:
+        for target in _V23_TARGETS:
+            try:
+                obj = diag.ioregistry(name=target)
+                if inspect.isawaitable(obj):
+                    obj = await obj
+                calls.append({"source": f"ioregistry:name:{target}", "ok": bool(obj)})
+                if isinstance(obj, dict):
+                    candidate = obj.get("AppleDiagnosticDataSysCfg")
+                    if isinstance(candidate, (bytes, bytearray, memoryview)):
+                        syscfg = bytes(candidate)
+                        source = f"ioregistry:name:{target}::$.AppleDiagnosticDataSysCfg"
+                        break
+                    # Rekurzivni fallback, kdyby Apple property presunul.
+                    for path, key, value in _v20_walk(obj):
+                        if str(key).lower() == "applediagnosticdatasyscfg" and isinstance(value, (bytes, bytearray, memoryview)):
+                            syscfg = bytes(value)
+                            source = f"ioregistry:name:{target}::{path}"
+                            break
+                if syscfg is not None:
+                    break
+            except Exception as exc:
+                errors[f"ioregistry:name:{target}"] = f"{type(exc).__name__}: {exc}"
+                calls.append({"source": f"ioregistry:name:{target}", "ok": False,
+                              "error": errors[f"ioregistry:name:{target}"]})
+    finally:
+        try:
+            cr = diag.close()
+            if inspect.isawaitable(cr):
+                await cr
+        except Exception:
+            pass
+
+    if syscfg is None:
+        return {"ok": False, "probe": "syscfg-record-als-decoder-v24",
+                "udid": udid, "expected_als": _V24_ALS_EXPECTED,
+                "error": "AppleDiagnosticDataSysCfg nebyl nalezen.",
+                "calls": calls, "errors": errors}
+
+    exact, number_hits = _v24_decode_als_from_blob(syscfg)
+    ranked = _v24_rank_records(syscfg, number_hits)
+
+    # Pokud je nalezen kompletni binarni tvar, vrat rovnou dekodovanou 3uTools hodnotu.
+    decoded = _V24_ALS_EXPECTED if exact else None
+    confidence = "exact_binary" if exact else ("number_payload_found" if number_hits else "record_candidates_only")
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v24", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+    with open(os.path.join(capture_dir, "AppleDiagnosticDataSysCfg.bin"), "wb") as fh:
+        fh.write(syscfg)
+
+    result = {
+        "ok": True, "probe": "syscfg-record-als-decoder-v24", "read_only": True,
+        "udid": udid, "source": source, "syscfg_length": len(syscfg),
+        "expected_als": _V24_ALS_EXPECTED,
+        "ambient_light_sensor": decoded,
+        "confidence": confidence,
+        "exact_binary_hits": exact,
+        "number_payload_hits": number_hits,
+        "ranked_records": ranked,
+        "capture_dir": capture_dir,
+        "calls": calls, "errors": errors,
+        "summary": {
+            "exact_binary_hits": len(exact),
+            "number_payload_hits": len(number_hits),
+            "ranked_records": len(ranked),
+        },
+    }
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+    return result
+
+@app.route('/api/v24-syscfg-als-decode/<udid>', methods=['GET'])
+def api_v24_syscfg_als_decode(udid):
+    try:
+        result = _run_async_isolated(_v24_syscfg_als_collect(udid), timeout=900)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "syscfg-record-als-decoder-v24",
+            "udid": udid, "error": f"{type(exc).__name__}: {exc}",
         }), 200
 
 
