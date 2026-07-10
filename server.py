@@ -1580,6 +1580,49 @@ def api_prox_discovery(udid):
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
 
 
+# ─── RAW NODE DUMP ───────────────────────────────────────────────────────────
+# READ-ONLY. Vypise syrovy obsah pojmenovanych IORegistry uzlu. Pouziti pro
+# zjisteni, jak se na dane generaci/iOS jmenuje displejovy uzel a kde lezi
+# Panel_ID (napr. na 15 Pro / iOS 26 AppleCLCD nevraci data). Priklad:
+#   /api/node-dump/<udid>?names=AppleCLCD,AppleDCP,disp0,AppleH16PPipe,AppleMobileCLCD
+_NODE_DUMP_DEFAULT = ("AppleCLCD", "AppleCLCD2", "AppleDCP", "AppleDCPDPTX",
+                      "AppleM2ScalerCSCDriver", "disp0", "AppleMobileCLCD",
+                      "IOMobileFramebuffer", "AppleH16PPipe", "AppleH13PPipe")
+
+async def _node_dump_collect(udid, names):
+    import inspect
+    out = {}
+    ld, diag = await _open_diag(udid)
+    for target in names:
+        rec = {"ok": False}
+        try:
+            obj = diag.ioregistry(name=target)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            rec["ok"] = bool(obj)
+            rec["content"] = _v30_safe(obj) if obj else None
+        except Exception as exc:
+            rec["error"] = f"{type(exc).__name__}: {exc}"
+        out[target] = rec
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+    return {"ok": True, "udid": udid, "probe": "node-dump", "nodes": out}
+
+@app.route('/api/node-dump/<udid>', methods=['GET'])
+def api_node_dump(udid):
+    names_arg = request.args.get('names')
+    names = tuple(n.strip() for n in names_arg.split(',') if n.strip()) if names_arg else _NODE_DUMP_DEFAULT
+    try:
+        result = _run_async_isolated(_node_dump_collect(udid, names), timeout=120)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
 
 
 # ─── V30 COMPONENT STORAGE MAP PROBE ─────────────────────────────────────────
