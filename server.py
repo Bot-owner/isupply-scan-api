@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'syscfg-20byte-record-map-v25',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map']})
+    return jsonify({'ok': True, 'build': 'syscfg-btnc-directory-v26',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -3189,6 +3189,268 @@ def api_v25_syscfg_record_map(udid):
     except Exception as exc:
         return jsonify({
             "ok": False, "probe": "syscfg-20byte-record-map-v25",
+            "udid": udid, "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V26 SYSCFG BTNC DIRECTORY / POINTED-BLOB DECODER ────────────────────────
+# V25 odhalil skutecny vyznam velke casti 20B zaznamu:
+#   BTNC + [4B child tag] + [u32 size] + [u32 offset] + [u32 flags]
+# Napr. payload 6c4354473c00000014d30100ffffffff =
+#   child=lCTG, size=60, offset=119572, flags=0xffffffff.
+# V26 proto prestava povazovat BTNC payload za "nahodna cisla" a dereferencuje
+# jeho ukazatele do AppleDiagnosticDataSysCfg. READ-ONLY.
+
+def _v26_ascii4(raw4):
+    try:
+        return raw4.decode("ascii")
+    except Exception:
+        return raw4.decode("ascii", errors="replace")
+
+def _v26_expected_patterns():
+    import struct
+    text_value = _V24_ALS_EXPECTED
+    prefix_s, number_s = text_value.split("-", 1)
+    prefix = int(prefix_s, 16)
+    number = int(number_s, 16)
+    compact = bytes.fromhex(prefix_s + number_s)
+    return {
+        "ascii_exact": text_value.encode("ascii"),
+        "ascii_lower": text_value.lower().encode("ascii"),
+        "ascii_compact": (prefix_s + number_s).encode("ascii"),
+        "binary_5b": compact,
+        "number_u32_be": struct.pack(">I", number),
+        "number_u32_le": struct.pack("<I", number),
+        "prefix_u8": bytes([prefix]),
+        "prefix_u16_be": struct.pack(">H", prefix),
+        "prefix_u16_le": struct.pack("<H", prefix),
+    }
+
+def _v26_find_all(haystack, needle):
+    hits = []
+    if not needle:
+        return hits
+    pos = 0
+    while True:
+        pos = haystack.find(needle, pos)
+        if pos < 0:
+            break
+        hits.append(pos)
+        pos += 1
+    return hits
+
+def _v26_parse_btnc_directory(raw):
+    entries = []
+    invalid = []
+    # Potvrzeny record table z V25 zacina na 24 a ma stride 20.
+    for rec_off in range(24, len(raw) - 19, 20):
+        rec = raw[rec_off:rec_off+20]
+        if rec[:4] != b"BTNC":
+            continue
+        payload = rec[4:]
+        child_raw = payload[:4]
+        size = int.from_bytes(payload[4:8], "little", signed=False)
+        target_off = int.from_bytes(payload[8:12], "little", signed=False)
+        flags = int.from_bytes(payload[12:16], "little", signed=False)
+        child = _v26_ascii4(child_raw)
+        valid = (
+            all(32 <= b <= 126 for b in child_raw)
+            and size > 0
+            and target_off < len(raw)
+            and target_off + size <= len(raw)
+        )
+        item = {
+            "record_offset": rec_off,
+            "child_tag": child,
+            "child_tag_hex": child_raw.hex(),
+            "size": size,
+            "target_offset": target_off,
+            "target_end": target_off + size,
+            "flags_u32": flags,
+            "flags_hex": f"{flags:08x}",
+            "valid_pointer": valid,
+        }
+        (entries if valid else invalid).append(item)
+    return entries, invalid
+
+def _v26_blob_preview(blob, limit=128):
+    import base64
+    preview = blob[:limit]
+    return {
+        "hex": preview.hex(),
+        "ascii": preview.decode("ascii", errors="replace").replace("\x00", "\\0"),
+        "base64": base64.b64encode(preview).decode("ascii"),
+        "preview_bytes": len(preview),
+    }
+
+async def _v26_syscfg_btnc_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls = {}, []
+    syscfg = None
+    source = None
+    try:
+        for target in _V23_TARGETS:
+            try:
+                obj = diag.ioregistry(name=target)
+                if inspect.isawaitable(obj):
+                    obj = await obj
+                calls.append({"source": f"ioregistry:name:{target}", "ok": bool(obj)})
+                if isinstance(obj, dict):
+                    for path, key, value in _v20_walk(obj):
+                        if str(key).lower() == "applediagnosticdatasyscfg" and isinstance(value, (bytes, bytearray, memoryview)):
+                            syscfg = bytes(value)
+                            source = f"ioregistry:name:{target}::{path}"
+                            break
+                if syscfg is not None:
+                    break
+            except Exception as exc:
+                errors[f"ioregistry:name:{target}"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            cr = diag.close()
+            if inspect.isawaitable(cr):
+                await cr
+        except Exception:
+            pass
+
+    if syscfg is None:
+        return {
+            "ok": False, "probe": "syscfg-btnc-directory-v26", "udid": udid,
+            "error": "AppleDiagnosticDataSysCfg nebyl nalezen.",
+            "calls": calls, "errors": errors,
+        }
+
+    entries, invalid = _v26_parse_btnc_directory(syscfg)
+    patterns = _v26_expected_patterns()
+    decoded = []
+    all_hits = []
+
+    for entry in entries:
+        blob = syscfg[entry["target_offset"]:entry["target_end"]]
+        hit_map = {}
+        for name, needle in patterns.items():
+            positions = _v26_find_all(blob, needle)
+            # Samotny prefix je velmi slaby signal; ukladame ho, ale neoznacujeme
+            # jako exact ALS match.
+            if positions:
+                hit_map[name] = positions
+                for rel in positions:
+                    all_hits.append({
+                        "child_tag": entry["child_tag"],
+                        "pattern": name,
+                        "relative_offset": rel,
+                        "absolute_offset": entry["target_offset"] + rel,
+                        "weak_prefix_only": name.startswith("prefix_"),
+                    })
+
+        item = dict(entry)
+        item["preview"] = _v26_blob_preview(blob)
+        item["expected_pattern_hits"] = hit_map
+        item["exact_als_candidate"] = any(
+            k in hit_map for k in (
+                "ascii_exact", "ascii_lower", "ascii_compact",
+                "binary_5b", "number_u32_be", "number_u32_le",
+            )
+        )
+        decoded.append(item)
+
+    exact_candidates = [x for x in decoded if x["exact_als_candidate"]]
+
+    # Seradime take tagy, ktere nazvem vypadaji jako light/display/sensor/cal.
+    semantic_tokens = ("ALS", "LIG", "LIT", "LUX", "LC", "DISP", "BRT", "CAL", "SNS", "SEN")
+    semantic = []
+    for item in decoded:
+        upper = item["child_tag"].upper()
+        reasons = [t for t in semantic_tokens if t in upper]
+        if reasons:
+            row = dict(item)
+            row["semantic_reasons"] = reasons
+            semantic.append(row)
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v26", f"{safe_udid}_{stamp}")
+    blobs_dir = os.path.join(capture_dir, "btnc_blobs")
+    os.makedirs(blobs_dir, exist_ok=True)
+
+    with open(os.path.join(capture_dir, "AppleDiagnosticDataSysCfg.bin"), "wb") as fh:
+        fh.write(syscfg)
+
+    # Uloz vsechny validni pointed blobs samostatne pro offline diff vice telefonu.
+    filename_counts = {}
+    blob_manifest = []
+    for item in decoded:
+        tag_safe = re.sub(r"[^A-Za-z0-9._-]", "_", item["child_tag"])
+        n = filename_counts.get(tag_safe, 0)
+        filename_counts[tag_safe] = n + 1
+        filename = f"{item['record_offset']:06d}_{tag_safe}_{n}.bin"
+        blob = syscfg[item["target_offset"]:item["target_end"]]
+        with open(os.path.join(blobs_dir, filename), "wb") as fh:
+            fh.write(blob)
+        blob_manifest.append({
+            "file": filename, "child_tag": item["child_tag"],
+            "record_offset": item["record_offset"],
+            "target_offset": item["target_offset"], "size": item["size"],
+        })
+
+    result = {
+        "ok": True,
+        "probe": "syscfg-btnc-directory-v26",
+        "read_only": True,
+        "udid": udid,
+        "source": source,
+        "syscfg_length": len(syscfg),
+        "expected_als": _V24_ALS_EXPECTED,
+        "btnc_layout": {
+            "outer_tag": "BTNC",
+            "payload": "child_tag[4] + size_u32_le + target_offset_u32_le + flags_u32_le",
+        },
+        "valid_entries": len(entries),
+        "invalid_btnc_records": len(invalid),
+        "entries": decoded,
+        "semantic_candidates": semantic,
+        "exact_als_candidates": exact_candidates,
+        "all_pattern_hits": all_hits,
+        "invalid_entries": invalid[:200],
+        "capture_dir": capture_dir,
+        "files": {
+            "syscfg_bin": "AppleDiagnosticDataSysCfg.bin",
+            "btnc_blob_dir": "btnc_blobs",
+        },
+        "blob_manifest": blob_manifest,
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "valid_btnc_entries": len(entries),
+            "invalid_btnc_records": len(invalid),
+            "semantic_candidates": len(semantic),
+            "exact_als_candidates": len(exact_candidates),
+            "pattern_hits": len(all_hits),
+        },
+        "conclusion": (
+            "V26 decodes BTNC as a directory entry and dereferences each valid "
+            "child blob. Exact ALS claims require a strong pattern hit; isolated "
+            "0x3E prefix hits remain weak signals only."
+        ),
+    }
+
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+    with open(os.path.join(capture_dir, "btnc_entries.json"), "w", encoding="utf-8") as fh:
+        json.dump(decoded, fh, ensure_ascii=False, indent=2)
+
+    return result
+
+@app.route('/api/v26-syscfg-btnc-directory/<udid>', methods=['GET'])
+def api_v26_syscfg_btnc_directory(udid):
+    try:
+        result = _run_async_isolated(_v26_syscfg_btnc_collect(udid), timeout=900)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "syscfg-btnc-directory-v26",
             "udid": udid, "error": f"{type(exc).__name__}: {exc}",
         }), 200
 
