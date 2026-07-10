@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'component-storage-map-v30',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe']})
+    return jsonify({'ok': True, 'build': 'als-prox-storage-probe-v31',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe', 'v31-sensor-storage-probe']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1485,6 +1485,186 @@ def api_v30_component_map_probe(udid):
             "error": f"{type(exc).__name__}: {exc}",
         }), 200
 
+
+
+# ─── V31 ALS / PROX RAW STORAGE PROBE ───────────────────────────────────────
+# READ-ONLY: cilene mapuje posledni dva senzory (ALS + proximity/distance).
+# Nic nehádá do hlavního reportu. Vrací raw property, HEX/ASCII a transformace,
+# aby šla potvrdit přesná cesta a encoding proti referenční hodnotě z 3uTools.
+_V31_SENSOR_TARGETS = {
+    "ambient_light_sensor": (
+        "als", "AppleALSDriver", "AppleAmbientLightSensor",
+        "AppleHIDALSService", "AppleProxHIDEventDriver"
+    ),
+    "distance_sensor": (
+        "prox", "AppleProxHIDEventDriver", "AppleProxDriver",
+        "AppleProximitySensor", "AppleHIDEventDriver"
+    ),
+}
+
+def _v31_bytes_views(raw):
+    raw = bytes(raw)
+    views = []
+    def add(name, value):
+        if value is None:
+            return
+        text = str(value).strip()
+        if text and not any(x["value"] == text for x in views):
+            views.append({"transform": name, "value": text})
+    add("hex", raw.hex().upper())
+    add("hex_reversed", raw[::-1].hex().upper())
+    for enc in ("ascii", "utf-8", "utf-16-le", "utf-16-be"):
+        try:
+            txt = raw.decode(enc, errors="strict").strip("\x00 \r\n\t")
+            if txt and all(ch.isprintable() for ch in txt):
+                add(enc, txt)
+        except Exception:
+            pass
+    if len(raw) in (2, 4, 8):
+        add("uint_le", int.from_bytes(raw, "little", signed=False))
+        add("uint_be", int.from_bytes(raw, "big", signed=False))
+    return views
+
+def _v31_scalar_views(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _v31_bytes_views(bytes(value))
+    scalar = _component_serial_scalar(value)
+    if scalar is None:
+        return []
+    return [{"transform": "scalar", "value": scalar}]
+
+def _v31_ref_norm(value):
+    return re.sub(r"[^A-Fa-f0-9]", "", str(value or "")).upper()
+
+def _v31_ref_matches(views, refs):
+    hits = []
+    for ref_name, ref_value in refs.items():
+        needle = _v31_ref_norm(ref_value)
+        if len(needle) < 4:
+            continue
+        for view in views:
+            hay = _v31_ref_norm(view.get("value"))
+            if needle and (needle in hay or hay in needle):
+                hits.append({"reference": ref_name, "reference_value": ref_value,
+                             "transform": view.get("transform"), "value": view.get("value")})
+    return hits
+
+async def _v31_sensor_storage_probe_collect(udid, als_ref=None, distance_ref=None):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls, rows = {}, [], []
+    refs = {}
+    if als_ref:
+        refs["als_ref"] = als_ref
+    if distance_ref:
+        refs["distance_ref"] = distance_ref
+
+    def scan(sensor, source, obj):
+        for path, key, value in _v30_walk(obj):
+            # Zachytit vsechny leaf hodnoty v cilovem uzlu, ne jen klice se 'serial'.
+            if isinstance(value, (dict, list, tuple)):
+                continue
+            views = _v31_scalar_views(value)
+            if not views:
+                continue
+            key_norm = _v29_norm_key(key)
+            path_norm = _v29_norm_key(path)
+            score = 0
+            matched = []
+            for token, weight in (("serial", 20), ("module", 10), ("sensor", 8),
+                                  ("prox", 12), ("distance", 12), ("als", 12),
+                                  ("ambient", 12), ("calib", 6), ("id", 3),
+                                  ("factory", 8), ("mfg", 6), ("vendor", 4)):
+                if token in key_norm or token in path_norm:
+                    score += weight; matched.append(token)
+            ref_hits = _v31_ref_matches(views, refs)
+            if ref_hits:
+                score += 100
+            rows.append({
+                "sensor": sensor, "source": source, "path": path, "key": key,
+                "score": score, "matched_tokens": matched,
+                "value": _v30_safe(value, max_binary=16384),
+                "views": views, "reference_hits": ref_hits,
+            })
+
+    for sensor, targets in _V31_SENSOR_TARGETS.items():
+        for target in targets:
+            source = f"ioregistry:name:{target}"
+            try:
+                obj = diag.ioregistry(name=target)
+                if inspect.isawaitable(obj):
+                    obj = await obj
+                calls.append({"sensor": sensor, "source": source, "ok": bool(obj),
+                              "result_type": type(obj).__name__})
+                if obj:
+                    scan(sensor, source, obj)
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}"
+                errors[source] = err
+                calls.append({"sensor": sensor, "source": source, "ok": False, "error": err})
+
+    # Full planes: hledej jen vetve/cesty, jejichz path nebo key vypada jako ALS/prox.
+    for plane in ("IOService", "IODeviceTree"):
+        source = f"ioregistry:plane:{plane}"
+        try:
+            obj = diag.ioregistry(plane=plane)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            calls.append({"sensor": "cross_plane", "source": source, "ok": bool(obj),
+                          "result_type": type(obj).__name__})
+            if obj:
+                for path, key, value in _v30_walk(obj):
+                    hay = _v29_norm_key(path + "." + str(key))
+                    sensor = None
+                    if any(t in hay for t in ("ambientlight", "als", "lightsensor")):
+                        sensor = "ambient_light_sensor"
+                    elif any(t in hay for t in ("proximity", "prox", "distance", "distsens")):
+                        sensor = "distance_sensor"
+                    if sensor and not isinstance(value, (dict, list, tuple)):
+                        scan(sensor, source, {str(key): value})
+        except Exception as exc:
+            errors[source] = f"{type(exc).__name__}: {exc}"
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    dedup = {}
+    for row in rows:
+        ident = (row["sensor"], row["source"], row["path"], row["key"], str(row["value"])[:1000])
+        if ident not in dedup or row["score"] > dedup[ident]["score"]:
+            dedup[ident] = row
+    rows = sorted(dedup.values(), key=lambda x: (-bool(x["reference_hits"]), -x["score"], x["sensor"], x["source"], x["path"]))
+
+    return {
+        "ok": True, "probe": "als-prox-storage-probe-v31", "read_only": True,
+        "udid": udid, "references": refs,
+        "goal": "Find exact raw storage and encoding for ALS and distance/proximity identifiers",
+        "candidates": rows[:4000], "calls": calls, "errors": errors,
+        "summary": {
+            "candidates": len(rows), "reference_hits": sum(len(r["reference_hits"]) for r in rows),
+            "als_candidates": sum(1 for r in rows if r["sensor"] == "ambient_light_sensor"),
+            "distance_candidates": sum(1 for r in rows if r["sensor"] == "distance_sensor"),
+            "calls_total": len(calls), "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+@app.route('/api/v31-sensor-storage-probe/<udid>', methods=['GET'])
+def api_v31_sensor_storage_probe(udid):
+    try:
+        als_ref = (request.args.get('als_ref') or '').strip() or None
+        distance_ref = (request.args.get('distance_ref') or '').strip() or None
+        result = _run_async_isolated(
+            _v31_sensor_storage_probe_collect(udid, als_ref=als_ref, distance_ref=distance_ref),
+            timeout=300
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "probe": "als-prox-storage-probe-v31",
+                        "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
 
 # ─── DOT / TRUEDEPTH PROJECTOR EX-FACTORY DISCOVERY ─────────────────────────
 _DOT_PROJECTOR_TARGETS = (
