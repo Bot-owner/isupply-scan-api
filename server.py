@@ -1097,21 +1097,28 @@ async def _read_hw_sources(udid):
     except Exception as exc:
         errors["lockdown"] = f"{type(exc).__name__}: {exc}"
 
-    async def read_any(label, targets):
+    async def read_all(label, targets):
+        # CROSS-GENERATION: nevybirej prvni truthy node a nezahazuj ostatni.
+        # Ruzne generace maji ruzne nody (napr. XS=AppleH10CamIn vs
+        # 15 Pro=AppleH16CamIn; haptics Callan vs LEAP). Nacteme VSECHNY dostupne
+        # kandidatni nody a vratime je jako seznam. _v29_exact_find /
+        # _component_serial_find prochazeji seznamy rekurzivne, takze exact
+        # property lookup najde spravnou hodnotu bez ohledu na generaci.
+        collected = []
         for target in targets:
             obj = await _read_ioreg(diag, f"{label}:{target}", target, errors)
             if obj:
-                return obj
-        return {}
+                collected.append(obj)
+        return collected
 
-    camera = await read_any("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
-    pearl = await read_any("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
-    clcd = await read_any("display", ("AppleCLCD", "AppleDCP", "AppleM2ScalerCSCDriver"))
-    battery = await read_any("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
-    proximity = await read_any("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
-    als = await read_any("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
-    vibrator = await read_any("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
-    nand = await read_any("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
+    camera = await read_all("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
+    pearl = await read_all("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
+    clcd = await read_all("display", ("AppleCLCD", "AppleDCP", "AppleM2ScalerCSCDriver"))
+    battery = await read_all("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
+    proximity = await read_all("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
+    als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
+    vibrator = await read_all("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
+    nand = await read_all("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
 
     io_service = {}
     try:
@@ -1184,6 +1191,105 @@ def _v29_source_find(source_map, allowed_sources, exact_keys):
             return value, meta
     return None, None
 
+# Panel_ID je dlouhy zretezeny blob (napr. na XS ~250 znaku:
+# "FXT83453QNWJNK593+11015094666161076746750913+...coverglass-serial-number").
+# _v29_serial_like ma tvrdy cap 96 znaku, takze cely Panel_ID zahodi JESTE
+# PREDTIM, nez se stihne oriznout na prvni segment (= display serial). Proto
+# ma display vlastni finder, ktery bere raw hodnotu bez capu, orizne na prvni
+# segment a az potom validuje. Nikdy nesahame do lockdownu (jen display/IOService).
+_PANEL_KEYS = ("Panel_ID", "PanelID", "DisplaySerialNumber",
+               "ScreenSerialNumber", "PanelSerialNumber")
+
+def _panel_first_segment(scalar):
+    if not scalar:
+        return None
+    first = re.split(r"[\s,;|:/+]+", str(scalar).strip(), maxsplit=1)[0].strip()
+    if not first or len(first) < 6 or len(first) > 96:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9.\-]+", first):
+        return None
+    return first
+
+def _v29_panel_find(source):
+    wanted = {_v29_norm_key(k) for k in _PANEL_KEYS}
+    hits = []
+    def walk(obj, path="$", depth=0):
+        if depth > 80:
+            return
+        if isinstance(obj, dict):
+            for key, child in obj.items():
+                p = f"{path}.{key}"
+                if _v29_norm_key(key) in wanted:
+                    seg = _panel_first_segment(_component_serial_scalar(child))
+                    if seg:
+                        hits.append((p, str(key), seg))
+                walk(child, p, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for i, child in enumerate(obj):
+                walk(child, f"{path}[{i}]", depth + 1)
+    walk(source)
+    if not hits:
+        return None, None
+    hits.sort(key=lambda x: (len(x[2]), x[0]))
+    path, key, seg = hits[0]
+    return seg, {"mode": "panel_id", "path": path, "key": key}
+
+
+def _iphone_major(product_type):
+    """Vytahne interni major verzi z ProductType 'iPhoneNN,M' -> NN."""
+    m = re.match(r"iPhone(\d+),", str(product_type or ""))
+    return int(m.group(1)) if m else None
+
+# ── PROXIMITY SLOT: generacni routing ────────────────────────────────────────
+# Jeden fyzicky slot v UI ("Distance Sensor"), ale jeho VYZNAM se lisi generaci:
+#
+#  • iPhone 12 a nizsi (interne <= iPhone13,x): samostatny DISTANCE / proximity
+#    IC. Potvrzeny zdroj: AppleProxHIDEventDriver -> SerialNumber (XS overeno,
+#    napr. FWP8311CBQ1H6CW20).
+#
+#  • iPhone 13 a vyssi (interne >= iPhone14,x): samostatny distance senzor uz
+#    NENI. Proximity/priblizeni resi TrueDepth a hodnota, ktera nas zajima, sedi
+#    na PREDNIM FLEXU (proximity/ALS assembly). Cislo je dulezite kvuli parovani
+#    displeje (True Tone / auto-jas) - proto ho chceme vypisovat. JCID tuto
+#    hodnotu cte (napr. J143292679B1P1W1E na 15 Pro), ale PRESNY IORegistry uzel
+#    zatim NEMAME potvrzeny -> cteme z kandidatnich uzlu; dokud se netrefime,
+#    hlasime "unavailable" (nikdy nehadame, u parovani displeje je falesna
+#    hodnota nebezpecna). Uzel se potvrdi pres /api/prox-discovery.
+_PROX_SLOT_KEY = "distance_sensor"
+
+_PROX_VARIANT_DISTANCE = {
+    "variant": "distance_sensor",
+    "label": "Distance Sensor",
+    "sources": ("proximity", "IOService"),
+    "keys": ("DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
+             "DistSensSerialNumber", "ProxSensorSerialNumber", "SerialNumber"),
+    "note": None,
+}
+_PROX_VARIANT_FRONTFLEX = {
+    "variant": "front_flex_proximity",
+    "label": "Proximity senzor (přední flex)",
+    # Kandidatni uzly pro 13+. SerialNumber je zamerne az na konci a jen ve
+    # front/prox uzlech; device-SN guard nasledne odchyti device serial.
+    "sources": ("proximity", "pearl", "camera", "IOService"),
+    "keys": ("ProximitySensorSerialNumber", "ProxSensorSerialNumber",
+             "FrontProximitySerialNumber", "FrontSensorSerialNumber",
+             "FlexSerialNumber", "ModuleSerial"),
+    "note": "Číslo předního flexu (proximity) – důležité kvůli párování displeje",
+}
+
+def _prox_variant_for(product_type):
+    major = _iphone_major(product_type)
+    if major is not None and major >= 14:      # iPhone 13 a vyssi
+        return _PROX_VARIANT_FRONTFLEX
+    return _PROX_VARIANT_DISTANCE               # iPhone 12 a nizsi (a neznama gen.)
+
+# Generacni dostupnost komponent. NEJDE o cteni ze zarizeni, ale o tom, zda
+# komponenta na dane generaci FYZICKY existuje (rozlisi "unavailable" od
+# "not_applicable"). Proximity slot je vzdy applicable - jen meni variantu
+# (distance vs. front flex), takze se zde neresi.
+def _component_applicable(comp_key, product_type):
+    return True
+
 async def _component_serials_collect(udid, sources=None):
     if sources is None:
         sources = await _read_hw_sources(udid)
@@ -1203,6 +1309,11 @@ async def _component_serials_collect(udid, sources=None):
         "vibrator": sources.get("vibrator", {}),
         "nand": sources.get("nand", {}),
         "IOService": sources.get("io_service", {}),
+        # Lockdown je zpristupnen VYHRADNE pro mainboard (exact klic MLBSerialNumber).
+        # Nikdy se z nej nehleda generic SerialNumber (to je device SN) - zadny
+        # component spec nema "lockdown" ve svych povolenych zdrojich krome desky
+        # a MLBSerialNumber neni nikdy shodne s device serialem.
+        "lockdown": values,
     }
 
     specs = {
@@ -1219,7 +1330,11 @@ async def _component_serials_collect(udid, sources=None):
              "TelephotoCameraModuleSerialNumString", "TeleCameraSerialNumber")),
         "ultrawide_camera": (
             ("camera", "IOService"),
-            ("UltraWideCameraModuleSerialNumString", "BackUltraWideCameraModuleSerialNumString",
+            # 15 Pro pouziva "SuperWide" misto "UltraWide" (potvrzeno V30:
+            # BackSuperWideCameraModuleSerialNumString = DN83301G7NR1V6N4A).
+            # Reader musi podporovat obe varianty.
+            ("BackSuperWideCameraModuleSerialNumString", "SuperWideCameraModuleSerialNumString",
+             "BackUltraWideCameraModuleSerialNumString", "UltraWideCameraModuleSerialNumString",
              "UltraWideCameraSerialNumber")),
         "front_ir_camera": (
             ("pearl", "camera", "IOService"),
@@ -1230,10 +1345,7 @@ async def _component_serials_collect(udid, sources=None):
             ("FrontIRStructuredLightProjectorSerialNumString",
              "StructuredLightProjectorModuleSerialNumString",
              "DotProjectorSerialNumString", "ProjectorModuleSerialNumString")),
-        "distance_sensor": (
-            ("proximity", "IOService"),
-            ("DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
-             "DistSensSerialNumber", "ProxSensorSerialNumber", "SerialNumber")),
+        # distance_sensor NENI ve specs - je routovan generacne (viz nize).
         "ambient_light_sensor": (
             ("als", "IOService"),
             ("AmbientLightSensorSerialNumber", "ALSSerialNumber",
@@ -1246,15 +1358,28 @@ async def _component_serials_collect(udid, sources=None):
             ("battery",),
             ("BatterySerialNumber", "SerialNumber", "Serial")),
         "mainboard": (
-            ("IOService",),
+            # MLB je potvrzene v Lockdownu jako MLBSerialNumber (XS: F3X8405016AJVN7A,
+            # 15 Pro: G2CGY200A6F00003PP). IOService jen jako fallback.
+            ("lockdown", "IOService"),
             ("MLBSerialNumber", "LogicBoardSerialNumber", "MainboardSerialNumber")),
     }
 
     raw, discovery = {}, {}
     device_serial = str(values.get("SerialNumber") or "").strip()
+    device_product_type = str(values.get("ProductType") or "")
 
     for key, (allowed_sources, exact_keys) in specs.items():
-        value, meta = _v29_source_find(source_map, allowed_sources, exact_keys)
+        if key == "screen":
+            # Displej ma vlastni finder (Panel_ID je moc dlouhy na _v29_serial_like).
+            value, meta = None, None
+            for sname in allowed_sources:
+                v, m = _v29_panel_find(source_map.get(sname) or {})
+                if v:
+                    m["source"] = sname
+                    value, meta = v, m
+                    break
+        else:
+            value, meta = _v29_source_find(source_map, allowed_sources, exact_keys)
 
         # Hard guard: a component value may never silently equal device SN.
         if value and device_serial and value.upper() == device_serial.upper():
@@ -1264,12 +1389,23 @@ async def _component_serials_collect(udid, sources=None):
             )
             value, meta = None, None
 
-        if key == "screen" and value:
-            value = re.split(r"[\s,;|:/+]+", value.strip(), maxsplit=1)[0].strip() or None
-
         raw[key] = value
         if meta:
             discovery[key] = meta
+
+    # ── PROXIMITY SLOT (generacne routovany: distance vs. predni flex) ──
+    prox_variant = _prox_variant_for(device_product_type)
+    pv_value, pv_meta = _v29_source_find(
+        source_map, prox_variant["sources"], prox_variant["keys"])
+    if pv_value and device_serial and pv_value.upper() == device_serial.upper():
+        errors[f"{_PROX_SLOT_KEY}:rejected"] = (
+            f"Rejected device SerialNumber false-positive from {pv_meta.get('source')}: "
+            f"{pv_meta.get('path')}"
+        )
+        pv_value, pv_meta = None, None
+    raw[_PROX_SLOT_KEY] = pv_value
+    if pv_meta:
+        discovery[_PROX_SLOT_KEY] = pv_meta
 
     # These are device connectivity identifiers, not component serial guesses.
     raw.update({
@@ -1283,7 +1419,30 @@ async def _component_serials_collect(udid, sources=None):
     components = {}
     for key, label in _COMPONENT_SERIAL_LABELS.items():
         value = raw.get(key)
-        item = {"key": key, "label": label, "value": value, "available": bool(value)}
+        applicable = _component_applicable(key, device_product_type)
+        item = {"key": key, "label": label, "value": value,
+                "available": bool(value), "applicable": applicable,
+                # Frontend tile cte "Aktualni" z current_value a "Tovarni" z
+                # factory_value. Backend nema pristup k tovarni databazi Apple,
+                # takze factory_value je vzdy None (appka neurcuje original/vymena)
+                # a current_value = to, co telefon aktualne hlasi.
+                "current_value": value,
+                "factory_value": None,
+                "match": None}
+        # Proximity slot: prepis label/variant/note podle generace zarizeni.
+        if key == _PROX_SLOT_KEY:
+            item["label"] = prox_variant["label"]
+            item["variant"] = prox_variant["variant"]
+            if prox_variant["note"]:
+                item["note"] = prox_variant["note"]
+        if not applicable:
+            # Generace komponentu nema -> to neni chyba cteni.
+            item["status"] = "not_applicable"
+            item["note"] = "Tato generace tuto komponentu nemá"
+        elif value:
+            item["status"] = "read"
+        else:
+            item["status"] = "unavailable"
         if key in discovery:
             item["discovery"] = discovery[key]
         components[key] = item
@@ -1296,17 +1455,21 @@ async def _component_serials_collect(udid, sources=None):
             "label": spec["label"],
             "components": group_components,
             "available_count": sum(1 for item in group_components if item["available"]),
+            "applicable_count": sum(
+                1 for item in group_components if item.get("applicable", True)),
         })
 
     return {
         "ok": True,
-        "reader": "strict-source-isolated-v29",
+        "reader": "strict-source-isolated-v29.3-proxrouting",
         "udid": udid,
         "components": components,
         "groups": groups,
         "summary": {
             "components_total": len(components),
             "components_available": sum(1 for x in components.values() if x["available"]),
+            "components_not_applicable": sum(
+                1 for x in components.values() if not x.get("applicable", True)),
             "exact_matches": len(discovery),
             "device_serial_guard": True,
         },
@@ -1317,6 +1480,101 @@ async def _component_serials_collect(udid, sources=None):
 def api_component_serials(udid):
     try:
         result = _run_async_isolated(_component_serials_collect(udid), timeout=90)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+# ─── PROXIMITY / FRONT-FLEX DISCOVERY PROBE ──────────────────────────────────
+# READ-ONLY. Slouzi k dohledani PRESNEHO uzlu/klice, kde na iPhone 13+ lezi cislo
+# proximity senzoru predniho flexu (JCID/3uTools ho cte, my zatim ne). Zadej
+# znamou referencni hodnotu z JCID pres ?prox_ref=... a probe projde kandidatni
+# uzly + cely IOService a nahlasi kazdy vyskyt (exact match) se source/path/key.
+# Az bude potvrzeny, pridame ho do _PROX_VARIANT_FRONTFLEX["keys"]/["sources"].
+_PROX_DISCOVERY_TARGETS = (
+    "AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor",
+    "AppleHIDALSService", "AppleSPU", "AppleSPUHIDDriver",
+    "AppleH10PearlCam", "AppleH13PearlCam", "AppleH16PearlCam", "ApplePearlCam",
+    "AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn",
+    "AppleAOP", "AppleAOPAudio", "AppleHIDEventDriver",
+)
+
+async def _prox_discovery_collect(udid, prox_ref=None):
+    import inspect
+    errors = {}
+    calls = []
+    hits = []
+    ref_norm = re.sub(r"[^A-Za-z0-9]", "", str(prox_ref or "")).upper()
+
+    def scan(source, obj, depth=0, path="$"):
+        if depth > 80:
+            return
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                p = f"{path}.{k}"
+                if isinstance(v, (dict, list, tuple)):
+                    scan(source, v, depth + 1, p)
+                    continue
+                sc = _component_serial_scalar(v)
+                if not sc:
+                    continue
+                sc_norm = re.sub(r"[^A-Za-z0-9]", "", sc).upper()
+                # exact-hit vuci referenci, jinak jen serial-like leaf pro prehled
+                if ref_norm and ref_norm in sc_norm:
+                    hits.append({"source": source, "path": p, "key": str(k),
+                                 "value": sc, "match": "exact"})
+                elif not ref_norm and _v29_serial_like(v):
+                    hits.append({"source": source, "path": p, "key": str(k),
+                                 "value": sc, "match": "serial_like"})
+        elif isinstance(obj, (list, tuple)):
+            for i, c in enumerate(obj):
+                scan(source, c, depth + 1, f"{path}[{i}]")
+
+    ld, diag = await _open_diag(udid)
+    for target in _PROX_DISCOVERY_TARGETS:
+        src = f"ioregistry:name:{target}"
+        try:
+            obj = diag.ioregistry(name=target)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            ok = bool(obj)
+            calls.append({"source": src, "ok": ok})
+            if ok:
+                scan(src, obj)
+        except Exception as exc:
+            calls.append({"source": src, "ok": False, "error": f"{type(exc).__name__}: {exc}"})
+    # cely IOService strom jako zaloha
+    try:
+        io = diag.ioregistry(plane="IOService")
+        if inspect.isawaitable(io):
+            io = await io
+        calls.append({"source": "ioregistry:plane:IOService", "ok": bool(io)})
+        if io:
+            scan("ioregistry:plane:IOService", io)
+    except Exception as exc:
+        calls.append({"source": "ioregistry:plane:IOService", "ok": False,
+                      "error": f"{type(exc).__name__}: {exc}"})
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    exact = [h for h in hits if h["match"] == "exact"]
+    return {
+        "ok": True, "udid": udid, "probe": "prox-front-flex-discovery",
+        "prox_ref": prox_ref, "exact_hits": exact,
+        "exact_count": len(exact),
+        "serial_like_leaves": [h for h in hits if h["match"] == "serial_like"][:200],
+        "calls": calls, "errors": errors,
+    }
+
+@app.route('/api/prox-discovery/<udid>', methods=['GET'])
+def api_prox_discovery(udid):
+    prox_ref = request.args.get('prox_ref')
+    try:
+        result = _run_async_isolated(_prox_discovery_collect(udid, prox_ref=prox_ref), timeout=120)
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
