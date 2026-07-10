@@ -330,10 +330,10 @@ APPLE_MODELS = {
     'iPhone17,3': ('iPhone 16 Plus', 'A3291'),
     'iPhone17,4': ('iPhone 16', 'A3290'),
     # iPhone 15 Series
-    'iPhone16,1': ('iPhone 15', 'A3090'),
-    'iPhone16,2': ('iPhone 15 Plus', 'A3093'),
-    'iPhone16,3': ('iPhone 15 Pro', 'A3101'),
-    'iPhone16,4': ('iPhone 15 Pro Max', 'A3105'),
+    'iPhone16,1': ('iPhone 15 Pro', 'A3101'),
+    'iPhone16,2': ('iPhone 15 Pro Max', 'A3105'),
+    'iPhone15,4': ('iPhone 15', 'A3090'),
+    'iPhone15,5': ('iPhone 15 Plus', 'A3093'),
     # iPhone 14 Series
     'iPhone15,2': ('iPhone 14 Pro', 'A2890'),
     'iPhone15,3': ('iPhone 14 Pro Max', 'A2893'),
@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'syscfg-btnc-directory-v26',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan']})
+    return jsonify({'ok': True, 'build': 'cross-generation-hardware-v28',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -984,6 +984,7 @@ _COMPONENT_SERIAL_LABELS = {
     "rear_camera": "Zadní kamera",
     "front_camera": "Přední kamera",
     "tele_camera": "Teleobjektiv",
+    "ultrawide_camera": "Ultraširokoúhlá kamera",
     "front_ir_camera": "Přední IR kamera",
     "true_depth_projector": "Dot projektor (Lattice)",
     "distance_sensor": "Distance Sensor",
@@ -998,7 +999,7 @@ _COMPONENT_SERIAL_LABELS = {
 
 _COMPONENT_SERIAL_GROUPS = {
     "cameras": {"label": "Kamery", "components": [
-        "rear_camera", "front_camera", "tele_camera",
+        "rear_camera", "front_camera", "tele_camera", "ultrawide_camera",
         "front_ir_camera", "true_depth_projector"]},
     "sensors": {"label": "Senzory", "components": [
         "distance_sensor", "ambient_light_sensor"]},
@@ -1079,9 +1080,9 @@ async def _read_ioreg(diag, label, target, errors):
     return {}
 
 async def _read_hw_sources(udid):
-    """Otevre JEDNO spojeni a precte vsechny syrove zdroje (lockdown + IOKit uzly).
-    Sdilene pro _component_serials_collect i _hardware_report_collect - zadne
-    duplicitni ani opakovane cteni."""
+    """V28 cross-generation reader. Reads known nodes plus the complete IOService
+    tree once, then lets the component normalizer search both exact Apple keys and
+    semantic paths. READ-ONLY; no reference serial is ever returned as a value."""
     import inspect
     errors = {}
     ld, diag = await _open_diag(udid)
@@ -1096,20 +1097,31 @@ async def _read_hw_sources(udid):
     except Exception as exc:
         errors["lockdown"] = f"{type(exc).__name__}: {exc}"
 
-    camera = await _read_ioreg(diag, "camera", "AppleH10CamIn", errors)
-    pearl = await _read_ioreg(diag, "pearl", "AppleH10PearlCam", errors)
-    clcd = await _read_ioreg(diag, "AppleCLCD", "AppleCLCD", errors)
-    battery = await _read_ioreg(diag, "AppleSmartBattery", "AppleSmartBattery", errors)
-    proximity = await _read_ioreg(diag, "proximity", "AppleProxDriver", errors)
-    als = await _read_ioreg(diag, "ambient_light", "AppleALSDriver", errors)
-    vibrator = await _read_ioreg(diag, "vibrator", "AppleHapticsSupportCallan", errors)
-    if not vibrator:
-        vibrator = await _read_ioreg(diag, "vibrator_leap", "AppleHapticsSupportLEAP", errors)
-    if not vibrator:
-        vibrator = await _read_ioreg(diag, "vibrator_actuator", "Actuator", errors)
-    nand = await _read_ioreg(diag, "nand", "AppleANS2NVMeController", errors)
-    if not nand:
-        nand = await _read_ioreg(diag, "nand_fallback", "AppleNANDConfigAccess", errors)
+    async def read_any(label, targets):
+        for target in targets:
+            obj = await _read_ioreg(diag, f"{label}:{target}", target, errors)
+            if obj:
+                return obj
+        return {}
+
+    camera = await read_any("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
+    pearl = await read_any("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
+    clcd = await read_any("display", ("AppleCLCD", "AppleDCP", "AppleM2ScalerCSCDriver"))
+    battery = await read_any("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
+    proximity = await read_any("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
+    als = await read_any("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
+    vibrator = await read_any("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
+    nand = await read_any("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
+
+    io_service = {}
+    try:
+        io_service = diag.ioregistry(plane="IOService")
+        if inspect.isawaitable(io_service):
+            io_service = await io_service
+        if not isinstance(io_service, (dict, list, tuple)):
+            io_service = {}
+    except Exception as exc:
+        errors["IOService"] = f"{type(exc).__name__}: {exc}"
 
     try:
         cr = diag.close()
@@ -1120,85 +1132,123 @@ async def _read_hw_sources(udid):
 
     return {"values": values, "camera": camera, "pearl": pearl,
             "clcd": clcd, "battery": battery, "proximity": proximity,
-            "als": als, "vibrator": vibrator, "nand": nand, "errors": errors}
+            "als": als, "vibrator": vibrator, "nand": nand,
+            "io_service": io_service, "errors": errors}
+
+
+def _v28_serial_like(value):
+    scalar = _component_serial_scalar(value)
+    if not scalar or len(scalar) < 6 or len(scalar) > 96:
+        return None
+    if scalar.lower() in ("true", "false", "none", "null", "unknown"):
+        return None
+    # component identifiers are normally compact printable tokens; reject dumps
+    if not re.fullmatch(r"[A-Za-z0-9:+._\-/]+", scalar):
+        return None
+    return scalar
+
+
+def _v28_semantic_find(value, component, exact_keys=()):
+    """Find a component ID without knowing the iPhone generation. Exact Apple
+    property names win; otherwise score serial-like leaves by path semantics."""
+    exact = {str(k).lower().replace("-", "").replace("_", "") for k in exact_keys}
+    rules = {
+        "rear_camera": (("back", 7), ("rear", 7), ("camera", 5), ("module", 2), ("serial", 6)),
+        "front_camera": (("front", 7), ("camera", 5), ("module", 2), ("serial", 6), ("ir", -8), ("projector", -10)),
+        "tele_camera": (("tele", 12), ("camera", 5), ("module", 2), ("serial", 6)),
+        "ultrawide_camera": (("ultra", 10), ("wide", 6), ("camera", 5), ("serial", 6)),
+        "front_ir_camera": (("front", 4), ("ir", 12), ("camera", 5), ("serial", 6)),
+        "true_depth_projector": (("structuredlight", 14), ("projector", 14), ("dot", 10), ("lattice", 10), ("serial", 5)),
+        "distance_sensor": (("distance", 14), ("prox", 10), ("sensor", 4), ("serial", 5), ("calibration", -5)),
+        "ambient_light_sensor": (("ambient", 10), ("als", 12), ("light", 5), ("sensor", 4), ("serial", 5), ("calibration", -5)),
+        "screen": (("panel", 12), ("display", 8), ("lcd", 7), ("screen", 8), ("serial", 5), ("id", 2)),
+        "battery": (("battery", 10), ("serial", 7)),
+        "mainboard": (("mlb", 14), ("logicboard", 14), ("board", 6), ("serial", 6)),
+    }
+    scored = []
+    def walk(obj, path="$", depth=0):
+        if depth > 80: return
+        if isinstance(obj, dict):
+            for key, child in obj.items():
+                p = f"{path}.{key}"
+                kn = str(key).lower().replace("-", "").replace("_", "")
+                scalar = _v28_serial_like(child)
+                if scalar:
+                    if kn in exact:
+                        scored.append((1000, p, str(key), scalar))
+                    hay = (p + " " + str(key)).lower().replace("-", "").replace("_", "")
+                    score = sum(weight for token, weight in rules.get(component, ()) if token in hay)
+                    if ("serial" in hay or "snum" in hay or "moduleid" in hay or "panelid" in hay) and score > 0:
+                        scored.append((score, p, str(key), scalar))
+                walk(child, p, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for i, child in enumerate(obj): walk(child, f"{path}[{i}]", depth + 1)
+    walk(value)
+    if not scored: return None, None
+    scored.sort(key=lambda x: (-x[0], len(x[3]), x[1]))
+    best = scored[0]
+    return best[3], {"score": best[0], "path": best[1], "key": best[2]}
 
 async def _component_serials_collect(udid, sources=None):
-    # Pokud uz mame syrove zdroje (napr. z hardware-report), pouzij je - jinak precti.
     if sources is None:
         sources = await _read_hw_sources(udid)
     values = sources.get("values", {})
-    camera = sources.get("camera", {})
-    pearl = sources.get("pearl", {})
-    clcd = sources.get("clcd", {})
-    battery = sources.get("battery", {})
-    proximity = sources.get("proximity", {})
-    als = sources.get("als", {})
-    vibrator = sources.get("vibrator", {})
+    io_service = sources.get("io_service", {})
     errors = dict(sources.get("errors", {}))
 
-    raw = {
-        "rear_camera": _component_serial_find(camera, ("BackCameraModuleSerialNumString", "CameraModuleSerialNumString")),
-        "front_camera": _component_serial_find(camera, ("FrontCameraModuleSerialNumString",)),
-        "tele_camera": _component_serial_find(camera, ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString")),
-        "front_ir_camera": _component_serial_find(pearl, ("FrontIRCameraModuleSerialNumString",))
-                          or _component_serial_find(camera, ("FrontIRCameraModuleSerialNumString",)),
-        "true_depth_projector": _component_serial_find(camera, (
-                              "FrontIRStructuredLightProjectorSerialNumString",
-                              "StructuredLightProjectorModuleSerialNumString",
-                              "DotProjectorSerialNumString",
-                              "ProjectorModuleSerialNumString",
-                          ))
-                          or _component_serial_find(pearl, (
-                              "FrontIRStructuredLightProjectorSerialNumString",
-                              "StructuredLightProjectorModuleSerialNumString",
-                              "DotProjectorSerialNumString",
-                              "ProjectorModuleSerialNumString",
-                          )),
-        "distance_sensor": _component_serial_find(proximity, (
-                              "DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
-                              "DistSensSerialNumber", "SerialNumber", "Serial",
-                          ))
-                          or _component_serial_find(values, (
-                              "DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
-                              "DistanceSensor", "DistSens",
-                          )),
-        "ambient_light_sensor": _component_serial_find(als, (
-                              "AmbientLightSensorSerialNumber", "ALSSerialNumber",
-                              "SerialNumber", "Serial",
-                          ))
-                          or _component_serial_find(values, (
-                              "AmbientLightSensorSerialNumber", "ALSSerialNumber",
-                              "AmbientLightSensor", "AmbientLight",
-                          )),
-        "screen": _component_serial_panel_id(clcd),
+    merged = {"lockdown": values, "IOService": io_service,
+              "camera": sources.get("camera", {}), "pearl": sources.get("pearl", {}),
+              "display": sources.get("clcd", {}), "battery": sources.get("battery", {}),
+              "proximity": sources.get("proximity", {}), "als": sources.get("als", {})}
+
+    aliases = {
+        "rear_camera": ("BackCameraModuleSerialNumString", "RearCameraModuleSerialNumString", "BackCameraSerialNumber"),
+        "front_camera": ("FrontCameraModuleSerialNumString", "FrontCameraSerialNumber"),
+        "tele_camera": ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString", "TelephotoCameraModuleSerialNumString"),
+        "ultrawide_camera": ("UltraWideCameraModuleSerialNumString", "BackUltraWideCameraModuleSerialNumString", "UltraWideCameraSerialNumber"),
+        "front_ir_camera": ("FrontIRCameraModuleSerialNumString", "IRCameraModuleSerialNumString"),
+        "true_depth_projector": ("FrontIRStructuredLightProjectorSerialNumString", "StructuredLightProjectorModuleSerialNumString", "DotProjectorSerialNumString", "ProjectorModuleSerialNumString"),
+        "distance_sensor": ("DistanceSensorSerialNumber", "ProximitySensorSerialNumber", "DistSensSerialNumber", "ProxSensorSerialNumber"),
+        "ambient_light_sensor": ("AmbientLightSensorSerialNumber", "ALSSerialNumber", "AmbientLightSerialNumber"),
+        "screen": ("Panel_ID", "PanelID", "DisplaySerialNumber", "ScreenSerialNumber"),
+        "battery": ("BatterySerialNumber", "SerialNumber", "Serial"),
+        "mainboard": ("MLBSerialNumber", "LogicBoardSerialNumber"),
+    }
+
+    raw, discovery = {}, {}
+    for key in aliases:
+        value, meta = _v28_semantic_find(merged, key, aliases[key])
+        if key == "screen" and value:
+            value = re.split(r"[\s,;|:/+]+", value.strip(), maxsplit=1)[0].strip() or None
+        raw[key] = value
+        if meta: discovery[key] = meta
+
+    # Lockdown identifiers are exact and should not be guessed semantically.
+    raw.update({
         "wifi": _component_serial_find(values, ("WiFiAddress", "WifiAddress")),
         "bluetooth": _component_serial_find(values, ("BluetoothAddress",)),
         "cellular": _component_serial_find(values, ("InternationalMobileEquipmentIdentity", "MobileEquipmentIdentifier")),
-        "mainboard": _component_serial_find(values, ("MLBSerialNumber", "LogicBoardSerialNumber", "SerialNumber")),
-        "battery": _component_serial_find(battery, ("Serial", "SerialNumber", "BatterySerialNumber")),
-    }
+    })
 
     components = {}
     for key, label in _COMPONENT_SERIAL_LABELS.items():
         value = raw.get(key)
-        components[key] = {"key": key, "label": label, "value": value, "available": bool(value)}
+        item = {"key": key, "label": label, "value": value, "available": bool(value)}
+        if key in discovery: item["discovery"] = discovery[key]
+        components[key] = item
 
     groups = []
     for group_key, spec in _COMPONENT_SERIAL_GROUPS.items():
-        group_components = [components[key] for key in spec["components"]]
-        groups.append({
-            "key": group_key, "label": spec["label"], "components": group_components,
-            "available_count": sum(1 for item in group_components if item["available"]),
-        })
+        group_components = [components[key] for key in spec["components"] if key in components]
+        groups.append({"key": group_key, "label": spec["label"], "components": group_components,
+                       "available_count": sum(1 for item in group_components if item["available"])})
 
-    return {
-        "ok": True, "udid": udid, "components": components, "groups": groups,
-        "summary": {
-            "components_total": len(components),
-            "components_available": sum(1 for item in components.values() if item["available"]),
-        },
-        "errors": errors,
-    }
+    return {"ok": True, "reader": "cross-generation-v28", "udid": udid,
+            "components": components, "groups": groups,
+            "summary": {"components_total": len(components),
+                        "components_available": sum(1 for x in components.values() if x["available"]),
+                        "dynamic_matches": len(discovery)},
+            "errors": errors}
 
 @app.route('/api/component-serials/<udid>', methods=['GET'])
 def api_component_serials(udid):
