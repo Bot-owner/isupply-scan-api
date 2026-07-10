@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'cross-generation-hardware-v28',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader']})
+    return jsonify({'ok': True, 'build': 'strict-source-isolated-v29',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1136,119 +1136,182 @@ async def _read_hw_sources(udid):
             "io_service": io_service, "errors": errors}
 
 
-def _v28_serial_like(value):
+def _v29_norm_key(key):
+    return str(key).lower().replace("-", "").replace("_", "").replace(" ", "")
+
+def _v29_serial_like(value):
     scalar = _component_serial_scalar(value)
     if not scalar or len(scalar) < 6 or len(scalar) > 96:
         return None
-    if scalar.lower() in ("true", "false", "none", "null", "unknown"):
+    if scalar.lower() in ("true", "false", "none", "null", "unknown", "n/a"):
         return None
-    # component identifiers are normally compact printable tokens; reject dumps
     if not re.fullmatch(r"[A-Za-z0-9:+._\-/]+", scalar):
         return None
     return scalar
 
-
-def _v28_semantic_find(value, component, exact_keys=()):
-    """Find a component ID without knowing the iPhone generation. Exact Apple
-    property names win; otherwise score serial-like leaves by path semantics."""
-    exact = {str(k).lower().replace("-", "").replace("_", "") for k in exact_keys}
-    rules = {
-        "rear_camera": (("back", 7), ("rear", 7), ("camera", 5), ("module", 2), ("serial", 6)),
-        "front_camera": (("front", 7), ("camera", 5), ("module", 2), ("serial", 6), ("ir", -8), ("projector", -10)),
-        "tele_camera": (("tele", 12), ("camera", 5), ("module", 2), ("serial", 6)),
-        "ultrawide_camera": (("ultra", 10), ("wide", 6), ("camera", 5), ("serial", 6)),
-        "front_ir_camera": (("front", 4), ("ir", 12), ("camera", 5), ("serial", 6)),
-        "true_depth_projector": (("structuredlight", 14), ("projector", 14), ("dot", 10), ("lattice", 10), ("serial", 5)),
-        "distance_sensor": (("distance", 14), ("prox", 10), ("sensor", 4), ("serial", 5), ("calibration", -5)),
-        "ambient_light_sensor": (("ambient", 10), ("als", 12), ("light", 5), ("sensor", 4), ("serial", 5), ("calibration", -5)),
-        "screen": (("panel", 12), ("display", 8), ("lcd", 7), ("screen", 8), ("serial", 5), ("id", 2)),
-        "battery": (("battery", 10), ("serial", 7)),
-        "mainboard": (("mlb", 14), ("logicboard", 14), ("board", 6), ("serial", 6)),
-    }
-    scored = []
+def _v29_exact_find(value, exact_keys):
+    """Strict lookup: only an exact Apple property name is accepted."""
+    wanted = {_v29_norm_key(k) for k in exact_keys}
+    hits = []
     def walk(obj, path="$", depth=0):
-        if depth > 80: return
+        if depth > 80:
+            return
         if isinstance(obj, dict):
             for key, child in obj.items():
                 p = f"{path}.{key}"
-                kn = str(key).lower().replace("-", "").replace("_", "")
-                scalar = _v28_serial_like(child)
-                if scalar:
-                    if kn in exact:
-                        scored.append((1000, p, str(key), scalar))
-                    hay = (p + " " + str(key)).lower().replace("-", "").replace("_", "")
-                    score = sum(weight for token, weight in rules.get(component, ()) if token in hay)
-                    if ("serial" in hay or "snum" in hay or "moduleid" in hay or "panelid" in hay) and score > 0:
-                        scored.append((score, p, str(key), scalar))
+                if _v29_norm_key(key) in wanted:
+                    scalar = _v29_serial_like(child)
+                    if scalar:
+                        hits.append((p, str(key), scalar))
                 walk(child, p, depth + 1)
         elif isinstance(obj, (list, tuple)):
-            for i, child in enumerate(obj): walk(child, f"{path}[{i}]", depth + 1)
+            for i, child in enumerate(obj):
+                walk(child, f"{path}[{i}]", depth + 1)
     walk(value)
-    if not scored: return None, None
-    scored.sort(key=lambda x: (-x[0], len(x[3]), x[1]))
-    best = scored[0]
-    return best[3], {"score": best[0], "path": best[1], "key": best[2]}
+    if not hits:
+        return None, None
+    hits.sort(key=lambda x: (len(x[2]), x[0]))
+    path, key, scalar = hits[0]
+    return scalar, {"mode": "exact", "path": path, "key": key}
+
+def _v29_source_find(source_map, allowed_sources, exact_keys):
+    """Never search lockdown/all merged trees for component serials."""
+    for source_name in allowed_sources:
+        source = source_map.get(source_name) or {}
+        value, meta = _v29_exact_find(source, exact_keys)
+        if value:
+            meta["source"] = source_name
+            return value, meta
+    return None, None
 
 async def _component_serials_collect(udid, sources=None):
     if sources is None:
         sources = await _read_hw_sources(udid)
+
     values = sources.get("values", {})
-    io_service = sources.get("io_service", {})
     errors = dict(sources.get("errors", {}))
 
-    merged = {"lockdown": values, "IOService": io_service,
-              "camera": sources.get("camera", {}), "pearl": sources.get("pearl", {}),
-              "display": sources.get("clcd", {}), "battery": sources.get("battery", {}),
-              "proximity": sources.get("proximity", {}), "als": sources.get("als", {})}
+    # V29: component sources are isolated. Lockdown is intentionally excluded
+    # from component serial lookup because SerialNumber there is the DEVICE SN.
+    source_map = {
+        "camera": sources.get("camera", {}),
+        "pearl": sources.get("pearl", {}),
+        "display": sources.get("clcd", {}),
+        "battery": sources.get("battery", {}),
+        "proximity": sources.get("proximity", {}),
+        "als": sources.get("als", {}),
+        "vibrator": sources.get("vibrator", {}),
+        "nand": sources.get("nand", {}),
+        "IOService": sources.get("io_service", {}),
+    }
 
-    aliases = {
-        "rear_camera": ("BackCameraModuleSerialNumString", "RearCameraModuleSerialNumString", "BackCameraSerialNumber"),
-        "front_camera": ("FrontCameraModuleSerialNumString", "FrontCameraSerialNumber"),
-        "tele_camera": ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString", "TelephotoCameraModuleSerialNumString"),
-        "ultrawide_camera": ("UltraWideCameraModuleSerialNumString", "BackUltraWideCameraModuleSerialNumString", "UltraWideCameraSerialNumber"),
-        "front_ir_camera": ("FrontIRCameraModuleSerialNumString", "IRCameraModuleSerialNumString"),
-        "true_depth_projector": ("FrontIRStructuredLightProjectorSerialNumString", "StructuredLightProjectorModuleSerialNumString", "DotProjectorSerialNumString", "ProjectorModuleSerialNumString"),
-        "distance_sensor": ("DistanceSensorSerialNumber", "ProximitySensorSerialNumber", "DistSensSerialNumber", "ProxSensorSerialNumber"),
-        "ambient_light_sensor": ("AmbientLightSensorSerialNumber", "ALSSerialNumber", "AmbientLightSerialNumber"),
-        "screen": ("Panel_ID", "PanelID", "DisplaySerialNumber", "ScreenSerialNumber"),
-        "battery": ("BatterySerialNumber", "SerialNumber", "Serial"),
-        "mainboard": ("MLBSerialNumber", "LogicBoardSerialNumber"),
+    specs = {
+        "rear_camera": (
+            ("camera", "IOService"),
+            ("BackCameraModuleSerialNumString", "RearCameraModuleSerialNumString",
+             "BackCameraSerialNumber", "RearCameraSerialNumber")),
+        "front_camera": (
+            ("camera", "IOService"),
+            ("FrontCameraModuleSerialNumString", "FrontCameraSerialNumber")),
+        "tele_camera": (
+            ("camera", "IOService"),
+            ("TeleCameraModuleSerialNumString", "BackTeleCameraModuleSerialNumString",
+             "TelephotoCameraModuleSerialNumString", "TeleCameraSerialNumber")),
+        "ultrawide_camera": (
+            ("camera", "IOService"),
+            ("UltraWideCameraModuleSerialNumString", "BackUltraWideCameraModuleSerialNumString",
+             "UltraWideCameraSerialNumber")),
+        "front_ir_camera": (
+            ("pearl", "camera", "IOService"),
+            ("FrontIRCameraModuleSerialNumString", "IRCameraModuleSerialNumString",
+             "FrontIRCameraSerialNumber")),
+        "true_depth_projector": (
+            ("pearl", "camera", "IOService"),
+            ("FrontIRStructuredLightProjectorSerialNumString",
+             "StructuredLightProjectorModuleSerialNumString",
+             "DotProjectorSerialNumString", "ProjectorModuleSerialNumString")),
+        "distance_sensor": (
+            ("proximity", "IOService"),
+            ("DistanceSensorSerialNumber", "ProximitySensorSerialNumber",
+             "DistSensSerialNumber", "ProxSensorSerialNumber", "SerialNumber")),
+        "ambient_light_sensor": (
+            ("als", "IOService"),
+            ("AmbientLightSensorSerialNumber", "ALSSerialNumber",
+             "AmbientLightSerialNumber", "ModuleSerial", "SerialNumber")),
+        "screen": (
+            ("display", "IOService"),
+            ("Panel_ID", "PanelID", "DisplaySerialNumber", "ScreenSerialNumber",
+             "PanelSerialNumber")),
+        "battery": (
+            ("battery",),
+            ("BatterySerialNumber", "SerialNumber", "Serial")),
+        "mainboard": (
+            ("IOService",),
+            ("MLBSerialNumber", "LogicBoardSerialNumber", "MainboardSerialNumber")),
     }
 
     raw, discovery = {}, {}
-    for key in aliases:
-        value, meta = _v28_semantic_find(merged, key, aliases[key])
+    device_serial = str(values.get("SerialNumber") or "").strip()
+
+    for key, (allowed_sources, exact_keys) in specs.items():
+        value, meta = _v29_source_find(source_map, allowed_sources, exact_keys)
+
+        # Hard guard: a component value may never silently equal device SN.
+        if value and device_serial and value.upper() == device_serial.upper():
+            errors[f"{key}:rejected"] = (
+                f"Rejected device SerialNumber false-positive from {meta.get('source')}: "
+                f"{meta.get('path')}"
+            )
+            value, meta = None, None
+
         if key == "screen" and value:
             value = re.split(r"[\s,;|:/+]+", value.strip(), maxsplit=1)[0].strip() or None
-        raw[key] = value
-        if meta: discovery[key] = meta
 
-    # Lockdown identifiers are exact and should not be guessed semantically.
+        raw[key] = value
+        if meta:
+            discovery[key] = meta
+
+    # These are device connectivity identifiers, not component serial guesses.
     raw.update({
         "wifi": _component_serial_find(values, ("WiFiAddress", "WifiAddress")),
         "bluetooth": _component_serial_find(values, ("BluetoothAddress",)),
-        "cellular": _component_serial_find(values, ("InternationalMobileEquipmentIdentity", "MobileEquipmentIdentifier")),
+        "cellular": _component_serial_find(
+            values, ("InternationalMobileEquipmentIdentity", "MobileEquipmentIdentifier")
+        ),
     })
 
     components = {}
     for key, label in _COMPONENT_SERIAL_LABELS.items():
         value = raw.get(key)
         item = {"key": key, "label": label, "value": value, "available": bool(value)}
-        if key in discovery: item["discovery"] = discovery[key]
+        if key in discovery:
+            item["discovery"] = discovery[key]
         components[key] = item
 
     groups = []
     for group_key, spec in _COMPONENT_SERIAL_GROUPS.items():
         group_components = [components[key] for key in spec["components"] if key in components]
-        groups.append({"key": group_key, "label": spec["label"], "components": group_components,
-                       "available_count": sum(1 for item in group_components if item["available"])})
+        groups.append({
+            "key": group_key,
+            "label": spec["label"],
+            "components": group_components,
+            "available_count": sum(1 for item in group_components if item["available"]),
+        })
 
-    return {"ok": True, "reader": "cross-generation-v28", "udid": udid,
-            "components": components, "groups": groups,
-            "summary": {"components_total": len(components),
-                        "components_available": sum(1 for x in components.values() if x["available"]),
-                        "dynamic_matches": len(discovery)},
-            "errors": errors}
+    return {
+        "ok": True,
+        "reader": "strict-source-isolated-v29",
+        "udid": udid,
+        "components": components,
+        "groups": groups,
+        "summary": {
+            "components_total": len(components),
+            "components_available": sum(1 for x in components.values() if x["available"]),
+            "exact_matches": len(discovery),
+            "device_serial_guard": True,
+        },
+        "errors": errors,
+    }
 
 @app.route('/api/component-serials/<udid>', methods=['GET'])
 def api_component_serials(udid):
