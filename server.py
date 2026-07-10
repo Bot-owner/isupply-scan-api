@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'syscfg-record-als-decoder-v24',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode']})
+    return jsonify({'ok': True, 'build': 'syscfg-20byte-record-map-v25',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -2969,6 +2969,226 @@ def api_v24_syscfg_als_decode(udid):
     except Exception as exc:
         return jsonify({
             "ok": False, "probe": "syscfg-record-als-decoder-v24",
+            "udid": udid, "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V25 SYSCFG 20-BYTE RECORD MAP / ALS FORENSIC DECODER ───────────────────
+# V24 potvrdil, ze hledana ALS hodnota neni v SysCfg ani jako kompletni binarni
+# tvar, ani jako samotne 0x85DF2320. V23 dump ale ukazuje pravidelne 20B zaznamy
+# od offsetu 24: 4B tag + 16B payload. V25 mapuje skutecne zaznamy bez posuvnych
+# oken, dekoduje payload po endian slovech a uklada ALS/light/calibration okoli.
+# READ-ONLY.
+
+_V25_INTEREST = (
+    "LCIA", "LCIG", "LCXR", "GCLC", "SHLC", "LCON", "BRTS",
+    "CAME", "CAMA", "CAMW", "CAMB", "PSGC", "TORA", "TORG", "TORC",
+)
+
+def _v25_clean_tag(tag_raw):
+    txt = tag_raw.decode("ascii", errors="replace")
+    return txt.replace("\x00", "\\0")
+
+def _v25_words(payload):
+    import struct
+    out = {}
+    for width, code in ((2, "H"), (4, "I"), (8, "Q")):
+        if len(payload) % width:
+            continue
+        out[f"u{width*8}_le"] = [
+            int.from_bytes(payload[i:i+width], "little", signed=False)
+            for i in range(0, len(payload), width)
+        ]
+        out[f"u{width*8}_be"] = [
+            int.from_bytes(payload[i:i+width], "big", signed=False)
+            for i in range(0, len(payload), width)
+        ]
+    if len(payload) == 16:
+        try:
+            out["f32_le"] = list(struct.unpack("<4f", payload))
+            out["f32_be"] = list(struct.unpack(">4f", payload))
+        except Exception:
+            pass
+    return out
+
+def _v25_record_map(raw):
+    records = []
+    # V23 prokazal prvni record na 24 a dalsi tagy presne +20 B.
+    for off in range(24, len(raw) - 19, 20):
+        chunk = raw[off:off+20]
+        tag_raw, payload = chunk[:4], chunk[4:]
+        printable_tag = all(32 <= b <= 126 for b in tag_raw)
+        tag = _v25_clean_tag(tag_raw)
+        ascii_payload = payload.decode("ascii", errors="replace").replace("\x00", "\\0")
+        rec = {
+            "index": (off - 24) // 20,
+            "offset": off,
+            "tag": tag,
+            "tag_hex": tag_raw.hex(),
+            "tag_printable": printable_tag,
+            "payload_hex": payload.hex(),
+            "payload_ascii": ascii_payload,
+            "words": _v25_words(payload),
+        }
+        records.append(rec)
+    return records
+
+def _v25_score_als_record(rec):
+    tag = rec["tag"].upper()
+    score = 0
+    reasons = []
+    for token, points in (
+        ("LCIA", 100), ("LCIG", 100), ("ALS", 100), ("LIGHT", 80),
+        ("GCLC", 55), ("SHLC", 55), ("LCON", 50), ("LCXR", 50),
+        ("BRTS", 45), ("CAME", 35), ("CAL", 35), ("SENSOR", 35),
+    ):
+        if token in tag:
+            score += points
+            reasons.append(token)
+    return score, reasons
+
+def _v25_expected_math(rec):
+    """Porovna numericke casti 3E-85DF2320 s kazdym payload slovem."""
+    prefix = 0x3E
+    number = 0x85DF2320
+    matches = []
+    for form, vals in rec["words"].items():
+        for i, val in enumerate(vals):
+            # Nejen equality: XOR/delta nechavame venku, aby se dalo porovnat
+            # vice telefonu a odvodit transformaci bez falsifikace vysledku.
+            if val in (prefix, number):
+                matches.append({"form": form, "index": i, "value": val,
+                                "kind": "prefix" if val == prefix else "number"})
+    return matches
+
+async def _v25_syscfg_record_map_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls = {}, []
+    syscfg = None
+    source = None
+    try:
+        for target in _V23_TARGETS:
+            try:
+                obj = diag.ioregistry(name=target)
+                if inspect.isawaitable(obj):
+                    obj = await obj
+                calls.append({"source": f"ioregistry:name:{target}", "ok": bool(obj)})
+                if isinstance(obj, dict):
+                    for path, key, value in _v20_walk(obj):
+                        if str(key).lower() == "applediagnosticdatasyscfg" and isinstance(value, (bytes, bytearray, memoryview)):
+                            syscfg = bytes(value)
+                            source = f"ioregistry:name:{target}::{path}"
+                            break
+                if syscfg is not None:
+                    break
+            except Exception as exc:
+                errors[f"ioregistry:name:{target}"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            cr = diag.close()
+            if inspect.isawaitable(cr):
+                await cr
+        except Exception:
+            pass
+
+    if syscfg is None:
+        return {"ok": False, "probe": "syscfg-20byte-record-map-v25",
+                "udid": udid, "error": "AppleDiagnosticDataSysCfg nebyl nalezen.",
+                "calls": calls, "errors": errors}
+
+    records = _v25_record_map(syscfg)
+    candidates = []
+    exact_numeric = []
+    for rec in records:
+        score, reasons = _v25_score_als_record(rec)
+        numeric = _v25_expected_math(rec)
+        if numeric:
+            exact_numeric.append({
+                "offset": rec["offset"], "tag": rec["tag"], "matches": numeric,
+                "payload_hex": rec["payload_hex"],
+            })
+        if score:
+            item = dict(rec)
+            item["score"] = score
+            item["reasons"] = reasons
+            item["expected_numeric_matches"] = numeric
+            candidates.append(item)
+
+    candidates.sort(key=lambda x: (-x["score"], x["offset"]))
+
+    # U kazdeho top kandidata uloz 5 zaznamu pred/po. To je dulezite pro
+    # rekonstrukci vztahu mezi lCIA/lCIG a sousednimi factory tagy.
+    neighborhoods = []
+    by_index = {r["index"]: r for r in records}
+    for cand in candidates[:40]:
+        idx = cand["index"]
+        neighborhood = [
+            by_index[i] for i in range(max(0, idx-5), idx+6) if i in by_index
+        ]
+        neighborhoods.append({
+            "center_index": idx, "center_offset": cand["offset"],
+            "center_tag": cand["tag"], "records": neighborhood,
+        })
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v25", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+
+    with open(os.path.join(capture_dir, "AppleDiagnosticDataSysCfg.bin"), "wb") as fh:
+        fh.write(syscfg)
+    with open(os.path.join(capture_dir, "records_20byte.json"), "w", encoding="utf-8") as fh:
+        json.dump(records, fh, ensure_ascii=False, indent=2)
+    with open(os.path.join(capture_dir, "als_candidate_neighborhoods.json"), "w", encoding="utf-8") as fh:
+        json.dump(neighborhoods, fh, ensure_ascii=False, indent=2)
+
+    result = {
+        "ok": True,
+        "probe": "syscfg-20byte-record-map-v25",
+        "read_only": True,
+        "udid": udid,
+        "source": source,
+        "syscfg_length": len(syscfg),
+        "expected_als": _V24_ALS_EXPECTED,
+        "record_layout": {"start_offset": 24, "record_size": 20,
+                          "tag_size": 4, "payload_size": 16},
+        "records_total": len(records),
+        "als_candidates": candidates[:100],
+        "exact_numeric_matches": exact_numeric,
+        "neighborhoods": neighborhoods,
+        "capture_dir": capture_dir,
+        "files": {
+            "syscfg_bin": "AppleDiagnosticDataSysCfg.bin",
+            "records": "records_20byte.json",
+            "als_neighborhoods": "als_candidate_neighborhoods.json",
+        },
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "records_total": len(records),
+            "als_candidates": len(candidates),
+            "exact_numeric_matches": len(exact_numeric),
+            "neighborhoods": len(neighborhoods),
+        },
+        "conclusion": (
+            "V25 maps the confirmed 20-byte SysCfg record layout. "
+            "No value is labeled as ALS until its tag/payload mapping is proven."
+        ),
+    }
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+    return result
+
+@app.route('/api/v25-syscfg-record-map/<udid>', methods=['GET'])
+def api_v25_syscfg_record_map(udid):
+    try:
+        result = _run_async_isolated(_v25_syscfg_record_map_collect(udid), timeout=900)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "syscfg-20byte-record-map-v25",
             "udid": udid, "error": f"{type(exc).__name__}: {exc}",
         }), 200
 
