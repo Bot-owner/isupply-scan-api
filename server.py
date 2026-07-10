@@ -791,8 +791,8 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'strict-source-isolated-v29',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader']})
+    return jsonify({'ok': True, 'build': 'component-storage-map-v30',
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1321,6 +1321,169 @@ def api_component_serials(udid):
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
 
+
+
+
+# ─── V30 COMPONENT STORAGE MAP PROBE ─────────────────────────────────────────
+# READ-ONLY comparison probe for newer generations. It does not guess a final
+# component serial. It records exact paths/keys/values from IORegistry so we can
+# compare iPhone 15 Pro storage layout with the previously confirmed model.
+_V30_COMPONENT_TOKENS = (
+    "camera", "cam", "pearl", "projector", "structuredlight", "truedepth",
+    "lattice", "prox", "proximity", "distance", "distsens", "ambient", "als",
+    "light", "panel", "display", "lcd", "clcd", "dcp", "battery", "serial",
+    "module", "haptic", "taptic", "vibrator", "actuator", "wifi", "bluetooth",
+    "baseband", "mlb", "logicboard", "board"
+)
+
+_V30_TARGETS = (
+    "AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface",
+    "AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl",
+    "AppleCLCD", "AppleDCP", "AppleM2ScalerCSCDriver",
+    "AppleSmartBattery", "AppleARMPMUCharger",
+    "AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor",
+    "als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService",
+    "AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine",
+    "AppleHaptics", "Actuator", "audio-haptic", "haptics-support-interface",
+)
+
+def _v30_safe(value, max_binary=4096):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        clip = raw[:max_binary]
+        return {
+            "_type": "bytes", "length": len(raw), "hex": clip.hex(),
+            "ascii": clip.decode("ascii", errors="replace").replace("\x00", "\\0"),
+            "truncated": len(raw) > max_binary,
+        }
+    if isinstance(value, dict):
+        return {str(k): _v30_safe(v, max_binary) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_v30_safe(v, max_binary) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+def _v30_walk(value, path="$"):
+    rows = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            p = f"{path}.{key}"
+            rows.append((p, str(key), child))
+            rows.extend(_v30_walk(child, p))
+    elif isinstance(value, (list, tuple)):
+        for i, child in enumerate(value):
+            rows.extend(_v30_walk(child, f"{path}[{i}]"))
+    return rows
+
+def _v30_score(path, key):
+    hay = (f"{path} {key}").lower().replace("-", "").replace("_", "")
+    score = 0
+    matched = []
+    for token in _V30_COMPONENT_TOKENS:
+        norm = token.replace("-", "").replace("_", "")
+        if norm in hay:
+            matched.append(token)
+            score += 8 if token in ("serial", "projector", "structuredlight",
+                                    "truedepth", "proximity", "distance",
+                                    "ambient", "panel") else 3
+    return score, matched
+
+async def _v30_component_map_probe_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    calls, errors, rows = [], {}, []
+
+    def scan(source, obj):
+        for path, key, value in _v30_walk(obj):
+            score, matched = _v30_score(path, key)
+            scalar = _component_serial_scalar(value)
+            if score > 0 and (scalar is not None or isinstance(value, (bytes, bytearray, memoryview))):
+                rows.append({
+                    "source": source, "path": path, "key": key,
+                    "score": score, "matched_tokens": matched,
+                    "value": _v30_safe(value),
+                })
+
+    try:
+        av = ld.all_values
+        if inspect.isawaitable(av):
+            av = await av
+        calls.append({"source": "lockdown:all_values", "ok": bool(av),
+                      "result_type": type(av).__name__})
+        if av:
+            scan("lockdown:all_values", av)
+    except Exception as exc:
+        errors["lockdown:all_values"] = f"{type(exc).__name__}: {exc}"
+
+    for plane in ("IOService", "IODeviceTree", "IOPower"):
+        try:
+            obj = diag.ioregistry(plane=plane)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            calls.append({"source": f"ioregistry:plane:{plane}", "ok": bool(obj),
+                          "result_type": type(obj).__name__})
+            if obj:
+                scan(f"ioregistry:plane:{plane}", obj)
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[f"plane:{plane}"] = err
+            calls.append({"source": f"ioregistry:plane:{plane}", "ok": False, "error": err})
+
+    for target in _V30_TARGETS:
+        try:
+            obj = diag.ioregistry(name=target)
+            if inspect.isawaitable(obj):
+                obj = await obj
+            calls.append({"source": f"ioregistry:name:{target}", "ok": bool(obj),
+                          "result_type": type(obj).__name__})
+            if obj:
+                scan(f"ioregistry:name:{target}", obj)
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[f"name:{target}"] = err
+            calls.append({"source": f"ioregistry:name:{target}", "ok": False, "error": err})
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    dedup = {}
+    for row in rows:
+        ident = (row["source"], row["path"], row["key"], str(row["value"])[:500])
+        if ident not in dedup or row["score"] > dedup[ident]["score"]:
+            dedup[ident] = row
+    rows = sorted(dedup.values(), key=lambda x: (-x["score"], x["source"], x["path"]))
+
+    return {
+        "ok": True,
+        "probe": "component-storage-map-v30",
+        "read_only": True,
+        "udid": udid,
+        "goal": "Map exact IORegistry paths and property names for component identifiers on this generation",
+        "candidates": rows[:1500],
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "candidates": len(rows),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+@app.route('/api/v30-component-map-probe/<udid>', methods=['GET'])
+def api_v30_component_map_probe(udid):
+    try:
+        result = _run_async_isolated(_v30_component_map_probe_collect(udid), timeout=240)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False, "probe": "component-storage-map-v30", "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
 
 
 # ─── DOT / TRUEDEPTH PROJECTOR EX-FACTORY DISCOVERY ─────────────────────────
