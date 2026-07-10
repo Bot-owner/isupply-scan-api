@@ -792,7 +792,7 @@ def api_driver_check():
 @app.route('/api/version')
 def api_version():
     return jsonify({'ok': True, 'build': 'syscfg-btnc-directory-v26',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory']})
+                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -3453,6 +3453,225 @@ def api_v26_syscfg_btnc_directory(udid):
             "ok": False, "probe": "syscfg-btnc-directory-v26",
             "udid": udid, "error": f"{type(exc).__name__}: {exc}",
         }), 200
+
+
+# ─── V27 SYSCFG ALS TRANSFORM / STRUCTURAL SCAN ──────────────────────────────
+# V26 prokazal, ze hledany ALS identifikator neni ulozen jako prosty ASCII,
+# compact ASCII, 5B binary ani samostatne u32 cislo. V27 proto testuje bezne
+# reverzibilni 5B reprezentace cele hodnoty 3E-85DF2320 uvnitr KAZDEHO
+# dereferencovaneho BTNC blobu. READ-ONLY; nic do telefonu nezapisuje.
+#
+# Dulezite: za exact match povazujeme jen shodu CELE transformovane 5B hodnoty.
+# Samotne 0x3E / prefixy se zde vubec neskoruji, aby nevznikaly false positives.
+
+def _v27_bit_reverse_byte(value):
+    return int(f"{value:08b}"[::-1], 2)
+
+def _v27_rol8(value, shift):
+    shift %= 8
+    return ((value << shift) | (value >> (8 - shift))) & 0xff if shift else value
+
+def _v27_ror8(value, shift):
+    shift %= 8
+    return ((value >> shift) | (value << (8 - shift))) & 0xff if shift else value
+
+def _v27_expected_transforms():
+    import itertools
+    compact = re.sub(r"[^A-Fa-f0-9]", "", _V24_ALS_EXPECTED)
+    raw = bytes.fromhex(compact)
+    forms = {}
+
+    def add(name, value, meta=None):
+        value = bytes(value)
+        if len(value) != len(raw):
+            return
+        # Dedup podle bytes; ponech prvni/jednodussi popis transformace.
+        if value not in {item["bytes"] for item in forms.values()}:
+            forms[name] = {"bytes": value, "meta": meta or {}}
+
+    add("identity", raw)
+    add("reverse_all", raw[::-1])
+    add("reverse_tail_u32", raw[:1] + raw[1:][::-1])
+    add("reverse_head4_keep_last", raw[:4][::-1] + raw[4:])
+    add("nibble_swap", bytes(((b >> 4) | ((b & 0x0f) << 4)) for b in raw))
+    add("bit_reverse_each", bytes(_v27_bit_reverse_byte(b) for b in raw))
+    add("invert", bytes((b ^ 0xff) for b in raw))
+
+    for shift in range(1, 8):
+        add(f"rol{shift}_each", bytes(_v27_rol8(b, shift) for b in raw), {"shift": shift})
+        add(f"ror{shift}_each", bytes(_v27_ror8(b, shift) for b in raw), {"shift": shift})
+
+    # Jednobajtovy XOR je bezna jednoducha maska. Testujeme celou 5B hodnotu;
+    # shoda tedy neni zalozena na nahodnem prefixu.
+    for key in range(1, 256):
+        add(f"xor_0x{key:02X}", bytes((b ^ key) for b in raw), {"xor_key": key})
+
+    # Pokud je identifikator ulozen po polich v jinem poradi, 5B ma jen 120
+    # permutaci. Vystup nese presnou permutaci pro pozdejsi potvrzeni na dalsim
+    # telefonu se znamou ALS hodnotou.
+    for perm in itertools.permutations(range(len(raw))):
+        add("perm_" + "".join(str(i) for i in perm), bytes(raw[i] for i in perm),
+            {"permutation": list(perm)})
+
+    return forms
+
+def _v27_ascii_runs(blob, min_len=6):
+    out = []
+    for match in re.finditer(rb"[\x20-\x7e]{%d,}" % min_len, blob):
+        out.append({"offset": match.start(),
+                    "value": match.group(0).decode("ascii", errors="replace")[:256]})
+    return out
+
+def _v27_context(blob, offset, needle_len=5, radius=24):
+    start = max(0, offset - radius)
+    end = min(len(blob), offset + needle_len + radius)
+    raw = blob[start:end]
+    return {"start": start, "end": end, "hex": raw.hex(),
+            "ascii": raw.decode("ascii", errors="replace").replace("\x00", "\\0")}
+
+async def _v27_syscfg_als_transform_collect(udid):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    errors, calls = {}, []
+    syscfg = None
+    source = None
+    try:
+        for target in _V23_TARGETS:
+            try:
+                obj = diag.ioregistry(name=target)
+                if inspect.isawaitable(obj):
+                    obj = await obj
+                calls.append({"source": f"ioregistry:name:{target}", "ok": bool(obj)})
+                if isinstance(obj, dict):
+                    for path, key, value in _v20_walk(obj):
+                        if (str(key).lower() == "applediagnosticdatasyscfg" and
+                                isinstance(value, (bytes, bytearray, memoryview))):
+                            syscfg = bytes(value)
+                            source = f"ioregistry:name:{target}::{path}"
+                            break
+                if syscfg is not None:
+                    break
+            except Exception as exc:
+                errors[f"ioregistry:name:{target}"] = f"{type(exc).__name__}: {exc}"
+    finally:
+        try:
+            cr = diag.close()
+            if inspect.isawaitable(cr):
+                await cr
+        except Exception:
+            pass
+
+    if syscfg is None:
+        return {"ok": False, "probe": "syscfg-als-transform-scan-v27", "udid": udid,
+                "error": "AppleDiagnosticDataSysCfg nebyl nalezen.",
+                "calls": calls, "errors": errors}
+
+    entries, invalid = _v26_parse_btnc_directory(syscfg)
+    transforms = _v27_expected_transforms()
+    hits = []
+    blob_summaries = []
+    known_vibrator = _DISCOVERY_EXPECTED["vibrator_number"].encode("ascii")
+
+    for entry in entries:
+        blob = syscfg[entry["target_offset"]:entry["target_end"]]
+        blob_hits = []
+        for transform_name, spec in transforms.items():
+            needle = spec["bytes"]
+            for rel in _v26_find_all(blob, needle):
+                item = {
+                    "child_tag": entry["child_tag"],
+                    "record_offset": entry["record_offset"],
+                    "relative_offset": rel,
+                    "absolute_offset": entry["target_offset"] + rel,
+                    "transform": transform_name,
+                    "transform_meta": spec["meta"],
+                    "matched_hex": needle.hex(),
+                    "context": _v27_context(blob, rel, len(needle)),
+                }
+                hits.append(item)
+                blob_hits.append(item)
+
+        vib_positions = _v26_find_all(blob, known_vibrator)
+        tag_upper = entry["child_tag"].upper()
+        semantic = any(token in tag_upper for token in
+                       ("ALS", "LIG", "LUX", "AMB", "SNS", "SEN", "CAL", "LC"))
+        if blob_hits or vib_positions or semantic:
+            blob_summaries.append({
+                "child_tag": entry["child_tag"],
+                "record_offset": entry["record_offset"],
+                "target_offset": entry["target_offset"],
+                "size": entry["size"],
+                "semantic_tag": semantic,
+                "known_vibrator_offsets": vib_positions,
+                "transform_hit_count": len(blob_hits),
+                "ascii_runs": _v27_ascii_runs(blob)[:100],
+                "preview": _v26_blob_preview(blob, limit=256),
+            })
+
+    # Transformace, ktere maji prilis mnoho hitu, jsou slaby signal. Unikatni
+    # shoda v jednom pointed blobu je nejzajimavejsi kandidat pro dalsi validaci.
+    transform_counts = {}
+    for item in hits:
+        transform_counts[item["transform"]] = transform_counts.get(item["transform"], 0) + 1
+    for item in hits:
+        item["global_transform_hit_count"] = transform_counts[item["transform"]]
+        item["unique_transform_hit"] = transform_counts[item["transform"]] == 1
+
+    hits.sort(key=lambda x: (not x["unique_transform_hit"],
+                             x["global_transform_hit_count"], x["child_tag"],
+                             x["relative_offset"]))
+
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v27", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+    with open(os.path.join(capture_dir, "AppleDiagnosticDataSysCfg.bin"), "wb") as fh:
+        fh.write(syscfg)
+
+    result = {
+        "ok": True,
+        "probe": "syscfg-als-transform-scan-v27",
+        "read_only": True,
+        "udid": udid,
+        "source": source,
+        "expected_als": _V24_ALS_EXPECTED,
+        "expected_binary_hex": re.sub(r"[^A-Fa-f0-9]", "", _V24_ALS_EXPECTED).lower(),
+        "transforms_tested": len(transforms),
+        "valid_btnc_entries": len(entries),
+        "invalid_btnc_records": len(invalid),
+        "transform_hits": hits[:2000],
+        "blob_summaries": blob_summaries,
+        "transform_counts": transform_counts,
+        "capture_dir": capture_dir,
+        "files": {"syscfg_bin": "AppleDiagnosticDataSysCfg.bin"},
+        "calls": calls,
+        "errors": errors,
+        "summary": {
+            "transforms_tested": len(transforms),
+            "transform_hits": len(hits),
+            "unique_transform_hits": sum(1 for x in hits if x["unique_transform_hit"]),
+            "interesting_blobs": len(blob_summaries),
+            "known_vibrator_blob_count": sum(1 for x in blob_summaries if x["known_vibrator_offsets"]),
+        },
+        "conclusion": (
+            "V27 tests full 5-byte reversible representations of the known ALS ID "
+            "inside dereferenced BTNC blobs. A unique full-value transform hit is a "
+            "candidate only; final ALS attribution still requires validation on a "
+            "second device with a different known ALS ID."
+        ),
+    }
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+    return result
+
+@app.route('/api/v27-syscfg-als-transform-scan/<udid>', methods=['GET'])
+def api_v27_syscfg_als_transform_scan(udid):
+    try:
+        result = _run_async_isolated(_v27_syscfg_als_transform_collect(udid), timeout=900)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "probe": "syscfg-als-transform-scan-v27",
+                        "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
 
 
 # ─── HARDWARE REPORT (agregace do sémantických sekcí) ────────────────────────
