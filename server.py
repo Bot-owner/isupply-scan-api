@@ -1113,7 +1113,7 @@ async def _read_hw_sources(udid):
 
     camera = await read_all("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
     pearl = await read_all("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
-    clcd = await read_all("display", ("AppleCLCD", "AppleDCP", "AppleM2ScalerCSCDriver"))
+    clcd = await read_all("display", ("AppleCLCD", "AppleCLCD2", "AppleDCP", "AppleMobileCLCD", "AppleM2ScalerCSCDriver"))
     battery = await read_all("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
     proximity = await read_all("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
     als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
@@ -1268,10 +1268,15 @@ _PROX_VARIANT_DISTANCE = {
 _PROX_VARIANT_FRONTFLEX = {
     "variant": "front_flex_proximity",
     "label": "Proximity senzor (přední flex)",
-    # Kandidatni uzly pro 13+. SerialNumber je zamerne az na konci a jen ve
-    # front/prox uzlech; device-SN guard nasledne odchyti device serial.
-    "sources": ("proximity", "pearl", "camera", "IOService"),
-    "keys": ("ProximitySensorSerialNumber", "ProxSensorSerialNumber",
+    # POTVRZENO full-scanem na iPhone 15 Pro: proximity flex cislo (JCID "Radar")
+    # lezi v AppleH16CamIn -> JasperSNUM = J143292679B1P1W1E. "Jasper" je Apple
+    # kodove jmeno pro TrueDepth/flood-illuminator assembly; na 13+ (bez
+    # samostatneho distance IC) je toto to relevantni cislo predniho flexu.
+    # JasperSNUM je proto prvni (potvrzeny) klic; ostatni zustavaji jako fallback
+    # pro pripadne jine generace. SerialNumber zamerne NENI (byl by device SN).
+    "sources": ("camera", "proximity", "pearl", "IOService"),
+    "keys": ("JasperSNUM",
+             "ProximitySensorSerialNumber", "ProxSensorSerialNumber",
              "FrontProximitySerialNumber", "FrontSensorSerialNumber",
              "FlexSerialNumber", "ModuleSerial"),
     "note": "Číslo předního flexu (proximity) – důležité kvůli párování displeje",
@@ -1437,12 +1442,18 @@ async def _component_serials_collect(udid, sources=None):
                 item["note"] = prox_variant["note"]
         if not applicable:
             # Generace komponentu nema -> to neni chyba cteni.
-            item["status"] = "not_applicable"
+            item["read_state"] = "not_applicable"
+            item["status"] = "UNAVAILABLE"          # badge "Nedostupné"
             item["note"] = "Tato generace tuto komponentu nemá"
         elif value:
-            item["status"] = "read"
+            # Mame aktualni hodnotu, ale nemame tovarni referenci (appka nema
+            # pristup k tovarni databazi Apple). Frontend badge -> "Bez tovarni
+            # reference" a v radku Aktualni zobrazi precteny serial z current_value.
+            item["read_state"] = "read"
+            item["status"] = "FACTORY_VALUE_UNAVAILABLE"
         else:
-            item["status"] = "unavailable"
+            item["read_state"] = "unavailable"
+            item["status"] = "CURRENT_VALUE_UNAVAILABLE"   # badge "Nelze přečíst"
         if key in discovery:
             item["discovery"] = discovery[key]
         components[key] = item
@@ -1461,7 +1472,7 @@ async def _component_serials_collect(udid, sources=None):
 
     return {
         "ok": True,
-        "reader": "strict-source-isolated-v29.3-proxrouting",
+        "reader": "strict-source-isolated-v29.4-jasper",
         "udid": udid,
         "components": components,
         "groups": groups,
@@ -1618,6 +1629,243 @@ def api_node_dump(udid):
     names = tuple(n.strip() for n in names_arg.split(',') if n.strip()) if names_arg else _NODE_DUMP_DEFAULT
     try:
         result = _run_async_isolated(_node_dump_collect(udid, names), timeout=120)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+# ─── FULL SCAN (V34) – kompletni lossless capture + reference matcher ─────────
+# READ-ONLY. Projde VSECHNY dostupne zdroje v telefonu (Lockdown all_values +
+# domeny, cely IORegistry po planech i pojmenovanych uzlech, MobileGestalt),
+# zplosti kazdy list, ulozi vse 1:1 na disk (discovery_v34/<udid>_<ts>/) se
+# SHA256 manifestem a - pokud zadas zname referencni hodnoty (?refs=a,b,c z
+# JCID/3uTools) - nahlasi PRESNE, kde se kazda vyskytuje (literal + hex + reverse
+# hex). Slouzi k discovery, NE jako produkcni ctecka. Hodnoty, ktere JCID
+# dekoduje a nejsou v telefonu doslova (napr. ALS 0311133F6B07), zde nevyskoci -
+# to je zamer: scan je rozlisi od tech, ktere jen cteme ze spatneho uzlu.
+_FS_LOCKDOWN_DOMAINS = (
+    "com.apple.mobile.battery", "com.apple.disk_usage", "com.apple.mobile.iTunes",
+    "com.apple.mobile.internal", "com.apple.mobile.lockdown", "com.apple.mobile.gestalt",
+    "com.apple.mobile.wireless_lockdown", "com.apple.international",
+    "com.apple.mobile.chaperone", "com.apple.fmip", "com.apple.mobile.user_preferences",
+    "com.apple.mobile.software_behavior", "com.apple.mobile.data_sync",
+)
+_FS_IOREG_NODES = (
+    "AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface",
+    "AppleH10PearlCam", "AppleH13PearlCam", "AppleH16PearlCam", "ApplePearlCam",
+    "AppleCLCD", "AppleCLCD2", "AppleDCP", "AppleDCPDPTX", "AppleMobileCLCD",
+    "IOMobileFramebuffer", "AppleM2ScalerCSCDriver", "disp0", "AppleH16PPipe", "AppleH13PPipe",
+    "AppleSmartBattery", "AppleARMPMUCharger",
+    "AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor",
+    "als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService",
+    "AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine",
+    "AppleHaptics", "Actuator",
+    "AppleSPU", "AppleSPUHIDDriver", "AppleAOP", "AppleAOPAudio", "AppleHIDEventDriver",
+    "AppleANS2NVMeController", "AppleNANDConfigAccess",
+    "AppleDiagnosticDataSysCfg", "AppleDiagnosticData",
+)
+_FS_GESTALT_KEYS = (
+    "AmbientLightSensorCalibration", "ProximitySensorCalibration", "DisplaySerialNumber",
+    "PanelSerialNumber", "MLBSerialNumber", "DeviceColor", "DisplayColorSpace",
+)
+
+def _fs_norm(s):
+    return re.sub(r"[^A-Za-z0-9]", "", str(s)).upper()
+
+def _fs_scalar(value):
+    """Vrati (text_or_None, hex_or_None) pro list-leaf."""
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        txt = raw.decode("ascii", errors="ignore").strip("\x00").strip()
+        return (txt or None, raw.hex())
+    if isinstance(value, bool):
+        return (str(value), None)
+    if isinstance(value, (str, int, float)):
+        s = str(value).strip()
+        return (s or None, None)
+    return (None, None)
+
+def _fs_walk(source, obj, leaves, depth=0, path="$"):
+    if depth > 100:
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            p = f"{path}.{k}"
+            if isinstance(v, (dict, list, tuple)):
+                _fs_walk(source, v, leaves, depth + 1, p)
+            else:
+                txt, hx = _fs_scalar(v)
+                if txt is not None or hx is not None:
+                    leaves.append({"source": source, "path": p, "key": str(k),
+                                   "text": txt, "hex": hx})
+    elif isinstance(obj, (list, tuple)):
+        for i, c in enumerate(obj):
+            _fs_walk(source, c, leaves, depth + 1, f"{path}[{i}]")
+
+def _fs_ref_forms(ref):
+    forms = set()
+    r = str(ref).strip()
+    n = _fs_norm(r)
+    if n:
+        forms.add(n)
+    hexstr = re.sub(r"[^0-9A-Fa-f]", "", r)
+    if len(hexstr) >= 4 and len(hexstr) % 2 == 0:
+        try:
+            b = bytes.fromhex(hexstr)
+            forms.add(b.hex().upper())
+            forms.add(b[::-1].hex().upper())
+        except Exception:
+            pass
+    return forms
+
+def _fs_match_all(leaves, ref_forms_map):
+    hits = []
+    for lf in leaves:
+        leaf_norm = _fs_norm(lf.get("text") or "")
+        leaf_hex = (lf.get("hex") or "").upper()
+        for ref, forms in ref_forms_map.items():
+            for f in forms:
+                if (leaf_norm and f in leaf_norm) or (leaf_hex and f in leaf_hex):
+                    hits.append({"ref": ref, "form": f, "source": lf["source"],
+                                 "path": lf["path"], "key": lf["key"],
+                                 "text": lf.get("text"), "hex": lf.get("hex")})
+                    break
+    return hits
+
+async def _full_scan_collect(udid, refs=None, save=True):
+    import inspect, hashlib, json as _json, datetime as _dt
+    calls = []
+    raw_sources = {}
+    leaves = []
+    ld, diag = await _open_diag(udid)
+
+    def record(source, obj, err=None):
+        ok = bool(obj) and isinstance(obj, (dict, list, tuple))
+        entry = {"source": source, "ok": ok}
+        if err:
+            entry["error"] = err
+        calls.append(entry)
+        if ok:
+            raw_sources[source] = obj
+            _fs_walk(source, obj, leaves)
+
+    async def _maybe(v):
+        return await v if inspect.isawaitable(v) else v
+
+    # 1) lockdown all_values
+    try:
+        record("lockdown:all_values", await _maybe(ld.all_values))
+    except Exception as e:
+        record("lockdown:all_values", None, f"{type(e).__name__}: {e}")
+    # 2) lockdown domains
+    for dom in _FS_LOCKDOWN_DOMAINS:
+        try:
+            record(f"lockdown:domain:{dom}", await _maybe(ld.get_value(domain=dom)))
+        except Exception as e:
+            record(f"lockdown:domain:{dom}", None, f"{type(e).__name__}: {e}")
+    # 3) ioregistry planes
+    for plane in ("IOService", "IODeviceTree", "IOPower"):
+        try:
+            record(f"ioregistry:plane:{plane}", await _maybe(diag.ioregistry(plane=plane)))
+        except Exception as e:
+            record(f"ioregistry:plane:{plane}", None, f"{type(e).__name__}: {e}")
+    # 4) ioregistry named nodes
+    for name in _FS_IOREG_NODES:
+        try:
+            record(f"ioregistry:name:{name}", await _maybe(diag.ioregistry(name=name)))
+        except Exception as e:
+            record(f"ioregistry:name:{name}", None, f"{type(e).__name__}: {e}")
+    # 5) mobilegestalt (defenzivne podle dostupne pymobiledevice3)
+    for meth in ("mobilegestalt", "get_mobilegestalt", "query_mobilegestalt"):
+        fn = getattr(diag, meth, None)
+        if not fn:
+            continue
+        try:
+            try:
+                obj = fn(keys=list(_FS_GESTALT_KEYS))
+            except TypeError:
+                obj = fn(list(_FS_GESTALT_KEYS))
+            record(f"diagnostics:{meth}", await _maybe(obj))
+        except Exception as e:
+            record(f"diagnostics:{meth}", None, f"{type(e).__name__}: {e}")
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    # reference matching
+    ref_list = [r.strip() for r in (refs or []) if r and r.strip()]
+    ref_forms_map = {r: _fs_ref_forms(r) for r in ref_list}
+    ref_hits = _fs_match_all(leaves, ref_forms_map) if ref_forms_map else []
+    found = sorted({h["ref"] for h in ref_hits})
+
+    # serial-like leaves (rychly lidsky prehled)
+    serial_like = []
+    for lf in leaves:
+        t = lf.get("text")
+        if (t and 6 <= len(t) <= 96
+                and re.fullmatch(r"[A-Za-z0-9:+._\-/]+", t)
+                and t.lower() not in ("true", "false", "none", "null", "unknown")):
+            serial_like.append(lf)
+
+    saved_dir = None
+    if save:
+        try:
+            base = _get_base_dir()
+        except Exception:
+            base = os.getcwd()
+        ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        saved_dir = os.path.join(base, "discovery_v34", f"{udid}_{ts}")
+        try:
+            os.makedirs(saved_dir, exist_ok=True)
+            manifest = []
+            for source, obj in raw_sources.items():
+                safe = _v30_safe(obj, max_binary=8_000_000)  # bez orezu = lossless
+                blob = _json.dumps(safe, ensure_ascii=False).encode("utf-8")
+                fname = re.sub(r"[^A-Za-z0-9]+", "_", source)[:120] + ".json"
+                with open(os.path.join(saved_dir, fname), "wb") as f:
+                    f.write(blob)
+                manifest.append({"source": source, "file": fname,
+                                 "sha256": hashlib.sha256(blob).hexdigest(),
+                                 "size": len(blob)})
+            with open(os.path.join(saved_dir, "_leaves.json"), "w", encoding="utf-8") as f:
+                _json.dump(leaves, f, ensure_ascii=False)
+            with open(os.path.join(saved_dir, "_manifest.json"), "w", encoding="utf-8") as f:
+                _json.dump({"udid": udid, "ts": ts, "sources": manifest,
+                            "leaf_count": len(leaves), "refs": ref_list,
+                            "ref_found": found}, f, ensure_ascii=False, indent=2)
+            if ref_hits:
+                with open(os.path.join(saved_dir, "_ref_hits.json"), "w", encoding="utf-8") as f:
+                    _json.dump(ref_hits, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            calls.append({"source": "save", "ok": False, "error": f"{type(e).__name__}: {e}"})
+            saved_dir = None
+
+    return {
+        "ok": True, "udid": udid, "probe": "full-scan-v34",
+        "sources_tried": len(calls),
+        "sources_ok": sum(1 for c in calls if c.get("ok")),
+        "leaf_count": len(leaves),
+        "serial_like_count": len(serial_like),
+        "refs": ref_list,
+        "ref_found": found,
+        "ref_missing": [r for r in ref_list if r not in set(found)],
+        "ref_hits": ref_hits,
+        "calls": calls,
+        "serial_like_sample": serial_like[:500],
+        "saved_dir": saved_dir,
+    }
+
+@app.route('/api/full-scan/<udid>', methods=['GET'])
+def api_full_scan(udid):
+    refs_arg = request.args.get('refs')
+    refs = [r for r in refs_arg.split(',')] if refs_arg else None
+    save = request.args.get('save', '1') not in ('0', 'false', 'no')
+    try:
+        result = _run_async_isolated(_full_scan_collect(udid, refs=refs, save=save), timeout=240)
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
