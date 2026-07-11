@@ -794,7 +794,7 @@ def api_version():
     return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.5-simplecard',
                     'endpoints': ['component-serials', 'hardware-report', 'devices',
                                   'prox-discovery', 'node-dump', 'full-scan',
-                                  'als-differential', 'service-map', 'als-channels',
+                                  'als-differential', 'service-map', 'als-channels', 'factory-check',
                                   'v30-component-map-probe', 'v31-sensor-storage-probe',
                                   'v32-exact-sensor-forensic', 'v33-als-last-mile-probe', 'v34-spu-hid-als-probe', 'v35-hid-report-probe', 'v36-als-spu-aop-map', 'v37-als-final-probe']})
 
@@ -1377,6 +1377,89 @@ def api_als_channels(udid):
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+# ─── FACTORY-CHECK (Varianta B feasibility) ──────────────────────────────────
+# READ-ONLY. Odpovi na otazku: existuje pro danou komponentu NEZAVISLA tovarni
+# reference, se kterou lze porovnavat aktualni hodnotu? Pro kazdou komponentu:
+#  - precte AKTUALNI serial (zive z uzlu dilu),
+#  - najde VSECHNY vyskyty toho serialu napric vsemi zdroji (vc. SysCfg/NVRAM/
+#    Lockdown domen z full-scanu),
+#  - rozhodne, zda se serial nachazi i v TOVARNIM/nezavislem zdroji (ne jen v
+#    zivem uzlu dilu). Pokud ano -> varianta B je pro tu komponentu mozna
+#    (ten zdroj se pri vymene dilu nezmeni -> detekce originality). Pokud se
+#    serial vyskytuje JEN v zivem uzlu -> tovarni reference neexistuje -> pro tu
+#    komponentu B nejde a je potreba fallback (C = baseline pri prijmu).
+_FACTORY_SOURCE_HINTS = ("syscfg", "nvram", "diagnosticdata", "lockdown:domain",
+                         "lockdown:all_values", "gestalt", "AppleDiagnosticData")
+_LIVE_SOURCE_HINTS = ("AppleH1", "CamIn", "PearlCam", "CLCD", "SmartBattery",
+                      "Prox", "als", "Haptics", "camera", "display", "battery")
+
+def _fc_classify_source(source):
+    s = (source or "").lower()
+    if any(h.lower() in s for h in _FACTORY_SOURCE_HINTS):
+        return "factory"
+    return "live"
+
+async def _factory_check_collect(udid):
+    # 1) aktualni hodnoty komponent
+    sources = await _read_hw_sources(udid)
+    comp = await _component_serials_collect(udid, sources=sources)
+    components = comp.get("components", {})
+
+    # 2) kompletni sada listu ze vsech zdroju (vc. SysCfg/NVRAM/domen)
+    fs = await _full_scan_collect(udid, refs=None, save=False,
+                                  transforms=False, deep=False, return_leaves=True)
+    leaves = fs.get("_all_leaves", []) or []
+
+    # index: normalizovany serial -> [(source, path, klasifikace)]
+    from collections import defaultdict
+    idx = defaultdict(list)
+    for lf in leaves:
+        t = lf.get("text")
+        if not t:
+            continue
+        key = re.sub(r"[^A-Za-z0-9]", "", t).upper()
+        idx[key].append((lf.get("source"), lf.get("path"), _fc_classify_source(lf.get("source"))))
+
+    report = {}
+    for ckey, c in components.items():
+        cur = c.get("current_value")
+        entry = {"label": c.get("label"), "current_value": cur,
+                 "occurrences": [], "factory_reference": False,
+                 "factory_source": None, "variant_B_possible": False}
+        if cur:
+            occ = idx.get(re.sub(r"[^A-Za-z0-9]", "", cur).upper(), [])
+            entry["occurrences"] = [{"source": s, "path": p, "type": t} for (s, p, t) in occ]
+            fac = [(s, p) for (s, p, t) in occ if t == "factory"]
+            if fac:
+                entry["factory_reference"] = True
+                entry["factory_source"] = {"source": fac[0][0], "path": fac[0][1]}
+                entry["variant_B_possible"] = True
+        report[ckey] = entry
+
+    possible = [k for k, v in report.items() if v["variant_B_possible"]]
+    return {
+        "ok": True, "udid": udid, "probe": "factory-check",
+        "note": ("variant_B_possible=true znamena, ze serial komponenty byl "
+                 "nalezen i v tovarnim/nezavislem zdroji (napr. SysCfg/NVRAM/"
+                 "Lockdown) - tam se pri vymene dilu nezmeni, takze jde delat "
+                 "tovarni vs aktualni porovnani. false = serial je jen v zivem "
+                 "uzlu dilu -> pro tu komponentu B nejde, nutny fallback C."),
+        "leaves_indexed": len(leaves),
+        "components": report,
+        "variant_B_components": possible,
+        "variant_B_count": len(possible),
+    }
+
+@app.route('/api/factory-check/<udid>', methods=['GET'])
+def api_factory_check(udid):
+    try:
+        result = _run_async_isolated(_factory_check_collect(udid), timeout=180)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
 
 
 
@@ -2102,7 +2185,7 @@ def _fs_match_transforms(leaves, ref_tforms_map):
                     break
     return hits
 
-async def _full_scan_collect(udid, refs=None, save=True, transforms=False, deep=False):
+async def _full_scan_collect(udid, refs=None, save=True, transforms=False, deep=False, return_leaves=False):
     import inspect, hashlib, json as _json, datetime as _dt
     calls = []
     raw_sources = {}
@@ -2225,7 +2308,7 @@ async def _full_scan_collect(udid, refs=None, save=True, transforms=False, deep=
             calls.append({"source": "save", "ok": False, "error": f"{type(e).__name__}: {e}"})
             saved_dir = None
 
-    return {
+    result = {
         "ok": True, "udid": udid, "probe": "full-scan-v34",
         "sources_tried": len(calls),
         "sources_ok": sum(1 for c in calls if c.get("ok")),
@@ -2244,6 +2327,9 @@ async def _full_scan_collect(udid, refs=None, save=True, transforms=False, deep=
         "serial_like_sample": serial_like[:500],
         "saved_dir": saved_dir,
     }
+    if return_leaves:
+        result["_all_leaves"] = leaves   # interni pouziti (factory-check), neexponuje endpoint
+    return result
 
 @app.route('/api/full-scan/<udid>', methods=['GET'])
 def api_full_scan(udid):
