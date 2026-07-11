@@ -6182,6 +6182,313 @@ def api_restore_logs():
 
 # ─── START ───────────────────────────────────────────────────────────────────
 
+
+
+# ─── V34 SPU HID ALS LAST-VALUE PROBE ───────────────────────────────────────
+# READ-ONLY. V33/full-plane dumps exposed the real topology:
+#   als  -> AppleSPUHIDInterface
+#   prox -> AppleSPUHIDInterface -> AppleSphinxProxHIDEventDriver
+# V34 targets those exact nodes/classes and scans every returned property/blob
+# for the known 3uTools ALS identifier and plausible 6-byte serial candidates.
+
+_V34_DEFAULT_ALS_REF = "0311133F6B07"
+_V34_TARGETS = (
+    "als", "prox",
+    "AppleSPUHIDInterface",
+    "AppleSphinxProxHIDEventDriver",
+    "AppleSPUHIDDriver", "AppleSPU", "AppleSPUHIDDevice",
+)
+
+def _v34_safe(value, max_binary=262144):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raw = bytes(value)
+        return {
+            "_type": "bytes",
+            "length": len(raw),
+            "hex": raw[:max_binary].hex().upper(),
+            "ascii": raw[:max_binary].decode("ascii", errors="replace").replace("\x00", "\\0"),
+            "truncated": len(raw) > max_binary,
+        }
+    if isinstance(value, dict):
+        return {str(k): _v34_safe(v, max_binary) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_v34_safe(v, max_binary) for v in value]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return repr(value)
+
+def _v34_leaf_raw(value):
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return bytes(value), "bytes"
+    if isinstance(value, str):
+        return value.encode("utf-8", errors="ignore"), "string"
+    if isinstance(value, int) and value >= 0:
+        n = max(1, (value.bit_length() + 7) // 8)
+        return value.to_bytes(n, "little"), "integer_le"
+    return None, None
+
+def _v34_walk(obj, path="$", depth=0):
+    if depth > 120:
+        return
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            p = f"{path}.{key}"
+            yield p, str(key), value
+            if isinstance(value, (dict, list, tuple)):
+                yield from _v34_walk(value, p, depth + 1)
+    elif isinstance(obj, (list, tuple)):
+        for i, value in enumerate(obj):
+            p = f"{path}[{i}]"
+            yield p, str(i), value
+            if isinstance(value, (dict, list, tuple)):
+                yield from _v34_walk(value, p, depth + 1)
+
+def _v34_patterns(ref):
+    compact = re.sub(r"[^A-Fa-f0-9]", "", str(ref or ""))
+    raw6 = bytes.fromhex(compact) if len(compact) % 2 == 0 else b""
+    pats = []
+    def add(name, raw):
+        if raw and raw not in [x[1] for x in pats]:
+            pats.append((name, raw))
+    add("ascii", str(ref).encode("ascii", errors="ignore"))
+    add("raw6", raw6)
+    add("raw6_reversed", raw6[::-1])
+    if len(raw6) == 6:
+        add("word16_le_swap", b"".join(raw6[i:i+2][::-1] for i in range(0, 6, 2)))
+        add("word16_order_reversed", b"".join(
+            [raw6[4:6], raw6[2:4], raw6[0:2]]
+        ))
+    add("utf16le", str(ref).encode("utf-16-le"))
+    add("utf16be", str(ref).encode("utf-16-be"))
+    return pats
+
+async def _v34_spu_hid_als_collect(udid, als_ref=None):
+    import inspect, datetime as _dt, plistlib, hashlib
+    ld, diag = await _open_diag(udid)
+    ref = (als_ref or _V34_DEFAULT_ALS_REF).strip()
+    patterns = _v34_patterns(ref)
+
+    calls, errors, sources = [], {}, []
+
+    async def capture(label, fn):
+        try:
+            obj = fn()
+            if inspect.isawaitable(obj):
+                obj = await obj
+            calls.append({
+                "source": label, "ok": True,
+                "result_type": type(obj).__name__,
+                "truthy": bool(obj),
+            })
+            sources.append((label, obj))
+            return obj
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            calls.append({"source": label, "ok": False, "error": err})
+            return None
+
+    # Exact topology targets discovered from V33 dumps.
+    for target in _V34_TARGETS:
+        await capture(
+            f"ioregistry:name:{target}",
+            lambda target=target: diag.ioregistry(name=target)
+        )
+
+    # Cross-check full planes, but V34 will specifically rank SPU/HID/ALS paths.
+    for plane in ("IOService", "IODeviceTree", "IOPower"):
+        await capture(
+            f"ioregistry:plane:{plane}",
+            lambda plane=plane: diag.ioregistry(plane=plane)
+        )
+
+    # Raw IORegistry requests with exact node names. Some relay builds expose
+    # more properties through raw request dictionaries than the helper method.
+    for target in _V34_TARGETS:
+        for key_name in ("EntryName", "Name", "CurrentEntry", "RegistryEntryName"):
+            payload = {"Request": "IORegistry", key_name: target}
+            await capture(
+                f"diagnostics:raw:IORegistry:{key_name}:{target}",
+                lambda payload=payload: diag._send_recv(payload)
+            )
+
+    hits, interesting, six_byte_candidates = [], [], []
+
+    for source, obj in sources:
+        for path, key, value in _v34_walk(obj):
+            raw, value_type = _v34_leaf_raw(value)
+            if raw is None:
+                continue
+
+            exact_here = []
+            for transform, needle in patterns:
+                start = 0
+                while needle:
+                    off = raw.find(needle, start)
+                    if off < 0:
+                        break
+                    exact_here.append({
+                        "transform": transform,
+                        "offset": off,
+                        "needle_hex": needle.hex().upper(),
+                    })
+                    start = off + 1
+            if exact_here:
+                hits.append({
+                    "source": source, "path": path, "key": key,
+                    "value_type": value_type, "raw_length": len(raw),
+                    "raw_hex": raw[:65536].hex().upper(),
+                    "exact_hits": exact_here,
+                })
+
+            norm = re.sub(r"[^a-z0-9]", "", f"{source} {path} {key}".lower())
+            toks = [t for t in (
+                "als", "ambient", "light", "spu", "hid", "sphinx",
+                "prox", "sensor", "serial", "module", "report",
+                "descriptor", "element", "calib", "factory", "vendor"
+            ) if t in norm]
+            if toks:
+                interesting.append({
+                    "source": source, "path": path, "key": key,
+                    "matched_tokens": toks, "value_type": value_type,
+                    "raw_length": len(raw),
+                    "raw_hex": raw[:32768].hex().upper(),
+                    "ascii": raw[:32768].decode("ascii", errors="replace").replace("\x00", "\\0"),
+                })
+
+                # ALS value shown by 3uTools is exactly six bytes rendered as hex.
+                # Collect every 6-byte leaf and every 6-byte window from short,
+                # ALS/SPU/HID-related binary properties for offline ranking.
+                if len(raw) == 6:
+                    six_byte_candidates.append({
+                        "source": source, "path": path, "key": key,
+                        "mode": "exact_leaf_6b", "offset": 0,
+                        "hex": raw.hex().upper(),
+                    })
+                elif value_type == "bytes" and 7 <= len(raw) <= 512:
+                    for off in range(0, len(raw) - 5):
+                        chunk = raw[off:off+6]
+                        six_byte_candidates.append({
+                            "source": source, "path": path, "key": key,
+                            "mode": "window_6b", "offset": off,
+                            "hex": chunk.hex().upper(),
+                        })
+
+    # De-duplicate.
+    def dedup(items, fields):
+        seen, out = set(), []
+        for item in items:
+            ident = tuple(str(item.get(f)) for f in fields)
+            if ident not in seen:
+                seen.add(ident)
+                out.append(item)
+        return out
+
+    hits = dedup(hits, ("source", "path", "key", "value_type"))
+    interesting = dedup(interesting, ("source", "path", "key", "value_type"))
+    six_byte_candidates = dedup(
+        six_byte_candidates, ("source", "path", "key", "mode", "offset", "hex")
+    )
+
+    # Prefer exact 6-byte leaves and ALS-specific paths.
+    def cand_score(row):
+        hay = re.sub(r"[^a-z0-9]", "", (
+            row["source"] + " " + row["path"] + " " + row["key"]
+        ).lower())
+        score = 100 if row["mode"] == "exact_leaf_6b" else 0
+        for token, pts in (
+            ("als", 80), ("ambient", 60), ("light", 40),
+            ("spu", 30), ("hid", 25), ("serial", 25),
+            ("module", 15), ("sensor", 15), ("report", 10),
+        ):
+            if token in hay:
+                score += pts
+        return score
+
+    for row in six_byte_candidates:
+        row["score"] = cand_score(row)
+    six_byte_candidates.sort(key=lambda x: (-x["score"], x["source"], x["path"], x["offset"]))
+    interesting.sort(key=lambda x: (-len(x["matched_tokens"]), x["source"], x["path"]))
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v34", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+
+    source_files = []
+    for idx, (label, obj) in enumerate(sources, 1):
+        safe_label = re.sub(r"[^A-Za-z0-9._-]+", "_", label)[:150]
+        base = f"{idx:03d}_{safe_label}"
+        safe_obj = _v34_safe(obj)
+        jpath = os.path.join(capture_dir, base + ".json")
+        with open(jpath, "w", encoding="utf-8") as fh:
+            json.dump(safe_obj, fh, ensure_ascii=False, indent=2)
+        source_files.append({"source": label, "file": os.path.basename(jpath)})
+
+        try:
+            bpath = os.path.join(capture_dir, base + ".plist_binary.bin")
+            with open(bpath, "wb") as fh:
+                fh.write(plistlib.dumps(obj, fmt=plistlib.FMT_BINARY))
+            source_files.append({"source": label, "file": os.path.basename(bpath)})
+        except Exception:
+            pass
+
+    result = {
+        "ok": True,
+        "probe": "spu-hid-als-last-value-v34",
+        "read_only": True,
+        "udid": udid,
+        "als_reference": ref,
+        "topology_hypothesis": {
+            "als": "als -> AppleSPUHIDInterface",
+            "prox": "prox -> AppleSPUHIDInterface -> AppleSphinxProxHIDEventDriver",
+        },
+        "exact_hits": hits,
+        "six_byte_candidates": six_byte_candidates[:5000],
+        "interesting_properties": interesting[:2000],
+        "calls": calls,
+        "errors": errors,
+        "capture_dir": capture_dir,
+        "captured_sources": source_files,
+        "summary": {
+            "exact_hits": len(hits),
+            "six_byte_candidates": len(six_byte_candidates),
+            "interesting_properties": len(interesting),
+            "calls_total": len(calls),
+            "calls_ok": sum(1 for c in calls if c.get("ok")),
+        },
+    }
+
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+
+    return result
+
+@app.route('/api/v34-spu-hid-als-probe/<udid>', methods=['GET'])
+def api_v34_spu_hid_als_probe(udid):
+    try:
+        als_ref = (request.args.get("als_ref") or _V34_DEFAULT_ALS_REF).strip()
+        result = _run_async_isolated(
+            _v34_spu_hid_als_collect(udid, als_ref=als_ref),
+            timeout=900
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "probe": "spu-hid-als-last-value-v34",
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
 if __name__ == '__main__':
     print("─" * 52)
     print("  iSupply Scan Server")
