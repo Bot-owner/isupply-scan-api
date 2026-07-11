@@ -791,8 +791,12 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'exact-sensor-forensic-v32',
-                    'endpoints': ['activation-diag', 'deep-sensor-discovery', 'v21-raw-capture', 'v22-targeted-ioreg', 'v23-apple-diagnostic-data', 'v24-syscfg-als-decode', 'v25-syscfg-record-map', 'v26-syscfg-btnc-directory', 'v27-syscfg-als-transform-scan', 'v28-cross-generation-reader', 'v29-strict-source-isolated-reader', 'v30-component-map-probe', 'v31-sensor-storage-probe', 'v32-exact-sensor-forensic']})
+    return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.5-simplecard',
+                    'endpoints': ['component-serials', 'hardware-report', 'devices',
+                                  'prox-discovery', 'node-dump', 'full-scan',
+                                  'als-differential',
+                                  'v30-component-map-probe', 'v31-sensor-storage-probe',
+                                  'v32-exact-sensor-forensic', 'v33-als-last-mile-probe']})
 
 @app.route('/api/activation-diag', methods=['POST'])
 def api_activation_diag():
@@ -1425,15 +1429,16 @@ async def _component_serials_collect(udid, sources=None):
     for key, label in _COMPONENT_SERIAL_LABELS.items():
         value = raw.get(key)
         applicable = _component_applicable(key, device_product_type)
+        # POZOR na zobrazeni: frontend (renderComponentCard) prepne na verifikacni
+        # kartu s radky "Tovarni:/Aktualni:" JAKMILE polozka obsahuje pole "status".
+        # Bez tovarni databaze Apple by "Tovarni:" byl vzdy "-" = prazdna kolonka.
+        # Proto ZAMERNE NEPOSILAME "status" -> frontend pouzije jednoduchou kartu,
+        # ktera ukaze velkou hodnotu (nebo "nedostupné"), bez prazdnych radku.
+        # Strojove citelny stav zustava v "read_state". Az bude tovarni DB, staci
+        # zacit posilat "status"+"factory_value" a rozsviti se verifikacni rezim.
         item = {"key": key, "label": label, "value": value,
                 "available": bool(value), "applicable": applicable,
-                # Frontend tile cte "Aktualni" z current_value a "Tovarni" z
-                # factory_value. Backend nema pristup k tovarni databazi Apple,
-                # takze factory_value je vzdy None (appka neurcuje original/vymena)
-                # a current_value = to, co telefon aktualne hlasi.
-                "current_value": value,
-                "factory_value": None,
-                "match": None}
+                "current_value": value, "factory_value": None, "match": None}
         # Proximity slot: prepis label/variant/note podle generace zarizeni.
         if key == _PROX_SLOT_KEY:
             item["label"] = prox_variant["label"]
@@ -1441,19 +1446,12 @@ async def _component_serials_collect(udid, sources=None):
             if prox_variant["note"]:
                 item["note"] = prox_variant["note"]
         if not applicable:
-            # Generace komponentu nema -> to neni chyba cteni.
             item["read_state"] = "not_applicable"
-            item["status"] = "UNAVAILABLE"          # badge "Nedostupné"
             item["note"] = "Tato generace tuto komponentu nemá"
         elif value:
-            # Mame aktualni hodnotu, ale nemame tovarni referenci (appka nema
-            # pristup k tovarni databazi Apple). Frontend badge -> "Bez tovarni
-            # reference" a v radku Aktualni zobrazi precteny serial z current_value.
             item["read_state"] = "read"
-            item["status"] = "FACTORY_VALUE_UNAVAILABLE"
         else:
             item["read_state"] = "unavailable"
-            item["status"] = "CURRENT_VALUE_UNAVAILABLE"   # badge "Nelze přečíst"
         if key in discovery:
             item["discovery"] = discovery[key]
         components[key] = item
@@ -1472,7 +1470,7 @@ async def _component_serials_collect(udid, sources=None):
 
     return {
         "ok": True,
-        "reader": "strict-source-isolated-v29.4-jasper",
+        "reader": "strict-source-isolated-v29.5-simplecard",
         "udid": udid,
         "components": components,
         "groups": groups,
@@ -1661,6 +1659,8 @@ _FS_IOREG_NODES = (
     "AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine",
     "AppleHaptics", "Actuator",
     "AppleSPU", "AppleSPUHIDDriver", "AppleAOP", "AppleAOPAudio", "AppleHIDEventDriver",
+    "AppleSPUProxSensor", "AppleSPUProx", "colorsensor", "AppleColorSensor",
+    "AppleAmbientLightSensorSPU", "AppleAOPVoiceTrigger",
     "AppleANS2NVMeController", "AppleNANDConfigAccess",
     "AppleDiagnosticDataSysCfg", "AppleDiagnosticData",
 )
@@ -1732,7 +1732,57 @@ def _fs_match_all(leaves, ref_forms_map):
                     break
     return hits
 
-async def _full_scan_collect(udid, refs=None, save=True):
+def _fs_transform_forms(ref, deep=False):
+    """label -> HEXUPPER pod reverzibilnimi transformacemi. Slouzi k hledani
+    hodnot, ktere nejsou v telefonu doslova (napr. ALS 0311133F6B07), ale mohou
+    byt ulozene prehazene/invertovane/jako okno uvnitr kalibracniho blobu."""
+    out = {}
+    r = str(ref).strip()
+    def addhex(lbl, bb):
+        if bb:
+            out[lbl] = bytes(bb).hex().upper()
+    hexstr = re.sub(r"[^0-9A-Fa-f]", "", r)
+    if len(hexstr) >= 4 and len(hexstr) % 2 == 0:
+        b = bytes.fromhex(hexstr)
+        addhex("raw", b)
+        addhex("reverse", b[::-1])
+        addhex("invert", bytes((~x) & 0xFF for x in b))
+        addhex("xorFF", bytes(x ^ 0xFF for x in b))
+        addhex("nibble_swap", bytes(((x << 4 | x >> 4) & 0xFF) for x in b))
+        addhex("bit_reverse", bytes(int(f"{x:08b}"[::-1], 2) for x in b))
+        if len(b) >= 4:
+            addhex("tail32_rev", b[:-4] + b[-4:][::-1])
+            addhex("head4_rev", b[:4][::-1] + b[4:])
+            addhex("swap_halves", b[len(b) // 2:] + b[:len(b) // 2])
+        if deep:
+            for rr in range(1, len(b)):
+                addhex(f"rot{rr}", b[rr:] + b[:rr])
+            for m in range(1, 256):
+                addhex(f"xor{m:02x}", bytes(x ^ m for x in b))
+    an = re.sub(r"[^A-Za-z0-9]", "", r).upper()
+    if an:
+        out["ascii"] = an
+        out["ascii_rev"] = an[::-1]
+    return out
+
+def _fs_match_transforms(leaves, ref_tforms_map):
+    hits = []
+    for lf in leaves:
+        leaf_hex = (lf.get("hex") or "").upper()
+        leaf_norm = _fs_norm(lf.get("text") or "")
+        if not leaf_hex and not leaf_norm:
+            continue
+        for ref, tforms in ref_tforms_map.items():
+            for label, form in tforms.items():
+                if form and ((leaf_hex and form in leaf_hex) or (leaf_norm and form in leaf_norm)):
+                    hits.append({"ref": ref, "transform": label, "form": form,
+                                 "source": lf["source"], "path": lf["path"],
+                                 "key": lf["key"], "text": lf.get("text"),
+                                 "hex": lf.get("hex")})
+                    break
+    return hits
+
+async def _full_scan_collect(udid, refs=None, save=True, transforms=False, deep=False):
     import inspect, hashlib, json as _json, datetime as _dt
     calls = []
     raw_sources = {}
@@ -1802,6 +1852,14 @@ async def _full_scan_collect(udid, refs=None, save=True):
     ref_hits = _fs_match_all(leaves, ref_forms_map) if ref_forms_map else []
     found = sorted({h["ref"] for h in ref_hits})
 
+    # rozsirene transformacni hledani (pro hodnoty, ktere nejsou v datech doslova)
+    transform_hits = []
+    transform_found = []
+    if transforms and ref_list:
+        ref_tforms_map = {r: _fs_transform_forms(r, deep=deep) for r in ref_list}
+        transform_hits = _fs_match_transforms(leaves, ref_tforms_map)
+        transform_found = sorted({h["ref"] for h in transform_hits})
+
     # serial-like leaves (rychly lidsky prehled)
     serial_like = []
     for lf in leaves:
@@ -1840,6 +1898,9 @@ async def _full_scan_collect(udid, refs=None, save=True):
             if ref_hits:
                 with open(os.path.join(saved_dir, "_ref_hits.json"), "w", encoding="utf-8") as f:
                     _json.dump(ref_hits, f, ensure_ascii=False, indent=2)
+            if transform_hits:
+                with open(os.path.join(saved_dir, "_transform_hits.json"), "w", encoding="utf-8") as f:
+                    _json.dump(transform_hits, f, ensure_ascii=False, indent=2)
         except Exception as e:
             calls.append({"source": "save", "ok": False, "error": f"{type(e).__name__}: {e}"})
             saved_dir = None
@@ -1854,6 +1915,11 @@ async def _full_scan_collect(udid, refs=None, save=True):
         "ref_found": found,
         "ref_missing": [r for r in ref_list if r not in set(found)],
         "ref_hits": ref_hits,
+        "transforms_enabled": bool(transforms),
+        "transform_deep": bool(deep),
+        "transform_found": transform_found,
+        "transform_hits": transform_hits[:500],
+        "transform_hit_count": len(transform_hits),
         "calls": calls,
         "serial_like_sample": serial_like[:500],
         "saved_dir": saved_dir,
@@ -1864,11 +1930,141 @@ def api_full_scan(udid):
     refs_arg = request.args.get('refs')
     refs = [r for r in refs_arg.split(',')] if refs_arg else None
     save = request.args.get('save', '1') not in ('0', 'false', 'no')
+    transforms = request.args.get('transforms', '0') in ('1', 'true', 'yes', 'on')
+    deep = request.args.get('deep', '0') in ('1', 'true', 'yes', 'on')
     try:
-        result = _run_async_isolated(_full_scan_collect(udid, refs=refs, save=save), timeout=240)
+        result = _run_async_isolated(
+            _full_scan_collect(udid, refs=refs, save=save, transforms=transforms, deep=deep),
+            timeout=300)
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+# ─── ALS DIFFERENTIAL ────────────────────────────────────────────────────────
+# Porovna dva ulozene full-scan dumpy (dva ruzne telefony STEJNE generace s
+# RUZNOU ALS hodnotou) a najde misto, kde se bajty meni SOUCASNE s ALS hodnotou.
+# Princip: pro kazdy spolecny leaf hleda offset, kde telefon1 obsahuje formu
+# als1 a telefon2 na STEJNEM offsetu formu als2 (pod stejnou transformaci) =
+# to je zdroj, ze ktereho JCID ALS bere. Kdyz nic nekoreluje pod transformaci,
+# vypise localizovane rozdilove okenka (bajty ktere se lisi) k rucni inspekci.
+def _als_load_leaves(dir_path):
+    import json as _json
+    with open(os.path.join(dir_path, "_leaves.json"), "r", encoding="utf-8") as f:
+        return _json.load(f)
+
+def _als_find_latest_dir(udid):
+    try:
+        base = _get_base_dir()
+    except Exception:
+        base = os.getcwd()
+    root = os.path.join(base, "discovery_v34")
+    if not os.path.isdir(root):
+        return None
+    cands = sorted(d for d in os.listdir(root) if d.startswith(udid + "_"))
+    return os.path.join(root, cands[-1]) if cands else None
+
+def _als_index(leaves):
+    idx = {}
+    for lf in leaves:
+        idx[(lf.get("source"), lf.get("path"), lf.get("key"))] = lf
+    return idx
+
+def _als_covary(h1, h2, f1, f2):
+    """Offsety, kde h1 ma f1 a h2 ma f2 na STEJNE pozici (co-variace)."""
+    hits = []
+    if not (h1 and h2 and f1 and f2) or len(f1) != len(f2):
+        return hits
+    start = 0
+    while True:
+        i = h1.find(f1, start)
+        if i < 0:
+            break
+        if h2[i:i + len(f2)] == f2:
+            hits.append(i)
+        start = i + 1
+    return hits
+
+def _als_forms(als, deep=True):
+    """Transform-formy plne hodnoty i jejiho variabilniho ocasu (bez 1. bajtu),
+    protoze ALS ma spolecny prefix (03..) a ulozene muze byt jen variabilni cast."""
+    forms = dict(_fs_transform_forms(als, deep=deep))
+    hexstr = re.sub(r"[^0-9A-Fa-f]", "", str(als))
+    if len(hexstr) >= 4 and len(hexstr) % 2 == 0 and len(hexstr) > 2:
+        tail = bytes.fromhex(hexstr)[1:]  # zahod prvni bajt (prefix)
+        for lbl, val in _fs_transform_forms(tail.hex(), deep=deep).items():
+            forms[f"tail_{lbl}"] = val
+    return forms
+
+def _als_differential(dir1, dir2, als1, als2, deep=True):
+    l1, l2 = _als_load_leaves(dir1), _als_load_leaves(dir2)
+    i1, i2 = _als_index(l1), _als_index(l2)
+    common = set(i1) & set(i2)
+    tf1, tf2 = _als_forms(als1, deep), _als_forms(als2, deep)
+    shared_labels = set(tf1) & set(tf2)
+
+    covary_hits = []
+    diff_windows = []
+    for k in common:
+        a, b = i1[k], i2[k]
+        h1 = (a.get("hex") or "").upper()
+        h2 = (b.get("hex") or "").upper()
+        # 1) transform co-variace na stejnem offsetu
+        for label in shared_labels:
+            for off in _als_covary(h1, h2, tf1[label], tf2[label]):
+                covary_hits.append({"source": k[0], "path": k[1], "key": k[2],
+                                    "transform": label, "offset_hex": off,
+                                    "form1": tf1[label], "form2": tf2[label]})
+        # 2) obecne lokalizovane rozdilove okno (stejna delka, mala odlisna oblast)
+        if h1 and h2 and len(h1) == len(h2) and h1 != h2:
+            diffs = [j for j in range(0, len(h1), 2) if h1[j:j + 2] != h2[j:j + 2]]
+            if diffs:
+                span = (max(diffs) - min(diffs)) // 2 + 1
+                if span <= 12:  # jen male, localizovane zmeny (kandidat na ALS)
+                    diff_windows.append({
+                        "source": k[0], "path": k[1], "key": k[2],
+                        "diff_bytes": len(diffs),
+                        "span_bytes": span,
+                        "v1": h1[min(diffs):max(diffs) + 2],
+                        "v2": h2[min(diffs):max(diffs) + 2],
+                    })
+    # okenka s poctem odlisnych bajtu ~ delka ALS variabilni casti nahoru
+    diff_windows.sort(key=lambda w: (w["diff_bytes"], w["span_bytes"]))
+    return {
+        "ok": True, "probe": "als-differential",
+        "dir1": dir1, "dir2": dir2, "als1": als1, "als2": als2,
+        "common_leaves": len(common),
+        "covary_count": len(covary_hits),
+        "covary_hits": covary_hits[:200],
+        "diff_window_count": len(diff_windows),
+        "diff_windows_sample": diff_windows[:300],
+    }
+
+@app.route('/api/als-differential', methods=['GET'])
+def api_als_differential():
+    als1 = request.args.get('als1')
+    als2 = request.args.get('als2')
+    dir1 = request.args.get('dir1')
+    dir2 = request.args.get('dir2')
+    udid1 = request.args.get('udid1')
+    udid2 = request.args.get('udid2')
+    deep = request.args.get('deep', '1') in ('1', 'true', 'yes', 'on')
+    if not dir1 and udid1:
+        dir1 = _als_find_latest_dir(udid1)
+    if not dir2 and udid2:
+        dir2 = _als_find_latest_dir(udid2)
+    if not (dir1 and dir2 and als1 and als2):
+        return jsonify({'ok': False, 'error': 'Vyzaduje als1, als2 a bud dir1/dir2 nebo udid1/udid2 '
+                        '(z nichz se najde posledni dump). Nejdriv spust full-scan na obou telefonech.',
+                        'dir1': dir1, 'dir2': dir2}), 200
+    try:
+        result = _als_differential(dir1, dir2, als1, als2, deep=deep)
+        return jsonify(result), 200
+    except FileNotFoundError as exc:
+        return jsonify({'ok': False, 'error': f'Dump nenalezen: {exc}. Spust full-scan na obou telefonech.'}), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
 
 
 
@@ -2420,6 +2616,166 @@ def api_v32_exact_sensor_forensic(udid):
             },
             "error": f"{type(exc).__name__}: {exc}",
         }), 200
+
+
+# ─── V33 ALS LAST-MILE PROBE ────────────────────────────────────────────────
+# READ-ONLY. 3uTools on the same iPhone 15 Pro reads ALS 0311133F6B07.
+# V32 proved it is not present as a plain IORegistry leaf. V33 therefore scans
+# RAW diagnostics replies, MobileGestalt/calibration requests and recursively
+# searches the complete serialized reply (plist/binary-plist/json/repr), not
+# only leaf values. It also searches the 6 raw bytes 03 11 13 3F 6B 07 and
+# byte/word reversed variants.
+_V33_DEFAULT_ALS_REF = "0311133F6B07"
+_V33_MG_KEYS = (
+    "AmbientLightSensorSerialNumber", "ALSSerialNumber", "AmbientLightSerialNumber",
+    "AmbientLightSensorCalibration", "ALSCalibration", "LightSensorCalibration",
+    "SensorCalibration", "SensorCalibrationData", "CalibrationData",
+    "ProximitySensorCalibration", "SysCfg", "SysCfgDict",
+    "ambient-light-sensor", "als", "light-sensor", "saca",
+)
+_V33_RAW_REQUESTS = (
+    "Diagnostics", "MobileGestalt", "IORegistry", "All", "NAND", "WiFi",
+    "GasGauge", "System", "AppleDiagnosticData", "SysCfg",
+)
+
+def _v33_patterns(ref):
+    compact = re.sub(r"[^0-9A-Fa-f]", "", str(ref or ""))
+    raw = bytes.fromhex(compact) if compact and len(compact) % 2 == 0 else b""
+    out = []
+    def add(name, value):
+        if value and not any(v == value for _, v in out):
+            out.append((name, value))
+    add("ascii", str(ref).encode("ascii", errors="ignore"))
+    add("raw6", raw)
+    add("raw6_reversed", raw[::-1])
+    if raw:
+        add("word16_le_swap", b"".join(raw[i:i+2][::-1] for i in range(0, len(raw), 2)))
+        add("word16_order_reversed", b"".join([raw[i:i+2] for i in range(0, len(raw), 2)][::-1]))
+        add("utf16le", str(ref).encode("utf-16-le"))
+        add("utf16be", str(ref).encode("utf-16-be"))
+    return out
+
+def _v33_serializations(obj):
+    import plistlib
+    blobs = []
+    def add(name, raw):
+        if isinstance(raw, (bytes, bytearray)) and raw and not any(x[1] == bytes(raw) for x in blobs):
+            blobs.append((name, bytes(raw)))
+    if isinstance(obj, (bytes, bytearray, memoryview)):
+        add("raw", bytes(obj))
+    try: add("plist_xml", plistlib.dumps(obj, fmt=plistlib.FMT_XML, sort_keys=False))
+    except Exception: pass
+    try: add("plist_binary", plistlib.dumps(obj, fmt=plistlib.FMT_BINARY, sort_keys=False))
+    except Exception: pass
+    try: add("json", json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8"))
+    except Exception: pass
+    try: add("repr", repr(obj).encode("utf-8", errors="replace"))
+    except Exception: pass
+    return blobs
+
+def _v33_scan_blob(source, encoding, raw, patterns):
+    hits = []
+    for transform, needle in patterns:
+        start = 0
+        while needle:
+            pos = raw.find(needle, start)
+            if pos < 0: break
+            lo, hi = max(0, pos - 96), min(len(raw), pos + len(needle) + 96)
+            hits.append({
+                "source": source, "serialization": encoding, "transform": transform,
+                "offset": pos, "needle_hex": needle.hex().upper(),
+                "context_hex": raw[lo:hi].hex().upper(),
+                "context_ascii": raw[lo:hi].decode("ascii", errors="replace").replace("\x00", "\\0"),
+            })
+            start = pos + 1
+    return hits
+
+async def _v33_als_last_mile_collect(udid, als_ref=None):
+    import inspect, datetime as _dt
+    ref = als_ref or _V33_DEFAULT_ALS_REF
+    patterns = _v33_patterns(ref)
+    ld, diag = await _open_diag(udid)
+    calls, errors, hits, captured = [], {}, [], []
+
+    async def capture(label, fn):
+        try:
+            value = fn()
+            if inspect.isawaitable(value): value = await value
+            calls.append({"source": label, "ok": True, "result_type": type(value).__name__})
+            captured.append((label, value))
+            for enc, blob in _v33_serializations(value):
+                hits.extend(_v33_scan_blob(label, enc, blob, patterns))
+            return value
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors[label] = err
+            calls.append({"source": label, "ok": False, "error": err})
+            return None
+
+    await capture("lockdown:all_values", lambda: ld.all_values)
+    for domain in ("com.apple.mobile.internal", "com.apple.mobile.lockdown",
+                   "com.apple.mobile.gestalt", "com.apple.mobile.iTunes"):
+        await capture(f"lockdown:domain:{domain}", lambda domain=domain: ld.get_value(domain=domain))
+
+    # Batch + one-key-at-a-time MobileGestalt. A private implementation may
+    # return a key only when queried separately.
+    await capture("diagnostics:MobileGestalt:batch", lambda: diag._send_recv({
+        "Request": "MobileGestalt", "MobileGestaltKeys": list(_V33_MG_KEYS)}))
+    for key in _V33_MG_KEYS:
+        await capture(f"diagnostics:MobileGestalt:{key}", lambda key=key: diag._send_recv({
+            "Request": "MobileGestalt", "MobileGestaltKeys": [key]}))
+
+    for req in _V33_RAW_REQUESTS:
+        payload = {"Request": req}
+        if req == "MobileGestalt": payload["MobileGestaltKeys"] = list(_V33_MG_KEYS)
+        if req == "IORegistry": payload["CurrentPlane"] = "IOService"
+        await capture(f"diagnostics:raw:{req}", lambda payload=payload: diag._send_recv(payload))
+
+    for plane in ("IOService", "IODeviceTree", "IOPower"):
+        await capture(f"ioregistry:plane:{plane}", lambda plane=plane: diag.ioregistry(plane=plane))
+
+    # Persist every reply locally so we can diff it against another phone later.
+    stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid = re.sub(r"[^A-Za-z0-9._-]", "_", udid)
+    capture_dir = os.path.join(BASE_DIR, "discovery_v33", f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir, exist_ok=True)
+    manifest_sources = []
+    for idx, (label, value) in enumerate(captured, 1):
+        safe_label = re.sub(r"[^A-Za-z0-9._-]+", "_", label)[:100]
+        for enc, blob in _v33_serializations(value):
+            fn = f"{idx:03d}_{safe_label}.{enc}.bin"
+            with open(os.path.join(capture_dir, fn), "wb") as fh: fh.write(blob)
+            manifest_sources.append({"source": label, "serialization": enc,
+                                     "file": fn, "length": len(blob)})
+
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr): await cr
+    except Exception: pass
+
+    result = {
+        "ok": True, "probe": "als-last-mile-v33", "read_only": True,
+        "udid": udid, "als_reference": ref,
+        "searched_patterns": [{"transform": n, "hex": b.hex().upper(), "length": len(b)} for n,b in patterns],
+        "exact_hits": hits, "capture_dir": capture_dir,
+        "captured_sources": manifest_sources, "calls": calls, "errors": errors,
+        "summary": {"exact_hits": len(hits), "calls_total": len(calls),
+                    "calls_ok": sum(1 for c in calls if c.get("ok")),
+                    "captured_files": len(manifest_sources)},
+    }
+    with open(os.path.join(capture_dir, "manifest.json"), "w", encoding="utf-8") as fh:
+        json.dump(result, fh, ensure_ascii=False, indent=2)
+    return result
+
+@app.route('/api/v33-als-last-mile-probe/<udid>', methods=['GET'])
+def api_v33_als_last_mile_probe(udid):
+    als_ref = (request.args.get("als_ref") or _V33_DEFAULT_ALS_REF).strip()
+    try:
+        result = _run_async_isolated(_v33_als_last_mile_collect(udid, als_ref), timeout=900)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({"ok": False, "probe": "als-last-mile-v33", "udid": udid,
+                        "als_reference": als_ref, "error": f"{type(exc).__name__}: {exc}"}), 200
 
 
 # ─── DOT / TRUEDEPTH PROJECTOR EX-FACTORY DISCOVERY ─────────────────────────
@@ -5156,7 +5512,12 @@ def usb_events():
 
 @app.route('/api/devices')
 def api_devices():
-    return jsonify({'ok': True, 'devices': list(connected_devices.values())})
+    devs = []
+    for uid, info in connected_devices.items():
+        d = dict(info) if isinstance(info, dict) else {'info': info}
+        d.setdefault('udid', uid)   # zaruci, ze UDID je videt (napr. pro full-scan/differential)
+        devs.append(d)
+    return jsonify({'ok': True, 'count': len(devs), 'devices': devs})
 
 @app.route('/api/device-vals/<udid>')
 def api_device_vals(udid):
