@@ -794,7 +794,7 @@ def api_version():
     return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.5-simplecard',
                     'endpoints': ['component-serials', 'hardware-report', 'devices',
                                   'prox-discovery', 'node-dump', 'full-scan',
-                                  'als-differential', 'service-map',
+                                  'als-differential', 'service-map', 'als-channels',
                                   'v30-component-map-probe', 'v31-sensor-storage-probe',
                                   'v32-exact-sensor-forensic', 'v33-als-last-mile-probe', 'v34-spu-hid-als-probe', 'v35-hid-report-probe', 'v36-als-spu-aop-map', 'v37-als-final-probe']})
 
@@ -1183,6 +1183,201 @@ def api_service_map(udid):
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+# ─── ALS / LIVE-IDENTITY MULTI-CHANNEL PROBE (Faze 2) ────────────────────────
+# READ-ONLY. Zkusi kanaly, ktere jsme JESTE nevyuzili a maji sanci vydat live
+# identitu komponent (napr. ALS 0311133F6B07): diag.info, cileny mobilegestalt,
+# get_battery/get_wifi, read-only handshake com.apple.atc a kratky odposlech
+# syslogu. VSE se prozene reference-matcherem proti zadanym hodnotam (?refs=).
+#
+# BEZPECNOST: NIKDY nevolame mutujici metody (action/restart/shutdown/sleep).
+# ATC a syslog se jen OTEVROU a PASIVNE ctou s kratkym timeoutem - zadne
+# prikazy se do nich neposilaji, nic se na telefonu nemeni.
+_MG_SENSOR_KEYS = (
+    "AmbientLightSensorCapability", "ProximitySensorCapability",
+    "DisplaySerialNumber", "PanelSerialNumber", "DeviceColor",
+    "FrontFacingCameraModuleSerialNumber", "RearFacingCameraModuleSerialNumber",
+    "SensorHubSerialNumber", "ModuleSerialNumber", "MLBSerialNumber",
+    "SerialNumber", "DiagData",
+)
+
+async def _als_channels_collect(udid, refs=None):
+    import inspect
+    ld, diag = await _open_diag(udid)
+    leaves = []
+    channels = []
+
+    async def _maybe(v):
+        return await v if inspect.isawaitable(v) else v
+
+    def take(name, obj, err=None):
+        ok = isinstance(obj, (dict, list, tuple)) and bool(obj)
+        rec = {"channel": name, "ok": ok}
+        if err:
+            rec["error"] = err
+        channels.append(rec)
+        if ok:
+            _fs_walk(f"channel:{name}", obj, leaves)
+        elif obj not in (None, {}, [], ""):
+            # skalar / string vysledek taky zaznamenej
+            _fs_walk(f"channel:{name}", {"value": obj}, leaves)
+
+    # 1) diag.info() - read-only souhrn (nikdy jsme nevolali)
+    fn = getattr(diag, "info", None)
+    if callable(fn):
+        try:
+            take("diag.info", await _maybe(fn()))
+        except Exception as e:
+            take("diag.info", None, f"{type(e).__name__}: {e}")
+
+    # 2) mobilegestalt na cilene senzorove klice (read-only)
+    fn = getattr(diag, "mobilegestalt", None)
+    if callable(fn):
+        try:
+            try:
+                obj = fn(keys=list(_MG_SENSOR_KEYS))
+            except TypeError:
+                obj = fn(list(_MG_SENSOR_KEYS))
+            take("diag.mobilegestalt", await _maybe(obj))
+        except Exception as e:
+            take("diag.mobilegestalt", None, f"{type(e).__name__}: {e}")
+
+    # 3) get_battery / get_wifi (read-only)
+    for m in ("get_battery", "get_wifi"):
+        fn = getattr(diag, m, None)
+        if callable(fn):
+            try:
+                take(f"diag.{m}", await _maybe(fn()))
+            except Exception as e:
+                take(f"diag.{m}", None, f"{type(e).__name__}: {e}")
+
+    # zavri diagnostics
+    try:
+        cr = diag.close()
+        if inspect.isawaitable(cr):
+            await cr
+    except Exception:
+        pass
+
+    # 4) com.apple.atc - POUZE otevrit + pasivne precist pripadny banner, zavrit.
+    #    Zadne prikazy se neposilaji (AST je citliva zona).
+    start_fn = getattr(ld, "start_lockdown_service", None) or getattr(ld, "start_service", None)
+    if callable(start_fn):
+        atc = None
+        try:
+            atc = start_fn("com.apple.atc")
+            if inspect.isawaitable(atc):
+                atc = await atc
+            banner = None
+            for rm in ("recv", "receive", "read"):
+                rfn = getattr(atc, rm, None)
+                if callable(rfn):
+                    try:
+                        # kratky, neblokujici pokus o precteni uvodniho banneru
+                        if hasattr(atc, "settimeout"):
+                            try:
+                                atc.settimeout(2.0)
+                            except Exception:
+                                pass
+                        data = rfn(4096) if rm != "read" else rfn(4096)
+                        if inspect.isawaitable(data):
+                            data = await data
+                        banner = data
+                    except Exception:
+                        pass
+                    break
+            take("atc.banner", {"raw": banner.hex() if isinstance(banner, (bytes, bytearray)) else banner}
+                 if banner else {}, None if banner else "no passive banner")
+        except Exception as e:
+            take("atc.open", None, f"{type(e).__name__}: {e}")
+        finally:
+            try:
+                closer = getattr(atc, "close", None)
+                if callable(closer):
+                    r = closer()
+                    if inspect.isawaitable(r):
+                        await r
+            except Exception:
+                pass
+
+    # 5) syslog - kratky pasivni odposlech (~3s), grep serial-like / refs
+    ref_list = [r.strip() for r in (refs or []) if r and r.strip()]
+    ref_norms = [re.sub(r"[^A-Za-z0-9]", "", r).upper() for r in ref_list]
+    syslog_hits = []
+    if callable(start_fn):
+        import time as _t
+        svc = None
+        try:
+            svc = start_fn("com.apple.syslog_relay")
+            if inspect.isawaitable(svc):
+                svc = await svc
+            if hasattr(svc, "settimeout"):
+                try:
+                    svc.settimeout(1.0)
+                except Exception:
+                    pass
+            rfn = getattr(svc, "recv", None) or getattr(svc, "read", None)
+            deadline = _t.time() + 3.0
+            buf = b""
+            while _t.time() < deadline and rfn:
+                try:
+                    chunk = rfn(4096)
+                    if inspect.isawaitable(chunk):
+                        chunk = await chunk
+                    if not chunk:
+                        break
+                    buf += chunk if isinstance(chunk, (bytes, bytearray)) else str(chunk).encode()
+                except Exception:
+                    break
+            text = buf.decode("utf-8", errors="ignore")
+            up = re.sub(r"[^A-Za-z0-9]", "", text).upper()
+            for r, rn in zip(ref_list, ref_norms):
+                if rn and rn in up:
+                    syslog_hits.append(r)
+            channels.append({"channel": "syslog(3s)", "ok": bool(text),
+                             "bytes": len(buf), "ref_hits": syslog_hits})
+        except Exception as e:
+            channels.append({"channel": "syslog(3s)", "ok": False, "error": f"{type(e).__name__}: {e}"})
+        finally:
+            try:
+                closer = getattr(svc, "close", None)
+                if callable(closer):
+                    r = closer()
+                    if inspect.isawaitable(r):
+                        await r
+            except Exception:
+                pass
+
+    # reference matching pres vse nasbirane
+    ref_forms = {r: _fs_ref_forms(r) for r in ref_list}
+    ref_hits = _fs_match_all(leaves, ref_forms) if ref_forms else []
+    tf = {r: _fs_transform_forms(r, deep=True) for r in ref_list}
+    tf_hits = _fs_match_transforms(leaves, tf) if tf else []
+    found = sorted(set([h["ref"] for h in ref_hits] + [h["ref"] for h in tf_hits] + syslog_hits))
+
+    return {
+        "ok": True, "udid": udid, "probe": "als-channels",
+        "channels": channels,
+        "leaf_count": len(leaves),
+        "refs": ref_list,
+        "ref_found": found,
+        "ref_missing": [r for r in ref_list if r not in set(found)],
+        "ref_hits": ref_hits[:100],
+        "transform_hits": tf_hits[:100],
+        "syslog_ref_hits": syslog_hits,
+    }
+
+@app.route('/api/als-channels/<udid>', methods=['GET'])
+def api_als_channels(udid):
+    refs_arg = request.args.get('refs')
+    refs = [r for r in refs_arg.split(',')] if refs_arg else None
+    try:
+        result = _run_async_isolated(_als_channels_collect(udid, refs=refs), timeout=120)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
 
 
 async def _read_ioreg(diag, label, target, errors):
