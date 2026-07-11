@@ -794,7 +794,7 @@ def api_version():
     return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.5-simplecard',
                     'endpoints': ['component-serials', 'hardware-report', 'devices',
                                   'prox-discovery', 'node-dump', 'full-scan',
-                                  'als-differential',
+                                  'als-differential', 'service-map',
                                   'v30-component-map-probe', 'v31-sensor-storage-probe',
                                   'v32-exact-sensor-forensic', 'v33-als-last-mile-probe', 'v34-spu-hid-als-probe', 'v35-hid-report-probe', 'v36-als-spu-aop-map', 'v37-als-final-probe']})
 
@@ -1059,6 +1059,131 @@ async def _open_diag(udid):
     else:
         diag = DiagnosticsService(ld)
     return ld, diag
+
+
+# ─── SERVICE-MAP PROBE (Faze 1: zmapovat plochu sluzeb) ──────────────────────
+# READ-ONLY. Cil: zjistit, KTERY kanal by vubec mohl vydat live identitu
+# komponent (napr. ALS 0311133F6B07), ktera NENI ve verejnem IORegistry.
+# Vypise: verzi pymobiledevice3, skutecne volatelne metody Lockdown i
+# DiagnosticsService (verzne odolne), vysledek pokusu nastartovat kuratorovany
+# seznam sluzeb (jen otevre kanal a hned zavre - nic neposila, nic nemeni),
+# a dostupnost RemoteXPC/DDI (iOS 17+ diagnosticka plocha za tunneld).
+_SVC_CANDIDATES = (
+    # diagnosticke / servisni (nejnadejnejsi pro identitu HW)
+    "com.apple.mobile.diagnostics_relay",
+    "com.apple.iosdiagnostics.relay",
+    "com.apple.mobile.assertion_agent",
+    "com.apple.os_trace_relay",
+    "com.apple.syslog_relay",
+    "com.apple.pcapd",
+    "com.apple.crashreportcopymobile",
+    "com.apple.mobile.heartbeat",
+    # AST / field diagnostics (pokud jsou inzerovane)
+    "com.apple.atc",
+    "com.apple.ait.aitd",
+    "com.apple.testmanagerd.lockdown",
+    "com.apple.dt.testmanagerd.lockdown",
+    "com.apple.instruments.remoteserver",
+    "com.apple.instruments.remoteserver.DVTSecureSocketProxy",
+    # image mounter (DDI), aktivace, ostatni bezne
+    "com.apple.mobile.mobile_image_mounter",
+    "com.apple.mobileactivationd",
+    "com.apple.companion_proxy",
+    "com.apple.mobile.installation_proxy",
+    "com.apple.springboardservices",
+    "com.apple.mobile.MCInstall",
+    "com.apple.idamd",
+)
+
+async def _service_map_collect(udid):
+    import inspect
+    out = {
+        "ok": True, "udid": udid, "probe": "service-map",
+        "pymobiledevice3_version": None,
+        "start_method": None,
+        "lockdown_methods": [], "diagnostics_methods": [],
+        "services": [], "remote_services": None, "notes": [],
+    }
+    try:
+        import pymobiledevice3
+        out["pymobiledevice3_version"] = getattr(pymobiledevice3, "__version__", None)
+    except Exception as e:
+        out["notes"].append(f"version: {type(e).__name__}: {e}")
+
+    ld = await _create_lockdown_for_udid(udid)
+
+    # volatelna plocha lockdown clienta (verzne odolne)
+    try:
+        out["lockdown_methods"] = sorted(m for m in dir(ld) if not m.startswith("_"))
+    except Exception as e:
+        out["notes"].append(f"lockdown dir: {type(e).__name__}: {e}")
+
+    # zjisti spravny nazev metody pro start sluzby
+    start_fn = None
+    for name in ("start_lockdown_service", "start_service", "start_lockdown_developer_service"):
+        fn = getattr(ld, name, None)
+        if callable(fn):
+            start_fn = fn
+            out["start_method"] = name
+            break
+    if start_fn is None:
+        out["notes"].append("Nenalezena metoda pro start sluzby (start_lockdown_service/start_service).")
+
+    # zkus nastartovat kazdou kandidatni sluzbu (jen otevri + zavri)
+    if start_fn is not None:
+        for svc in _SVC_CANDIDATES:
+            rec = {"service": svc, "available": False}
+            try:
+                s = start_fn(svc)
+                if inspect.isawaitable(s):
+                    s = await s
+                rec["available"] = bool(s)
+                # okamzite zavri, nic neposilej
+                try:
+                    closer = getattr(s, "close", None) or getattr(s, "aclose", None)
+                    if callable(closer):
+                        r = closer()
+                        if inspect.isawaitable(r):
+                            await r
+                except Exception:
+                    pass
+            except Exception as e:
+                rec["error"] = f"{type(e).__name__}: {e}"
+            out["services"].append(rec)
+
+    # volatelna plocha DiagnosticsService (co realne umi tvoje verze)
+    try:
+        from pymobiledevice3.services.diagnostics import DiagnosticsService
+        diag = (await DiagnosticsService(ld)) if inspect.iscoroutinefunction(DiagnosticsService) else DiagnosticsService(ld)
+        out["diagnostics_methods"] = sorted(m for m in dir(diag) if not m.startswith("_"))
+        try:
+            cr = diag.close()
+            if inspect.isawaitable(cr):
+                await cr
+        except Exception:
+            pass
+    except Exception as e:
+        out["notes"].append(f"diagnostics: {type(e).__name__}: {e}")
+
+    # RemoteXPC / DDI (iOS 17+ diagnosticka plocha) - jen dostupnost importu
+    try:
+        from pymobiledevice3.remote.remote_service_discovery import RemoteServiceDiscoveryService  # noqa: F401
+        out["remote_services"] = ("RemoteServiceDiscovery je k dispozici v pymobiledevice3, "
+                                  "ale vyzaduje bezici tunnel (napr. 'sudo pymobiledevice3 remote tunneld'). "
+                                  "Bez tunelu RemoteXPC sluzby na iOS 17+ nejsou videt.")
+    except Exception as e:
+        out["remote_services"] = f"RemoteServiceDiscovery nedostupne: {type(e).__name__}: {e}"
+
+    return out
+
+@app.route('/api/service-map/<udid>', methods=['GET'])
+def api_service_map(udid):
+    try:
+        result = _run_async_isolated(_service_map_collect(udid), timeout=120)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
 
 async def _read_ioreg(diag, label, target, errors):
     """Cte IOKit uzel. Zkousi POTVRZENOU formu name= (V14 overil name='AppleCLCD'),
@@ -7825,6 +7950,591 @@ def api_v40_3utools_sequence(udid):
                         "probe": "3utools-passive-usb-request-sequence-correlator-v40",
                         "udid": udid, "error": f"{type(exc).__name__}: {exc}"}), 200
 
+
+
+# ─── V41 MULTI-ROOT USBPCAP 3UTOOLS ALS CORRELATOR ──────────────────────────
+# PASSIVE / READ-ONLY.
+# V40 failed before capture because USBPcapCMD -d requires a device argument.
+# V41 does not use "-d" as a listing command. It probes/captures candidate
+# \\.\USBPcap1..16 directly, keeps every root that stays alive, and scans every
+# resulting PCAP for the known ALS identifier and transformed variants.
+_V41_DEFAULT_ALS_REF = "0311133F6B07"
+_V41_PHASES = (
+    ("BASELINE", 10.0, "3uTools nechte otevrene MIMO iDevice Details."),
+    ("ACTION", 25.0, "TED otevřete iDevice Details a pockejte, az je videt Ambient Light / ALS hodnota."),
+    ("AFTER", 10.0, "Detail s ALS hodnotou nechte otevreny a na nic neklikejte."),
+)
+
+def _v41_start_root(usbpcap, root, pcap_path):
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    variants = (
+        [usbpcap, "-d", root, "-o", pcap_path, "-A"],
+        [usbpcap, "-d", root, "-o", pcap_path],
+    )
+    errors = []
+    for cmd in variants:
+        try:
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, creationflags=flags
+            )
+            time.sleep(0.8)
+            if proc.poll() is None:
+                return proc, cmd, None
+            so, se = proc.communicate(timeout=3)
+            errors.append((se or so or b"").decode("utf-8", "replace"))
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+    return None, None, " | ".join(x.strip() for x in errors if x.strip())
+
+def _v41_stop_capture(proc):
+    if proc is None:
+        return
+    # USBPcapCMD normally stops cleanly on ENTER when stdin is available.
+    try:
+        if proc.stdin:
+            proc.stdin.write(b"\n")
+            proc.stdin.flush()
+        proc.wait(timeout=8)
+        return
+    except Exception:
+        pass
+    try:
+        proc.terminate()
+        proc.wait(timeout=8)
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+def _v41_phase_for_epoch(epoch, capture_epoch, phases):
+    rel = float(epoch) - float(capture_epoch)
+    for p in phases:
+        if p["start_s"] <= rel <= p["end_s"]:
+            return p["name"], rel
+    return "OUTSIDE", rel
+
+def _v41_tshark_packets(tshark, pcap_path, patterns, capture_epoch, phases, root):
+    if not tshark or not os.path.isfile(pcap_path):
+        return [], []
+    fields = [
+        "frame.number", "frame.time_epoch", "usb.src", "usb.dst",
+        "usb.transfer_type", "usb.endpoint_address", "usb.device_address",
+        "usb.bus_id", "usb.capdata", "usb.data"
+    ]
+    cmd = [tshark, "-r", pcap_path, "-T", "fields"]
+    for f in fields:
+        cmd += ["-e", f]
+    cmd += ["-E", "separator=|", "-E", "occurrence=a"]
+    try:
+        cp = subprocess.run(cmd, capture_output=True, text=True,
+                            errors="replace", timeout=240)
+    except Exception:
+        return [], []
+
+    packets, exact = [], []
+    for line in cp.stdout.splitlines():
+        parts = line.split("|")
+        parts += [""] * (len(fields) - len(parts))
+        row = dict(zip(fields, parts[:len(fields)]))
+        try:
+            phase, rel = _v41_phase_for_epoch(
+                float(row.get("frame.time_epoch") or 0), capture_epoch, phases
+            )
+        except Exception:
+            phase, rel = "UNKNOWN", None
+
+        blobs = []
+        for key in ("usb.capdata", "usb.data"):
+            hx = re.sub(r"[^0-9A-Fa-f]", "", row.get(key, ""))
+            if hx and len(hx) % 2 == 0:
+                try:
+                    blobs.append((key, bytes.fromhex(hx)))
+                except Exception:
+                    pass
+        if not blobs:
+            continue
+
+        row_hits = []
+        score = 0
+        if phase == "ACTION":
+            score += 500
+        elif phase == "AFTER":
+            score += 80
+        if row.get("usb.endpoint_address"):
+            score += 10
+        if row.get("usb.transfer_type"):
+            score += 5
+
+        payloads = []
+        for key, raw in blobs:
+            hs = _v40_scan_blob(
+                raw, patterns,
+                f"{root}:frame:{row.get('frame.number')}:{key}"
+            )
+            if hs:
+                score += 100000
+                for h in hs:
+                    h.update({
+                        "root": root,
+                        "pcap": os.path.basename(pcap_path),
+                        "frame_number": row.get("frame.number"),
+                        "frame_time_epoch": row.get("frame.time_epoch"),
+                        "phase": phase,
+                        "relative_s": rel,
+                        "usb_src": row.get("usb.src"),
+                        "usb_dst": row.get("usb.dst"),
+                        "usb_transfer_type": row.get("usb.transfer_type"),
+                        "usb_endpoint_address": row.get("usb.endpoint_address"),
+                        "usb_device_address": row.get("usb.device_address"),
+                        "payload_field": key,
+                    })
+                row_hits.extend(hs)
+            if 6 <= len(raw) <= 512:
+                score += 25
+            payloads.append({
+                "field": key, "length": len(raw),
+                "hex": raw[:8192].hex().upper()
+            })
+
+        row["root"] = root
+        row["pcap"] = os.path.basename(pcap_path)
+        row["phase"] = phase
+        row["relative_s"] = rel
+        row["payloads"] = payloads
+        row["score"] = score
+        packets.append(row)
+        exact.extend(row_hits)
+
+    packets.sort(key=lambda x: (
+        -int(x.get("score", 0)),
+        int(x.get("frame.number") or 0)
+    ))
+    return packets, exact
+
+async def _v41_3utools_multiroot_collect(
+    udid, als_ref=_V41_DEFAULT_ALS_REF,
+    baseline=10.0, action=25.0, after=10.0, max_roots=16
+):
+    ref = re.sub(r"[^0-9A-Fa-f]", "", str(als_ref or "")).upper()
+    patterns = _v40_patterns(ref)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    capture_dir = os.path.abspath(
+        os.path.join("discovery_v41", f"{udid}_{stamp}")
+    )
+    os.makedirs(capture_dir, exist_ok=True)
+
+    usbpcap = _v40_which(("USBPcapCMD.exe", "USBPcapCMD"))
+    tshark = _v40_which(("tshark.exe", "tshark"))
+    pre = {
+        "processes": _v40_process_snapshot(),
+        "tcp": _v40_net_snapshot()
+    }
+
+    candidates = [rf"\\.\USBPcap{i}" for i in range(1, int(max_roots) + 1)]
+    captures = []
+    probe_errors = {}
+    capture_epoch = time.time()
+
+    if usbpcap:
+        for i, root in enumerate(candidates, 1):
+            pcap_path = os.path.join(capture_dir, f"USBPcap{i}.pcap")
+            proc, cmd, err = _v41_start_root(usbpcap, root, pcap_path)
+            if proc is not None:
+                captures.append({
+                    "root": root, "pcap_path": pcap_path,
+                    "proc": proc, "cmd": cmd
+                })
+                print(f"[V41] CAPTURE ACTIVE: {root}", flush=True)
+            else:
+                probe_errors[root] = err
+    else:
+        probe_errors["backend"] = "USBPcapCMD not found"
+
+    phase_log = []
+    durations = (
+        ("BASELINE", float(baseline), _V41_PHASES[0][2]),
+        ("ACTION", float(action), _V41_PHASES[1][2]),
+        ("AFTER", float(after), _V41_PHASES[2][2]),
+    )
+    t0 = time.monotonic()
+    # capture_epoch must correspond to the phase timer origin, not process probe.
+    phase_epoch = time.time()
+    for name, duration, instruction in durations:
+        begin = time.monotonic() - t0
+        print(f"[V41] {name}: {instruction} ({duration:.1f}s)", flush=True)
+        await asyncio.sleep(max(0.1, duration))
+        end = time.monotonic() - t0
+        phase_log.append({
+            "name": name, "start_s": round(begin, 6),
+            "end_s": round(end, 6), "duration_s": duration,
+            "instruction": instruction
+        })
+
+    for cap in captures:
+        _v41_stop_capture(cap["proc"])
+
+    post = {
+        "processes": _v40_process_snapshot(),
+        "tcp": _v40_net_snapshot()
+    }
+
+    all_packets, exact_hits, raw_hits = [], [], []
+    pcap_files = []
+    for cap in captures:
+        path = cap["pcap_path"]
+        size = os.path.getsize(path) if os.path.isfile(path) else 0
+        pcap_files.append({
+            "root": cap["root"],
+            "file": os.path.basename(path) if os.path.isfile(path) else None,
+            "bytes": size,
+            "command": cap["cmd"],
+        })
+        if size:
+            try:
+                with open(path, "rb") as fh:
+                    rh = _v40_scan_blob(
+                        fh.read(), patterns, f"raw_pcap:{cap['root']}"
+                    )
+                    for h in rh:
+                        h["root"] = cap["root"]
+                        h["pcap"] = os.path.basename(path)
+                    raw_hits.extend(rh)
+            except Exception:
+                pass
+            packets, hits = _v41_tshark_packets(
+                tshark, path, patterns, phase_epoch, phase_log, cap["root"]
+            )
+            all_packets.extend(packets)
+            exact_hits.extend(hits)
+
+    exact_hits = raw_hits + exact_hits
+    all_packets.sort(key=lambda x: (
+        -int(x.get("score", 0)),
+        0 if x.get("phase") == "ACTION" else 1,
+        str(x.get("root", "")),
+        int(x.get("frame.number") or 0)
+    ))
+
+    action_packets = [x for x in all_packets if x.get("phase") == "ACTION"]
+    short_action = [
+        x for x in action_packets
+        if any(1 <= int(p.get("length", 0)) <= 512 for p in x.get("payloads", []))
+    ]
+
+    result = {
+        "ok": any(x["bytes"] > 0 for x in pcap_files),
+        "probe": "3utools-multiroot-usb-als-correlator-v41",
+        "read_only": True,
+        "udid": udid,
+        "als_reference": ref,
+        "backend": {
+            "usbpcap": usbpcap,
+            "tshark": tshark,
+            "candidate_roots": candidates,
+            "active_roots": [x["root"] for x in captures],
+            "probe_errors": probe_errors,
+        },
+        "test_instruction": (
+            "BASELINE: 3uTools mimo iDevice Details. ACTION: otevrit presne "
+            "iDevice Details a pockat, az je na obrazovce Ambient Light "
+            f"{ref}. AFTER: detail nechat otevreny."
+        ),
+        "phases": phase_log,
+        "pcap_files": pcap_files,
+        "exact_hits": exact_hits,
+        "ranked_usb_packets": all_packets[:10000],
+        "top_action_packets": short_action[:5000],
+        "snapshots": {"before": pre, "after": post},
+        "capture_dir": capture_dir,
+        "files": {
+            "manifest": "manifest.json",
+            "ranked_usb_packets": "ranked_usb_packets.json",
+            "top_action_packets": "top_action_packets.json",
+            "exact_hits": "exact_hits.json",
+        },
+        "summary": {
+            "active_roots": len(captures),
+            "pcaps_with_data": sum(1 for x in pcap_files if x["bytes"] > 0),
+            "pcap_bytes_total": sum(x["bytes"] for x in pcap_files),
+            "packets_with_payload": len(all_packets),
+            "action_packets_with_payload": len(action_packets),
+            "short_action_packets": len(short_action),
+            "exact_hits": len(exact_hits),
+        },
+        "decision": (
+            "If exact_hits > 0, use the matching frame and preceding OUT/control "
+            "frames on the same root/device/endpoint as the prime ALS read sequence. "
+            "If exact_hits == 0 but PCAP data exists, inspect top_action_packets and "
+            "compare ACTION-only short payloads; the response may be encoded, framed, "
+            "encrypted, or the ALS value may be derived after transport."
+        ),
+    }
+
+    for fn, obj in (
+        ("manifest.json", result),
+        ("ranked_usb_packets.json", all_packets[:10000]),
+        ("top_action_packets.json", short_action[:5000]),
+        ("exact_hits.json", exact_hits),
+    ):
+        with open(os.path.join(capture_dir, fn), "w", encoding="utf-8") as fh:
+            json.dump(_v36_safe(obj), fh, ensure_ascii=False, indent=2)
+
+    return _v36_safe(result)
+
+@app.route('/api/v41-3utools-als-capture/<udid>', methods=['GET'])
+def api_v41_3utools_als_capture(udid):
+    try:
+        als_ref = (request.args.get("als_ref") or _V41_DEFAULT_ALS_REF).strip()
+        baseline = float(request.args.get("baseline", "10"))
+        action = float(request.args.get("action", "25"))
+        after = float(request.args.get("after", "10"))
+        max_roots = int(request.args.get("max_roots", "16"))
+        result = _run_async_isolated(
+            _v41_3utools_multiroot_collect(
+                udid, als_ref, baseline, action, after, max_roots
+            ),
+            timeout=max(240, int(baseline + action + after + 300))
+        )
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({
+            "ok": False,
+            "probe": "3utools-multiroot-usb-als-correlator-v41",
+            "udid": udid,
+            "error": f"{type(exc).__name__}: {exc}",
+        }), 200
+
+
+
+# ─── V42 USBPCAP ALL-DEVICES 3UTOOLS ALS CORRELATOR ─────────────────────────
+# PASSIVE / READ-ONLY. V41 failed because USBPcap explicitly required -A.
+_V42_DEFAULT_ALS_REF = "0311133F6B07"
+
+def _v42_start_all_devices(usbpcap, pcap_path):
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    variants = ([usbpcap, "-A", "-o", pcap_path],
+                [usbpcap, "-o", pcap_path, "-A"])
+    errors = []
+    for cmd in variants:
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                creationflags=flags)
+            time.sleep(1.2)
+            if proc.poll() is None:
+                return proc, cmd, None
+            so, se = proc.communicate(timeout=3)
+            errors.append((se or so or b"").decode("utf-8", errors="replace"))
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+    return None, None, "\n---\n".join(x for x in errors if x)
+
+def _v42_stop_capture(proc):
+    if proc is None: return
+    try:
+        if proc.poll() is None and proc.stdin:
+            proc.stdin.write(b"\n"); proc.stdin.flush(); time.sleep(1)
+    except Exception: pass
+    try:
+        if proc.poll() is None:
+            proc.terminate(); proc.wait(timeout=5)
+    except Exception:
+        try: proc.kill()
+        except Exception: pass
+
+def _v42_hex_bytes(value):
+    text = str(value or "").strip().replace(":", "").replace(" ", "")
+    try: return bytes.fromhex(text) if text else b""
+    except Exception: return b""
+
+def _v42_tshark_rows(tshark, pcap_path, patterns, capture_epoch, phase_log):
+    if not tshark or not os.path.isfile(pcap_path):
+        return [], [], None
+    fields = ["frame.number","frame.time_epoch","frame.len","usb.src","usb.dst",
+        "usb.device_address","usb.endpoint_address","usb.transfer_type","usb.data_len",
+        "usb.capdata","usb.control.Response","usb.setup.bmRequestType",
+        "usb.setup.bRequest","usb.setup.wValue","usb.setup.wIndex",
+        "usb.setup.wLength","usbpcap.data"]
+    cmd = [tshark,"-r",pcap_path,"-T","fields","-E","separator=\t",
+           "-E","quote=n","-E","occurrence=f"]
+    for field in fields: cmd += ["-e", field]
+    try: cp = subprocess.run(cmd, capture_output=True, timeout=180)
+    except Exception as exc: return [], [], f"{type(exc).__name__}: {exc}"
+    if cp.returncode != 0:
+        return [], [], (cp.stderr or cp.stdout or b"").decode("utf-8",errors="replace")[:20000]
+
+    def phase_for(epoch):
+        rel = epoch - capture_epoch
+        for p in phase_log:
+            if p["start_s"] <= rel <= p["end_s"]: return p["name"], rel
+        return "OUTSIDE", rel
+
+    packets, hits = [], []
+    for line in cp.stdout.decode("utf-8",errors="replace").splitlines():
+        cols = line.split("\t") + [""] * len(fields)
+        row = dict(zip(fields, cols[:len(fields)]))
+        try: epoch = float(row.get("frame.time_epoch") or 0)
+        except Exception: epoch = 0.0
+        phase, rel = phase_for(epoch)
+        blobs = []
+        for key in ("usb.capdata","usb.control.Response","usbpcap.data"):
+            raw = _v42_hex_bytes(row.get(key))
+            if raw: blobs.append((key, raw))
+        if not blobs: continue
+        score = 1000 if phase == "ACTION" else 0
+        if "control" in str(row.get("usb.transfer_type") or "").lower(): score += 300
+        if row.get("usb.setup.bmRequestType"): score += 150
+        payloads = []
+        for key, raw in blobs:
+            if 1 <= len(raw) <= 512: score += 50
+            if len(raw) == 6: score += 500
+            for transform, needle in patterns:
+                if not needle: continue
+                start = 0
+                while True:
+                    off = raw.find(needle, start)
+                    if off < 0: break
+                    score += 100000
+                    hits.append({"transform":transform,"needle_hex":needle.hex().upper(),
+                        "offset":off,"payload_field":key,
+                        "frame_number":row.get("frame.number"),
+                        "frame_time_epoch":row.get("frame.time_epoch"),
+                        "phase":phase,"relative_s":rel,
+                        "usb_src":row.get("usb.src"),"usb_dst":row.get("usb.dst"),
+                        "usb_device_address":row.get("usb.device_address"),
+                        "usb_endpoint_address":row.get("usb.endpoint_address"),
+                        "usb_transfer_type":row.get("usb.transfer_type")})
+                    start = off + 1
+            payloads.append({"field":key,"length":len(raw),
+                             "hex":raw[:8192].hex().upper()})
+        row.update({"phase":phase,"relative_s":rel,"payloads":payloads,"score":score})
+        packets.append(row)
+    packets.sort(key=lambda x:(-int(x.get("score",0)),
+        0 if x.get("phase")=="ACTION" else 1,int(x.get("frame.number") or 0)))
+    return packets, hits, None
+
+def _v42_action_novelty(packets):
+    def sigs(phase):
+        out=set()
+        for row in packets:
+            if row.get("phase") != phase: continue
+            for p in row.get("payloads",[]):
+                if p.get("hex"):
+                    out.add((row.get("usb_device_address"),row.get("usb_endpoint_address"),
+                        row.get("usb_transfer_type"),p.get("field"),p.get("hex")))
+        return out
+    noise = sigs("BASELINE") | sigs("AFTER")
+    novel=[]
+    for row in packets:
+        if row.get("phase") != "ACTION": continue
+        is_novel=False
+        for p in row.get("payloads",[]):
+            sig=(row.get("usb_device_address"),row.get("usb_endpoint_address"),
+                 row.get("usb_transfer_type"),p.get("field"),p.get("hex"))
+            if p.get("hex") and sig not in noise: is_novel=True; break
+        if is_novel:
+            item=dict(row); item["novel_action_only"]=True
+            item["score"]=int(item.get("score",0))+5000; novel.append(item)
+    novel.sort(key=lambda x:(-int(x.get("score",0)),int(x.get("frame.number") or 0)))
+    return novel
+
+async def _v42_3utools_all_devices_collect(udid, als_ref=_V42_DEFAULT_ALS_REF,
+                                           baseline=10.0, action=25.0, after=10.0):
+    ref = re.sub(r"[^0-9A-Fa-f]","",str(als_ref or "")).upper()
+    patterns = _v40_patterns(ref)
+    try:
+        raw_ref=bytes.fromhex(ref)
+        extra=[("v42_raw_exact",raw_ref),("v42_raw_reverse",raw_ref[::-1]),
+               ("v42_ascii_hex",ref.encode("ascii")),
+               ("v42_ascii_hex_lower",ref.lower().encode("ascii"))]
+        existing={(n,b) for n,b in patterns}
+        patterns += [(n,b) for n,b in extra if (n,b) not in existing]
+    except Exception: pass
+
+    stamp=datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_udid=re.sub(r"[^A-Za-z0-9._-]","_",udid)
+    capture_dir=os.path.join(BASE_DIR,"discovery_v42",f"{safe_udid}_{stamp}")
+    os.makedirs(capture_dir,exist_ok=True)
+    pcap_path=os.path.join(capture_dir,"USBPcap_ALL_DEVICES.pcap")
+    usbpcap=_v40_which(("USBPcapCMD.exe","USBPcapCMD"))
+    tshark=_v40_which(("tshark.exe","tshark"))
+    pre={"processes":_v40_process_snapshot(),"tcp":_v40_net_snapshot()}
+    proc=cmd=None; capture_error=None; capture_epoch=time.time()
+    if usbpcap: proc,cmd,capture_error=_v42_start_all_devices(usbpcap,pcap_path)
+    else: capture_error="USBPcapCMD not found"
+
+    phase_log=[]; started=time.time()
+    phases=(("BASELINE",float(baseline),"3uTools nechte otevrene MIMO iDevice Details."),
+            ("ACTION",float(action),"TED otevřete iDevice Details a pockejte, az je videt Ambient Light / ALS hodnota."),
+            ("AFTER",float(after),"Detail s ALS hodnotou nechte otevreny a na nic neklikejte."))
+    try:
+        for name,duration,instruction in phases:
+            start_s=time.time()-started
+            print(f"[V42] {name}: {instruction}",flush=True)
+            time.sleep(max(0.0,duration))
+            phase_log.append({"name":name,"duration_s":duration,"start_s":start_s,
+                              "end_s":time.time()-started,"instruction":instruction})
+    finally: _v42_stop_capture(proc)
+
+    post={"processes":_v40_process_snapshot(),"tcp":_v40_net_snapshot()}
+    pcap_size=os.path.getsize(pcap_path) if os.path.isfile(pcap_path) else 0
+    raw_hits=[]
+    if pcap_size:
+        try:
+            with open(pcap_path,"rb") as fh:
+                raw_hits=_v40_scan_blob(fh.read(),patterns,"raw_pcap:ALL_DEVICES")
+        except Exception: pass
+    packets,packet_hits,tshark_error=_v42_tshark_rows(
+        tshark,pcap_path,patterns,capture_epoch,phase_log)
+    exact_hits=raw_hits+packet_hits
+    novel_action=_v42_action_novelty(packets)
+    action_packets=[x for x in packets if x.get("phase")=="ACTION"]
+    short_action=[x for x in action_packets if any(
+        1 <= int(p.get("length",0)) <= 512 for p in x.get("payloads",[]))]
+
+    result={"ok":bool(pcap_size>0),
+      "probe":"3utools-all-devices-usb-als-correlator-v42","read_only":True,
+      "udid":udid,"als_reference":ref,
+      "backend":{"usbpcap":usbpcap,"tshark":tshark,"capture_mode":"ALL_DEVICES_-A",
+                 "capture_command":cmd,"capture_error":capture_error,"tshark_error":tshark_error},
+      "test_instruction":f"BASELINE mimo detail. ACTION otevrit iDevice Details a cekat na ALS {ref}. AFTER detail nechat otevreny.",
+      "phases":phase_log,
+      "pcap_file":os.path.basename(pcap_path) if os.path.isfile(pcap_path) else None,
+      "exact_hits":exact_hits,"novel_action_packets":novel_action[:10000],
+      "top_action_packets":short_action[:10000],"ranked_usb_packets":packets[:20000],
+      "snapshots":{"before":pre,"after":post},"capture_dir":capture_dir,
+      "files":{"manifest":"manifest.json","pcap":os.path.basename(pcap_path) if os.path.isfile(pcap_path) else None,
+               "exact_hits":"exact_hits.json","novel_action_packets":"novel_action_packets.json",
+               "top_action_packets":"top_action_packets.json","ranked_usb_packets":"ranked_usb_packets.json"},
+      "summary":{"pcap_bytes":pcap_size,"packets_with_payload":len(packets),
+                 "action_packets_with_payload":len(action_packets),
+                 "short_action_packets":len(short_action),
+                 "novel_action_packets":len(novel_action),"exact_hits":len(exact_hits)},
+      "decision":"FIRST exact_hits. If empty inspect novel_action_packets; then reconstruct the preceding OUT/control frame on the same device and endpoint."}
+    for fn,obj in (("manifest.json",result),("exact_hits.json",exact_hits),
+                   ("novel_action_packets.json",novel_action[:10000]),
+                   ("top_action_packets.json",short_action[:10000]),
+                   ("ranked_usb_packets.json",packets[:20000])):
+        with open(os.path.join(capture_dir,fn),"w",encoding="utf-8") as fh:
+            json.dump(_v36_safe(obj),fh,ensure_ascii=False,indent=2)
+    return _v36_safe(result)
+
+@app.route('/api/v42-3utools-als-capture/<udid>', methods=['GET'])
+def api_v42_3utools_als_capture(udid):
+    try:
+        als_ref=(request.args.get("als_ref") or _V42_DEFAULT_ALS_REF).strip()
+        baseline=float(request.args.get("baseline","10"))
+        action=float(request.args.get("action","25"))
+        after=float(request.args.get("after","10"))
+        result=_run_async_isolated(_v42_3utools_all_devices_collect(
+            udid,als_ref,baseline,action,after),
+            timeout=max(240,int(baseline+action+after+300)))
+        return jsonify(result),200
+    except Exception as exc:
+        return jsonify({"ok":False,"probe":"3utools-all-devices-usb-als-correlator-v42",
+                        "udid":udid,"error":f"{type(exc).__name__}: {exc}"}),200
 
 if __name__ == '__main__':
     print("─" * 52)
