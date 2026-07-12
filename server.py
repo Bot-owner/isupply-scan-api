@@ -303,6 +303,14 @@ def init_db():
             tests_json TEXT,
             scanned_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS component_baseline (
+            udid TEXT NOT NULL,
+            component_key TEXT NOT NULL,
+            factory_value TEXT,
+            captured_at TEXT NOT NULL,
+            captured_by TEXT DEFAULT '',
+            PRIMARY KEY (udid, component_key)
+        );
     ''')
     now = datetime.datetime.now().isoformat(timespec='seconds')
     for (u, pw, fn, em, co, ro, li, va, no) in [
@@ -319,6 +327,115 @@ def init_db():
     conn.commit()
     conn.close()
     print(f"✓ Databáze: {DB_PATH}")
+
+
+# ─── COMPONENT BASELINE (tovarni reference = stav pri prvnim scanu) ───────────
+# Telefon vydava pro kazdy dil jen JEDNU hodnotu (aktualni, zivou). Nezavisla
+# tovarni reference v telefonu neexistuje (overeno factory-check probe: zadny
+# realny dil nema druhy, nezavisly zaznam v SysCfg/NVRAM). Proto referenci
+# ulozime pri PRVNIM scanu daneho UDID = "golden" zaznam. Kazdy dalsi scan pak
+# porovnava zivy dil proti nemu. DUVERYHODNE jen kdyz je prvni scan na telefonu,
+# kteremu duverujes (pri prijmu) - "tovarni" tu znamena "stav pri prijmu k nam",
+# ne "z Apple tovarny" (tu telefon nedrzi).
+#
+# TRI STAVY:
+#   MATCH          - aktualni hodnota odpovida ulozene referenci (zeleny text)
+#   MISMATCH       - aktualni hodnota se lisi (dil byl pravdepodobne vymenen; oranzovy text)
+#   POSSIBLE_FAULT - aktualni hodnotu se VUBEC nepodarilo precist, ackoliv
+#                    komponenta je pro tuto generaci aplikovatelna. To NENI
+#                    "vymeneno" (na to bychom potrebovali znat aktualni hodnotu
+#                    a ta chybi uplne) - je to signal mozne poruchy (dilu,
+#                    jeho pripojeni, nebo casteji zakladni desky).
+
+def _baseline_get(udid):
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT component_key, factory_value FROM component_baseline WHERE udid=?",
+            (udid,)).fetchall()
+        conn.close()
+        return {r["component_key"]: r["factory_value"] for r in rows}
+    except Exception:
+        return {}
+
+def _baseline_set_many(udid, kv, by=""):
+    """Ulozi/aktualizuje tovarni referenci pro dane komponenty. kv = {key: value}."""
+    now = datetime.datetime.now().isoformat(timespec="seconds")
+    try:
+        conn = get_db()
+        for k, v in kv.items():
+            if not v:
+                continue
+            conn.execute(
+                "INSERT INTO component_baseline (udid, component_key, factory_value, captured_at, captured_by) "
+                "VALUES (?,?,?,?,?) "
+                "ON CONFLICT(udid, component_key) DO UPDATE SET factory_value=excluded.factory_value, "
+                "captured_at=excluded.captured_at, captured_by=excluded.captured_by",
+                (udid, k, v, now, by))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"baseline_set chyba: {e}")
+        return False
+
+def _baseline_delete(udid):
+    try:
+        conn = get_db()
+        conn.execute("DELETE FROM component_baseline WHERE udid=?", (udid,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+def _apply_baseline(udid, components, capture_if_missing=True, by=""):
+    """Doplni ke komponentam factory_value + status (MATCH/MISMATCH/POSSIBLE_FAULT)
+    proti baseline. Pri prvnim scanu (zadny baseline pro UDID) aktualni hodnoty
+    ulozi jako tovarni. Nedotyka se komponent s applicable=False (generace je
+    fyzicky nema - to neni chyba cteni, resi se jinde).
+    Vraci (components, meta)."""
+    baseline = _baseline_get(udid)
+    first_scan = not baseline
+    to_capture = {}
+    captured_now = []
+    for key, item in components.items():
+        if not item.get("applicable", True):
+            continue   # generacne nedostupne komponenty se baseline netykaji
+        cur = item.get("current_value") or item.get("value")
+        fac = baseline.get(key)
+        if cur:
+            if fac is None:
+                # jeste nemame tovarni referenci pro tento dil -> zachyt ji ted
+                if capture_if_missing:
+                    to_capture[key] = cur
+                    captured_now.append(key)
+                    item["factory_value"] = cur
+                    item["current_value"] = cur
+                    item["match"] = True
+                    item["status"] = "MATCH"
+                    item["baseline_captured"] = True
+            else:
+                match = (str(fac).upper() == str(cur).upper())
+                item["factory_value"] = fac
+                item["current_value"] = cur
+                item["match"] = match
+                item["status"] = "MATCH" if match else "MISMATCH"
+        else:
+            # Aktualni hodnotu se vubec nepodarilo precist. To je jiny pripad
+            # nez MISMATCH (tam znama aktualni hodnota nesedi s referenci) -
+            # tady aktualni hodnota chybi uplne, coz muze znamenat poruchu
+            # dilu / jeho pripojeni / zakladni desky, ne nutne vymenu.
+            item["factory_value"] = fac  # ukaz referenci, pokud ji mame, jinak None
+            item["current_value"] = None
+            item["match"] = False
+            item["status"] = "POSSIBLE_FAULT"
+            item["note"] = ("Nelze přečíst aktuální hodnotu – může jít o závadu "
+                            "(např. základní deska nebo daná komponenta), ne nutně o výměnu.")
+    if to_capture:
+        _baseline_set_many(udid, to_capture, by=by)
+    return components, {"first_scan": first_scan, "captured_now": captured_now,
+                        "baseline_size": len(baseline) + len(to_capture)}
 
 # ─── MODEL DATABÁZE ─────────────────────────────────────────────────────────
 # Překlad Apple ProductType → čitelný název + číslo modelu A-Series
@@ -791,10 +908,11 @@ def api_driver_check():
 
 @app.route('/api/version')
 def api_version():
-    return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.5-simplecard',
+    return jsonify({'ok': True, 'build': 'strict-source-isolated-v29.7-possiblefault',
                     'endpoints': ['component-serials', 'hardware-report', 'devices',
                                   'prox-discovery', 'node-dump', 'full-scan',
                                   'als-differential', 'service-map', 'als-channels', 'factory-check',
+                                  'baseline', 'set-baseline',
                                   'v30-component-map-probe', 'v31-sensor-storage-probe',
                                   'v32-exact-sensor-forensic', 'v33-als-last-mile-probe', 'v34-spu-hid-als-probe', 'v35-hid-report-probe', 'v36-als-spu-aop-map', 'v37-als-final-probe']})
 
@@ -999,6 +1117,8 @@ _COMPONENT_SERIAL_LABELS = {
     "cellular": "Mobilní síť",
     "mainboard": "Základní deska",
     "battery": "Baterie",
+    "taptic_engine": "Taptic Engine",
+    "nand": "NAND / Úložiště",
 }
 
 _COMPONENT_SERIAL_GROUPS = {
@@ -1009,7 +1129,8 @@ _COMPONENT_SERIAL_GROUPS = {
         "distance_sensor", "ambient_light_sensor"]},
     "display": {"label": "Displej", "components": ["screen"]},
     "connectivity": {"label": "Konektivita", "components": ["wifi", "bluetooth", "cellular"]},
-    "hardware": {"label": "Hardware", "components": ["mainboard", "battery"]},
+    "hardware": {"label": "Hardware", "components": [
+        "mainboard", "battery", "taptic_engine", "nand"]},
 }
 
 def _component_serial_scalar(value):
@@ -1404,7 +1525,7 @@ def _fc_classify_source(source):
 async def _factory_check_collect(udid):
     # 1) aktualni hodnoty komponent
     sources = await _read_hw_sources(udid)
-    comp = await _component_serials_collect(udid, sources=sources)
+    comp = await _component_serials_collect(udid, sources=sources, apply_baseline=False)
     components = comp.get("components", {})
 
     # 2) kompletni sada listu ze vsech zdroju (vc. SysCfg/NVRAM/domen)
@@ -1702,7 +1823,7 @@ def _prox_variant_for(product_type):
 def _component_applicable(comp_key, product_type):
     return True
 
-async def _component_serials_collect(udid, sources=None):
+async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     if sources is None:
         sources = await _read_hw_sources(udid)
 
@@ -1774,6 +1895,19 @@ async def _component_serials_collect(udid, sources=None):
             # 15 Pro: G2CGY200A6F00003PP). IOService jen jako fallback.
             ("lockdown", "IOService"),
             ("MLBSerialNumber", "LogicBoardSerialNumber", "MainboardSerialNumber")),
+        "taptic_engine": (
+            # Potvrzeno v handoffu: AppleHapticsSupportCallan (starsi gen.) /
+            # AppleHapticsSupportLEAP (15 Pro) -> ModuleSerial. Zdroj "vibrator"
+            # uz je v _read_hw_sources cten, jen se dosud nepouzival ve specs.
+            ("vibrator",),
+            ("ModuleSerial",)),
+        "nand": (
+            # Best-effort: NAND uzly (AppleANS2NVMeController apod.) na mnoha
+            # generacich/iOS verzich nevraci pojmenovany vlastni objekt (fallback
+            # vraci obecny IOService strom) - proto castokrat zustane "unavailable".
+            # To NENI chyba readeru, je to limit toho, co je pres IORegistry videt.
+            ("nand",),
+            ("Serial", "SerialNumber", "PartNumber", "FlashID", "DeviceID")),
     }
 
     raw, discovery = {}, {}
@@ -1859,6 +1993,15 @@ async def _component_serials_collect(udid, sources=None):
             item["discovery"] = discovery[key]
         components[key] = item
 
+    # ── TOVARNI REFERENCE (baseline): doplni factory_value + status
+    # (MATCH/MISMATCH/POSSIBLE_FAULT)
+    baseline_meta = None
+    if apply_baseline:
+        try:
+            components, baseline_meta = _apply_baseline(udid, components)
+        except Exception as e:
+            errors["baseline"] = f"{type(e).__name__}: {e}"
+
     groups = []
     for group_key, spec in _COMPONENT_SERIAL_GROUPS.items():
         group_components = [components[key] for key in spec["components"] if key in components]
@@ -1873,15 +2016,20 @@ async def _component_serials_collect(udid, sources=None):
 
     return {
         "ok": True,
-        "reader": "strict-source-isolated-v29.5-simplecard",
+        "reader": "strict-source-isolated-v29.7-possiblefault",
         "udid": udid,
         "components": components,
         "groups": groups,
+        "baseline": baseline_meta,
         "summary": {
             "components_total": len(components),
             "components_available": sum(1 for x in components.values() if x["available"]),
             "components_not_applicable": sum(
                 1 for x in components.values() if not x.get("applicable", True)),
+            "components_mismatch": sum(
+                1 for x in components.values() if x.get("status") == "MISMATCH"),
+            "components_possible_fault": sum(
+                1 for x in components.values() if x.get("status") == "POSSIBLE_FAULT"),
             "exact_matches": len(discovery),
             "device_serial_guard": True,
         },
@@ -1895,6 +2043,45 @@ def api_component_serials(udid):
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+
+@app.route('/api/baseline/<udid>', methods=['GET'])
+def api_baseline_get(udid):
+    """Zobrazi ulozenou tovarni referenci (baseline) pro dane zarizeni."""
+    try:
+        conn = get_db()
+        rows = conn.execute(
+            "SELECT component_key, factory_value, captured_at, captured_by "
+            "FROM component_baseline WHERE udid=? ORDER BY component_key", (udid,)).fetchall()
+        conn.close()
+        return jsonify({'ok': True, 'udid': udid, 'count': len(rows),
+                        'baseline': [dict(r) for r in rows]}), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+@app.route('/api/set-baseline/<udid>', methods=['GET', 'POST'])
+def api_set_baseline(udid):
+    """Prepise tovarni referenci AKTUALNE pripojenymi hodnotami (golden reset).
+    Pouzij, kdyz mas telefon v overenem stavu a chces ho ulozit jako referencni."""
+    by = request.args.get('by', '') or (request.json.get('by', '') if request.is_json else '')
+    try:
+        sources = _run_async_isolated(_read_hw_sources(udid), timeout=90)
+        comp = _run_async_isolated(
+            _component_serials_collect(udid, sources=sources, apply_baseline=False), timeout=30)
+        kv = {k: (v.get("current_value") or v.get("value"))
+              for k, v in comp.get("components", {}).items()
+              if v.get("applicable", True) and (v.get("current_value") or v.get("value"))}
+        _baseline_delete(udid)          # golden reset = zahodit stare a ulozit nove
+        _baseline_set_many(udid, kv, by=by)
+        return jsonify({'ok': True, 'udid': udid, 'captured': sorted(kv.keys()),
+                        'count': len(kv)}), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+@app.route('/api/baseline/<udid>', methods=['DELETE'])
+def api_baseline_delete(udid):
+    ok = _baseline_delete(udid)
+    return jsonify({'ok': ok, 'udid': udid}), 200
 
 
 # ─── PROXIMITY / FRONT-FLEX DISCOVERY PROBE ──────────────────────────────────
@@ -5683,7 +5870,7 @@ async def _hardware_report_collect(udid):
         c = comp.get(key, {})
         out = {"label": label, "value": c.get("value"), "available": bool(c.get("value"))}
         # zachovej pripadna budouci verifikacni pole (forward-kompatibilita)
-        for k in ("factory_value", "current_value", "match", "status"):
+        for k in ("factory_value", "current_value", "match", "status", "note"):
             if k in c:
                 out[k] = c[k]
         return out
@@ -5717,6 +5904,8 @@ async def _hardware_report_collect(udid):
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
+        "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
+        "nand": from_comp("nand", "NAND / Úložiště"),
     }
 
     # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
@@ -5773,12 +5962,6 @@ async def _hardware_report_collect(udid):
         "nand_manufacturer": _hw_field("NAND výrobce", _component_serial_find(nand, (
             "Manufacturer", "Vendor", "VendorName", "NANDVendor", "FlashVendor",
         )) or lv("NANDVendor", "FlashVendor", "NANDManufacturer"), "IORegistry/lockdown"),
-        "vibrator_number": _hw_field("Vibrator Number", lv(
-            "VibratorNumber", "VibratorSerialNumber", "HapticSerialNumber", "TapticEngineSerialNumber"
-        ) or _component_serial_find(vibrator, (
-            "VibratorNumber", "VibratorSerialNumber", "HapticSerialNumber",
-            "TapticEngineSerialNumber", "SerialNumber", "Serial",
-        )), "lockdown/IORegistry"),
     }
 
     sections = {

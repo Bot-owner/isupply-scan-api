@@ -2070,6 +2070,7 @@ async function activateDevice(id) {
 const COMPONENT_ICONS = {
   rear_camera:'📷', front_camera:'🤳', tele_camera:'🔭', front_ir_camera:'👁️',
   true_depth_projector:'✨', screen:'📱', mainboard:'🔧', battery:'🔋',
+  taptic_engine:'📳', nand:'💾',
 };
 const HW_SECTIONS = [
   {key:'device',       icon:'🆔', label:'Identifikace zařízení', kind:'rows'},
@@ -2087,10 +2088,19 @@ function renderComponentCard(key, c) {
     const cfg = {
       MATCH:                    {badge:'✓ Originál', bg:'#f0fdf4', bd:'#bbf7d0', fg:'#16a34a'},
       MISMATCH:                 {badge:'✕ Možná vyměněno', bg:'#fef2f2', bd:'#fecaca', fg:'#dc2626'},
+      POSSIBLE_FAULT:           {badge:'⚠ Možná závada', bg:'#fffbeb', bd:'#fde68a', fg:'#b45309'},
       FACTORY_VALUE_UNAVAILABLE:{badge:'Bez tovární reference', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
       CURRENT_VALUE_UNAVAILABLE:{badge:'Nelze přečíst', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
       UNAVAILABLE:               {badge:'Nedostupné', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#9ca3af'},
     }[c.status] || {badge:c.status, bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'};
+    // Aktualni hodnota: zelena pri shode, oranzova pri neshode, jantarova pri
+    // "mozna zavada" (chybi cele), jinak cerna.
+    const curColor = c.status === 'MATCH' ? '#16a34a'
+                   : c.status === 'MISMATCH' ? '#ea580c'
+                   : c.status === 'POSSIBLE_FAULT' ? '#b45309'
+                   : '#0a0a0a';
+    const curWeight = (c.status === 'MATCH' || c.status === 'MISMATCH' || c.status === 'POSSIBLE_FAULT') ? '700' : '400';
+    const curText = c.status === 'POSSIBLE_FAULT' ? 'Možná závada' : (c.current_value ? esc(c.current_value) : '—');
     return `<div style="border:1.5px solid ${cfg.bd};background:${cfg.bg};border-radius:11px;padding:12px 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
         <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(c.label)}</span>
@@ -2098,8 +2108,9 @@ function renderComponentCard(key, c) {
       </div>
       <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
         <div>Tovární: <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
-        <div>Aktuální: <span style="color:#0a0a0a">${c.current_value ? esc(c.current_value) : '—'}</span></div>
+        <div>Aktuální: <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
       </div>
+      ${c.status === 'POSSIBLE_FAULT' && c.note ? `<div style="margin-top:6px;font-size:10.5px;color:#b45309;line-height:1.4">${esc(c.note)}</div>` : ''}
     </div>`;
   }
   return `<div style="border:1.5px solid #e8e8e8;border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fafafa'}">
