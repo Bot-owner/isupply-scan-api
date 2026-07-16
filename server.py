@@ -5993,6 +5993,11 @@ async def _hardware_report_collect(udid):
         "serial": from_comp("screen", "Sériové číslo displeje"),
         "panel_id": _hw_field("Panel ID", panel_id_full, "AppleCLCD"),
     }
+    # Na iPhone 13+ je prox slot "front flex proximity" (JasperSNUM) – klíčové
+    # kvůli párování displeje. Přidáme jako samostatný řádek k displeji.
+    # (Na ≤12 je prox slot Distance senzor a ten je pod Face ID.)
+    if _faceid_new_gen:
+        display["proximity_flex"] = from_comp("distance_sensor", "Proximity / display flex")
 
     # ── ÚLOŽIŠTĚ / HARDWARE ──
     storage = {
