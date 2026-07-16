@@ -1680,6 +1680,11 @@ def _v29_serial_like(value):
         return None
     if scalar.lower() in ("true", "false", "none", "null", "unknown", "n/a"):
         return None
+    # Placeholder / nečitelná hodnota: samé X, samé 0, samé stejné znaky
+    # (napr. "XXXXXXXX", "00000000") -> NENI platny serial; komponenta se
+    # pak vyhodnoti jako zavada (POSSIBLE_FAULT), ne jako Shodne.
+    if len(set(scalar.upper())) <= 1:
+        return None
     if not re.fullmatch(r"[A-Za-z0-9:+._\-/]+", scalar):
         return None
     return scalar
