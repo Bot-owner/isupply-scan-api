@@ -1900,7 +1900,9 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
             # AppleHapticsSupportLEAP (15 Pro) -> ModuleSerial. Zdroj "vibrator"
             # uz je v _read_hw_sources cten, jen se dosud nepouzival ve specs.
             ("vibrator",),
-            ("ModuleSerial",)),
+            ("ModuleSerial", "ModuleSerialNumber", "VibratorSerialNumber",
+             "VibratorNumber", "TapticEngineSerialNumber", "HapticSerialNumber",
+             "RosalineSerialNumber")),
         "nand": (
             # Best-effort: NAND uzly (AppleANS2NVMeController apod.) na mnoha
             # generacich/iOS verzich nevraci pojmenovany vlastni objekt (fallback
@@ -5883,8 +5885,6 @@ async def _hardware_report_collect(udid):
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
         "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
-        "baseband_serial": _hw_field("Baseband Serial Number", lv("BasebandSerialNumber"), "lockdown"),
-        "chip_serial": _hw_field("Chip Serial", lv("ChipSerialNo", "ChipSerialNumber"), "lockdown"),
         "product_type": _hw_field("ProductType", lv("ProductType"), "lockdown"),
         "model": _hw_field("Model", cached.get("model") or lv("ProductType"), "resolved"),
         "a_number": _hw_field("Model number (A)", cached.get("a_number"), "resolved"),
@@ -5900,7 +5900,6 @@ async def _hardware_report_collect(udid):
         "front_ir_camera": from_comp("front_ir_camera", "Přední IR kamera"),
         "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
         "distance_sensor": from_comp("distance_sensor", "Distance Sensor"),
-        "ambient_light_sensor": from_comp("ambient_light_sensor", "Ambient Light Sensor"),
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
@@ -5922,7 +5921,6 @@ async def _hardware_report_collect(udid):
         health = min(100, round(nominal / design * 100))
     battery_diag = {
         "serial": _hw_field("Sériové číslo", bv("Serial", "SerialNumber", "BatterySerialNumber")),
-        "manufacturer": _hw_field("Výrobce baterie", bv("Manufacturer", "BatteryManufacturer", "DeviceName", "ManufacturerName")),
         "health_percent": _hw_field("Kondice (%)", str(health) if health is not None else None),
         "cycle_count": _hw_field("Počet cyklů", bv("CycleCount", "AppleRawCycleCount")),
         "design_capacity": _hw_field("Návrhová kapacita (mAh)", str(design) if design else None),
@@ -5936,14 +5934,12 @@ async def _hardware_report_collect(udid):
 
     # ── KONEKTIVITA / BASEBAND (ADRESY a identifikatory, NE serialy dilu) ──
     connectivity = {
-        "wifi_address": _hw_field("Wi-Fi adresa (MAC)", lv("WiFiAddress", "WifiAddress"), "lockdown"),
         "bluetooth_address": _hw_field("Bluetooth adresa (MAC)", lv("BluetoothAddress"), "lockdown"),
         "ethernet_address": _hw_field("Ethernet adresa (MAC)", lv("EthernetAddress"), "lockdown"),
+        "wifi_address": _hw_field("Wi-Fi adresa (MAC)", lv("WiFiAddress", "WifiAddress"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
         "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
-        "baseband_serial": _hw_field("Baseband Serial Number", lv("BasebandSerialNumber"), "lockdown"),
-        "chip_serial": _hw_field("Chip Serial", lv("ChipSerialNo", "ChipSerialNumber"), "lockdown"),
     }
 
     # ── DISPLEJ ──
@@ -5956,12 +5952,6 @@ async def _hardware_report_collect(udid):
     # ── ÚLOŽIŠTĚ / HARDWARE ──
     storage = {
         "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
-        "nand_type": _hw_field("NAND typ", _component_serial_find(nand, (
-            "NANDType", "FlashType", "MediaType", "MemoryType", "CellType",
-        )) or lv("NANDType", "FlashType", "MediaType"), "IORegistry/lockdown"),
-        "nand_manufacturer": _hw_field("NAND výrobce", _component_serial_find(nand, (
-            "Manufacturer", "Vendor", "VendorName", "NANDVendor", "FlashVendor",
-        )) or lv("NANDVendor", "FlashVendor", "NANDManufacturer"), "IORegistry/lockdown"),
     }
 
     sections = {
