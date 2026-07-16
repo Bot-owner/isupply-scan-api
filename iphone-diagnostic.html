@@ -2070,15 +2070,16 @@ async function activateDevice(id) {
 const COMPONENT_ICONS = {
   rear_camera:'📷', front_camera:'🤳', tele_camera:'🔭', front_ir_camera:'👁️',
   true_depth_projector:'✨', screen:'📱', mainboard:'🔧', battery:'🔋',
-  taptic_engine:'📳', nand:'💾', distance_sensor:'📏',
+  taptic_engine:'📳', nand:'💾', distance_sensor:'📏', modem_firmware:'📶', imei:'🆔',
 };
 const HW_SECTIONS = [
   {key:'device',       icon:'🆔', label:'Identifikace zařízení', kind:'rows'},
+  {key:'cameras',      icon:'📷', label:'Kamery', kind:'cards'},
   {key:'components',   icon:'🧩', label:'Komponenty (sériová čísla dílů)', kind:'cards'},
   {key:'face_id',      icon:'🙂', label:'Face ID', kind:'cards'},
+  {key:'mobile_data',  icon:'📶', label:'Mobilní data', kind:'cards'},
   {key:'battery',      icon:'🔋', label:'Baterie', kind:'rows'},
   {key:'connectivity', icon:'📡', label:'Konektivita a baseband', kind:'rows'},
-  {key:'modem',        icon:'📶', label:'Modem / datová síť', kind:'rows'},
   {key:'display',      icon:'📱', label:'Displej', kind:'rows'},
   {key:'storage',      icon:'💾', label:'Úložiště / hardware', kind:'rows'},
 ];

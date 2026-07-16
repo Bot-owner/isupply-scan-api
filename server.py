@@ -5929,11 +5929,15 @@ async def _hardware_report_collect(udid):
         "build": _hw_field("Build", lv("BuildVersion"), "lockdown"),
     }
 
-    # ── KOMPONENTY (fyzická sériová čísla dílů) – z potvrzeného readeru ──
-    components = {
+    # ── KAMERY (sériová čísla všech kamer vedle sebe – ať se hezky hledá) ──
+    cameras = {
         "rear_camera": from_comp("rear_camera", "Zadní kamera"),
         "front_camera": from_comp("front_camera", "Přední kamera"),
         "tele_camera": from_comp("tele_camera", "Teleobjektiv"),
+    }
+
+    # ── KOMPONENTY (fyzická sériová čísla dílů) – z potvrzeného readeru ──
+    components = {
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
@@ -5995,11 +5999,16 @@ async def _hardware_report_collect(udid):
         "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
     }
 
-    modem = _modem_firmware_fields(values)
+    # ── MOBILNÍ DATA (kartičky – klíčové indikátory aktivace/datové sítě) ──
+    mobile_data = {
+        "modem_firmware": _hw_field("Modem firmware (Baseband)", lv("BasebandVersion"), "lockdown"),
+        "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+    }
 
     sections = {
-        "device": device, "components": components, "face_id": face_id, "battery": battery_diag,
-        "connectivity": connectivity, "modem": modem, "display": display, "storage": storage,
+        "device": device, "cameras": cameras, "face_id": face_id, "mobile_data": mobile_data,
+        "components": components, "battery": battery_diag,
+        "connectivity": connectivity, "display": display, "storage": storage,
     }
     total = sum(len(s) for s in sections.values())
     available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
