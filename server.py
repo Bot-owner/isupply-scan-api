@@ -454,8 +454,8 @@ APPLE_MODELS = {
     # iPhone 14 Series
     'iPhone15,2': ('iPhone 14 Pro', 'A2890'),
     'iPhone15,3': ('iPhone 14 Pro Max', 'A2893'),
-    'iPhone15,4': ('iPhone 14', 'A2882'),
-    'iPhone15,5': ('iPhone 14 Plus', 'A2886'),
+    'iPhone14,7': ('iPhone 14', 'A2882'),
+    'iPhone14,8': ('iPhone 14 Plus', 'A2886'),
     # iPhone 13 Series
     'iPhone14,4': ('iPhone 13 mini', 'A2628'),
     'iPhone14,5': ('iPhone 13', 'A2633'),
@@ -5849,6 +5849,26 @@ def _hw_field(label, value, source=None):
         out["source"] = source
     return out
 
+def _modem_firmware_fields(values):
+    """Modem / baseband firmware z lockdown all_values (root doména).
+    BasebandVersion = verze firmwaru modemu. 'modem_ok' je ODVOZENÝ proxy
+    (modem přítomen + firmware čitelný) – NENÍ to důkaz živého datového
+    provozu; ten lockdown nevystavuje. Read-only, žádná hodnota natvrdo."""
+    def g(*keys):
+        return _component_serial_find(values, keys)
+    bb_version = g("BasebandVersion")
+    bb_status  = g("BasebandStatus")
+    bb_chipid  = g("BasebandChipID")
+    iccid      = g("IntegratedCircuitCardIdentity", "ICCID")
+    modem_ok   = bool(bb_version)
+    return {
+        "baseband_version": _hw_field("Firmware modemu (Baseband)", bb_version, "lockdown"),
+        "baseband_status":  _hw_field("Stav basebandu", bb_status, "lockdown"),
+        "baseband_chipid":  _hw_field("Baseband chip ID", bb_chipid, "lockdown"),
+        "sim_iccid":        _hw_field("SIM (ICCID)", iccid, "lockdown"),
+        "modem_ok":         _hw_field("Modem funkční (firmware čitelný)", "Ano" if modem_ok else "Ne", "odvozeno"),
+    }
+
 async def _hardware_report_collect(udid):
     # AGREGÁTOR: precte syrove zdroje JEDNOU a znovupouzije potvrzeny component
     # reader. Nedu­plikuje IORegistry logiku - jen agreguje a sémanticky trídí.
@@ -5879,6 +5899,18 @@ async def _hardware_report_collect(udid):
 
     cached = connected_devices.get(udid, {}) or {}
 
+    # ── generace + model z ProductType (spolehlivé i při fallbacku get_device_info) ──
+    _pt = lv("ProductType")
+    _mm = re.match(r"iPhone(\d+),", str(_pt or ""))
+    _maj = int(_mm.group(1)) if _mm else None
+    _faceid_new_gen = (_maj is None) or (_maj >= 14)   # iPhone 13+ = jen IR + Dot projektor
+    if _pt:
+        _rm_name, _rm_a = resolve_model(_pt)
+        _report_model = _rm_name if (_rm_name and _rm_name != _pt) else None
+        _report_anum  = _rm_a if (_rm_a and _rm_a != "N/A") else None
+    else:
+        _report_model, _report_anum = None, None
+
     # ── IDENTITA ZAŘÍZENÍ ──
     device = {
         "serial_number": _hw_field("Sériové číslo", lv("SerialNumber"), "lockdown"),
@@ -5886,8 +5918,8 @@ async def _hardware_report_collect(udid):
         "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
         "product_type": _hw_field("ProductType", lv("ProductType"), "lockdown"),
-        "model": _hw_field("Model", cached.get("model") or lv("ProductType"), "resolved"),
-        "a_number": _hw_field("Model number (A)", cached.get("a_number"), "resolved"),
+        "model": _hw_field("Model", _report_model or cached.get("model") or lv("ProductType"), "resolved"),
+        "a_number": _hw_field("Model number (A)", cached.get("a_number") or _report_anum, "resolved"),
         "ios": _hw_field("iOS", lv("ProductVersion"), "lockdown"),
         "build": _hw_field("Build", lv("BuildVersion"), "lockdown"),
     }
@@ -5897,14 +5929,19 @@ async def _hardware_report_collect(udid):
         "rear_camera": from_comp("rear_camera", "Zadní kamera"),
         "front_camera": from_comp("front_camera", "Přední kamera"),
         "tele_camera": from_comp("tele_camera", "Teleobjektiv"),
-        "front_ir_camera": from_comp("front_ir_camera", "Přední IR kamera"),
-        "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
-        "distance_sensor": from_comp("distance_sensor", "Distance Sensor"),
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
         "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
     }
+
+    # ── FACE ID (do iPhone 12 vč. Distance senzoru; od iPhone 13 jen IR + Dot) ──
+    face_id = {
+        "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
+        "front_ir_camera": from_comp("front_ir_camera", "IR kamera"),
+    }
+    if not _faceid_new_gen:
+        face_id["distance_sensor"] = from_comp("distance_sensor", "Distance senzor")
 
     # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
     def _int_or_none(v):
@@ -5953,9 +5990,11 @@ async def _hardware_report_collect(udid):
         "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
     }
 
+    modem = _modem_firmware_fields(values)
+
     sections = {
-        "device": device, "components": components, "battery": battery_diag,
-        "connectivity": connectivity, "display": display, "storage": storage,
+        "device": device, "components": components, "face_id": face_id, "battery": battery_diag,
+        "connectivity": connectivity, "modem": modem, "display": display, "storage": storage,
     }
     total = sum(len(s) for s in sections.values())
     available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
