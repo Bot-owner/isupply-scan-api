@@ -18,6 +18,35 @@
     --green:#16a34a;
     --sans:'Inter',sans-serif; --mono:'IBM Plex Mono',monospace;
   }
+
+  /* ── Download border beam ── */
+  @property --beam-angle{ syntax:'<angle>'; inherits:false; initial-value:0deg; }
+  .dl-beam{
+    position:relative; display:inline-flex; align-items:center; gap:6px;
+    font-size:14px; font-weight:600; color:var(--pink-dark);
+    padding:5px 13px; border-radius:8px;
+    background:var(--pink-dim); isolation:isolate; text-decoration:none;
+    transition:color .2s, background .2s;
+  }
+  .dl-beam:hover{ background:rgba(251,145,209,.22); }
+  .dl-beam::after{
+    content:""; position:absolute; inset:0; border-radius:inherit;
+    border:1.5px solid rgba(251,145,209,.5); pointer-events:none;
+  }
+  .dl-beam::before{
+    content:""; position:absolute; inset:0; border-radius:inherit; padding:1.6px;
+    background:conic-gradient(from var(--beam-angle),
+        transparent 0deg, #fff 6deg, var(--pink-dark) 18deg, transparent 46deg,
+        transparent 180deg, #fff 186deg, var(--pink-dark) 198deg, transparent 226deg,
+        transparent 360deg);
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+            mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor; mask-composite:exclude;
+    animation:dl-beam-spin 2.8s linear infinite; pointer-events:none;
+  }
+  @keyframes dl-beam-spin{ to{ --beam-angle:360deg; } }
+  @media (prefers-reduced-motion:reduce){ .dl-beam::before{ animation:none; } }
+  /* ── /Download border beam ── */
   *{box-sizing:border-box;margin:0;padding:0}
   html{scroll-behavior:smooth}
   body{font-family:var(--sans);color:var(--black);background:var(--white);line-height:1.5;-webkit-font-smoothing:antialiased}
@@ -185,7 +214,7 @@
       <a class="nlink" href="#how" data-i18n="nav_how">How it works</a>
       <a class="nlink" href="#pricing" data-i18n="nav_pricing">Pricing</a>
       <a class="nlink" href="#compat" data-i18n="nav_compat">Compatibility</a>
-      <a class="nlink" href="#download" style="color:var(--pink-dark);font-weight:600" data-i18n="nav_download">⬇ Download</a>
+      <a class="dl-beam" href="#download" data-i18n="nav_download">Download</a>
     </nav>
     <div class="nav-right">
       <div class="lang">
@@ -465,7 +494,7 @@
 var I18N = {
   en: {
     nav_features:"Features", nav_how:"How it works", nav_pricing:"Pricing", nav_compat:"Compatibility",
-    nav_download:"⬇ Download", nav_admin:"Admin Panel →", nav_get:"Get started",
+    nav_download:"Download", nav_admin:"Admin Panel →", nav_get:"Get started",
     hero_eyebrow:"Professional iPhone diagnostics",
     hero_h1a:"Know exactly what's", hero_h1b:"inside every iPhone",
     hero_lead:"iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.",
@@ -513,7 +542,7 @@ var I18N = {
   },
   cs: {
     nav_features:"Funkce", nav_how:"Jak to funguje", nav_pricing:"Ceník", nav_compat:"Kompatibilita",
-    nav_download:"⬇ Stáhnout", nav_admin:"Admin panel →", nav_get:"Začít",
+    nav_download:"Stáhnout", nav_admin:"Admin panel →", nav_get:"Začít",
     hero_eyebrow:"Profesionální diagnostika iPhonů",
     hero_h1a:"Víš přesně, co je", hero_h1b:"uvnitř každého iPhonu",
     hero_lead:"iSupply Scan otestuje 12 komponent během vteřin: displej, Touch ID, fotoaparáty, kondici baterie a další. Umí i tisk štítků. Postaveno pro EU refurbishery, co chtějí přesnost.",
