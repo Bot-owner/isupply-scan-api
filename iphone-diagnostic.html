@@ -1321,8 +1321,6 @@ const TEST_DEFS = [
   {id:'speaker',    tkey:'t_speaker',    icon:'🔊'},
   {id:'wifi',       tkey:'t_wifi',       icon:'📶'},
   {id:'bluetooth',  tkey:'t_bluetooth',  icon:'🔵'},
-  {id:'nfc',        tkey:'t_nfc',        icon:'📡'},
-  {id:'gps',        tkey:'t_gps',        icon:'📍'},
   {id:'charging',   tkey:'t_charging',   icon:'⚡'},
 ];
 // TESTS is always fresh with current language
@@ -1541,8 +1539,6 @@ const EXPORT_COLUMN_DEFS = [
   { id:'t_speaker',  tkey:'ec_t_speaker',default:false, fn: r => fmtTest(r.tests?.speaker) },
   { id:'t_wifi',     tkey:'ec_t_wifi',   default:false, fn: r => fmtTest(r.tests?.wifi) },
   { id:'t_bt',       tkey:'ec_t_bt',     default:false, fn: r => fmtTest(r.tests?.bluetooth) },
-  { id:'t_nfc',      tkey:'ec_t_nfc',    default:false, fn: r => fmtTest(r.tests?.nfc) },
-  { id:'t_gps',      tkey:'ec_t_gps',    default:false, fn: r => fmtTest(r.tests?.gps) },
   { id:'t_charge',   tkey:'ec_t_charge', default:false, fn: r => fmtTest(r.tests?.charging) },
   { id:'t_board',    tkey:'ec_t_board',  default:false, fn: r => fmtTest(r.tests?.mainboard) },
 ];
@@ -1663,6 +1659,16 @@ const SN_TESTS = {
   touchid:  ['front_ir_camera', 'true_depth_projector'],
 };
 
+// Face ID verdikt: IR kamera + Dot projektor vždy; Distance senzor JEN do
+// iPhone 12 (na 13+ má prox slot variantu "front_flex_proximity" – ta pod
+// Face ID nepatří). Chybí-li SN kterékoli platné komponenty => "možná závada".
+function _faceIdPresent(components) {
+  const need = ['front_ir_camera', 'true_depth_projector'];
+  const ds = components['distance_sensor'];
+  if (ds && ds.variant === 'distance_sensor') need.push('distance_sensor');
+  return need.every(k => components[k] && components[k].available);
+}
+
 async function fetchComponentPresence(udid) {
   // {display:bool, camera_b:bool, ...} nebo null při chybě/timeoutu.
   try {
@@ -1670,8 +1676,9 @@ async function fetchComponentPresence(udid) {
     if (!r || !r.components) return null;
     const map = {};
     for (const [testId, keys] of Object.entries(SN_TESTS)) {
-      // komponenta "má SN" jen když jsou VŠECHNY její klíče available
-      map[testId] = keys.every(k => r.components[k] && r.components[k].available);
+      map[testId] = (testId === 'touchid')
+        ? _faceIdPresent(r.components)
+        : keys.every(k => r.components[k] && r.components[k].available);
     }
     return map;
   } catch (e) { return null; }
