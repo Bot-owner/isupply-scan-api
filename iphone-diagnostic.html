@@ -1654,10 +1654,36 @@ function disconnectDevice(id) {
   render();
 }
 
-function startTesting(id) {
+// Testy se sériákem -> klíč(e) komponenty v /api/component-serials.
+// Verdikt těchto testů se řídí přítomností SN: chybí SN => "možná závada".
+const SN_TESTS = {
+  display:  ['screen'],
+  camera_b: ['rear_camera'],
+  camera_f: ['front_camera'],
+  touchid:  ['front_ir_camera', 'true_depth_projector'],
+};
+
+async function fetchComponentPresence(udid) {
+  // {display:bool, camera_b:bool, ...} nebo null při chybě/timeoutu.
+  try {
+    const r = await fetchJSON(`/api/component-serials/${encodeURIComponent(udid)}`, {}, 90000);
+    if (!r || !r.components) return null;
+    const map = {};
+    for (const [testId, keys] of Object.entries(SN_TESTS)) {
+      // komponenta "má SN" jen když jsou VŠECHNY její klíče available
+      map[testId] = keys.every(k => r.components[k] && r.components[k].available);
+    }
+    return map;
+  } catch (e) { return null; }
+}
+
+async function startTesting(id) {
   const slot = slots[id];
-  slot.state = 'testing'; slot.tests = [];
+  slot.state = 'testing'; slot.tests = []; slot.progress = 0;
   render();
+  // Nejdřív načti přítomnost SN komponent – podle toho se verdiktují testy se SN.
+  const snMap = (slot.device && slot.device.udid) ? await fetchComponentPresence(slot.device.udid) : null;
+  if (slot.state !== 'testing') return; // odpojeno během čtení
   let idx = 0;
   function next() {
     if (idx >= getTests().length) { finishTesting(id); return; }
@@ -1668,7 +1694,11 @@ function startTesting(id) {
     render();
     setTimeout(() => {
       const isChanged = (slot.device.changed||[]).includes(tdef.id);
-      const status = isChanged ? 'fail' : (tdef.id==='battery' && slot.device.battery<80) ? 'warn' : 'pass';
+      let status;
+      if (isChanged) status = 'fail';
+      else if (tdef.id==='battery' && slot.device.battery<80) status = 'warn';
+      else if (snMap && (tdef.id in snMap) && snMap[tdef.id]===false) status = 'warn'; // SN chybí -> možná závada
+      else status = 'pass';
       slot.tests = slot.tests.filter(r=>r.id!==tdef.id);
       slot.tests.push({id:tdef.id, status});
       idx++; next();
