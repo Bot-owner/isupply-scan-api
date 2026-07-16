@@ -5904,7 +5904,6 @@ async def _hardware_report_collect(udid):
         "battery": from_comp("battery", "Baterie"),
         "mainboard": from_comp("mainboard", "Základní deska"),
         "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
-        "nand": from_comp("nand", "NAND / Úložiště"),
     }
 
     # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
@@ -5946,7 +5945,7 @@ async def _hardware_report_collect(udid):
     panel_id_full = _component_serial_find(clcd, ("Panel_ID", "PanelID"))
     display = {
         "serial": from_comp("screen", "Sériové číslo displeje"),
-        "panel_id": _hw_field("Panel ID (zkráceno)", (panel_id_full[:48] + "…") if panel_id_full and len(panel_id_full) > 48 else panel_id_full, "AppleCLCD"),
+        "panel_id": _hw_field("Panel ID", panel_id_full, "AppleCLCD"),
     }
 
     # ── ÚLOŽIŠTĚ / HARDWARE ──
