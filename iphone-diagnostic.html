@@ -2489,6 +2489,7 @@ updateClock();
 render();
 renderLangSwitcher();
 applyTranslations();
+try { renderDatabase(); } catch(e) { console.error('renderDatabase init:', e); }
 
 // Při načtení zkontroluj jestli je licence aktivována
 (async function checkLicenceOnLoad() {
