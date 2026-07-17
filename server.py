@@ -887,7 +887,12 @@ def api_driver_check():
     # 1) Nejspolehlivejsi: zkusit spojeni pres usbmux (to, co appka realne potrebuje)
     try:
         from pymobiledevice3 import usbmux
-        usbmux.list_devices()
+        import inspect as _insp
+        _res = usbmux.list_devices()
+        # V async verzi je list_devices korutina – musí se doawaitovat a uzavřít,
+        # jinak zůstane osiřelá a ROZBIJE usbmux spojení (pak 183/Number:3 dokola).
+        if _insp.isawaitable(_res):
+            _run_async_isolated(_res, timeout=10)
         return jsonify({'installed': True, 'method': 'usbmux'})
     except Exception:
         pass
