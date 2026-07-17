@@ -5961,6 +5961,14 @@ async def _hardware_report_collect(udid):
     health = mcp
     if health is None and design and nominal and design > 0:
         health = min(100, round(nominal / design * 100))
+    def _fmt_scaled(raw, div, unit, decimals):
+        try:
+            n = float(str(raw).strip())
+        except Exception:
+            return None
+        return f"{n/div:.{decimals}f}".replace(".", ",") + f" {unit}"
+    _temp = _fmt_scaled(bv("Temperature"), 100.0, "°C", 2)
+    _volt = _fmt_scaled(bv("Voltage"), 1000.0, "V", 3)
     battery_diag = {
         "serial": _hw_field("Sériové číslo", bv("Serial", "SerialNumber", "BatterySerialNumber")),
         "health_percent": _hw_field("Kondice (%)", str(health) if health is not None else None),
@@ -5970,8 +5978,8 @@ async def _hardware_report_collect(udid):
         "is_charging": _hw_field("Nabíjí se", bv("IsCharging")),
         "fully_charged": _hw_field("Plně nabito", bv("FullyCharged")),
         "external_connected": _hw_field("Napájení připojeno", bv("ExternalConnected")),
-        "temperature_raw": _hw_field("Teplota (raw)", bv("Temperature")),
-        "voltage_raw": _hw_field("Napětí (raw)", bv("Voltage")),
+        "temperature": _hw_field("Teplota", _temp),
+        "voltage": _hw_field("Napětí", _volt),
     }
 
     # ── KONEKTIVITA / BASEBAND (ADRESY a identifikatory, NE serialy dilu) ──
