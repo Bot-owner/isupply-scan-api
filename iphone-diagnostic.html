@@ -1799,6 +1799,16 @@ function finishTesting(id) {
 }
 
 // ═══ PRINT ═══
+function labelParts(slot) {
+  const ids = ['mainboard','display','touchid','camera_b','camera_f','wifi','bluetooth','charging'];
+  return ids.map(id => {
+    const r = (slot.tests||[]).find(x=>x.id===id);
+    const name = getTests().find(x=>x.id===id)?.name || id;
+    const ok = r && r.status==='pass';
+    return `<span style="white-space:nowrap;margin-right:7px;color:${ok?'#15803d':'#dc2626'}">${ok?'\u2713':'\u2717'} ${name}</span>`;
+  }).join('');
+}
+
 function buildLabelHTML(slot, tapeSize='62') {
   const d = slot.device;
   const now = new Date(slot.testedAt||Date.now()).toLocaleDateString('cs-CZ');
@@ -1844,7 +1854,7 @@ function buildLabelHTML(slot, tapeSize='62') {
         </div>
       </div>
       <div style="display:flex;gap:6px;align-items:center">
-        <div style="background:${isPassed?'#f0fdf4':'#fef2f2'};border:1px solid ${isPassed?'#86efac':'#fca5a5'};border-radius:3px;padding:2px 5px;font-size:8px;font-weight:700;color:${isPassed?'#15803d':'#dc2626'};white-space:nowrap">${isPassed?'✅ ORIGINAL':'❌ REPLACED'}</div>
+        <div style="font-size:6.5px;line-height:1.5;display:flex;flex-wrap:wrap">${labelParts(slot)}</div>
         <div style="font-weight:700;color:${bc};font-size:8px">🔋 ${battHealth}</div>
       </div>
       <div style="border-top:1px dashed #ccc;padding-top:3px">
@@ -1893,7 +1903,7 @@ function buildLabelHTML(slot, tapeSize='62') {
       <div style="background:${isPassed?'#f0fdf4':'#fef2f2'};border:1px solid ${isPassed?'#86efac':'#fca5a5'};border-radius:5px;padding:6px 10px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
         <span style="font-size:16px">${isPassed?'✅':'❌'}</span>
         <div>
-          <div style="font-size:11px;font-weight:700;color:${isPassed?'#15803d':'#dc2626'}">${isPassed?'ALL ORIGINAL PARTS':'REPLACED PARTS FOUND'}</div>
+          <div style="font-size:11px;font-weight:700;color:${isPassed?'#15803d':'#dc2626'}">Stav komponent</div>
           ${changedTests.length?`<div style="font-size:9px;color:#dc2626">⚠ ${changedTests.join(' · ')}</div>`:''}
         </div>
       </div>
@@ -1945,7 +1955,7 @@ function buildLabelHTML(slot, tapeSize='62') {
     <div style="background:${isPassed?'#f0fdf4':'#fef2f2'};border:1px solid ${isPassed?'#86efac':'#fca5a5'};border-radius:5px;padding:5px 8px;margin-bottom:7px;display:flex;align-items:center;gap:6px">
       <span style="font-size:13px">${isPassed?'✅':'❌'}</span>
       <div>
-        <div style="font-size:10px;font-weight:700;color:${isPassed?'#15803d':'#dc2626'}">${isPassed?'ALL ORIGINAL PARTS':'REPLACED PARTS FOUND'}</div>
+        <div style="font-size:10px;font-weight:700;color:${isPassed?'#15803d':'#dc2626'}">Stav komponent</div>
         ${changedTests.length?`<div style="font-size:8px;color:#dc2626;margin-top:1px">⚠ ${changedTests.join(' · ')}</div>`:''}
         ${warnTests.length?`<div style="font-size:8px;color:#d97706;margin-top:1px">⚠ ${warnTests.join(' · ')}</div>`:''}
       </div>
