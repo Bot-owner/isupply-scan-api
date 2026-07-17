@@ -585,9 +585,7 @@ def get_device_info(udid):
                     continue
 
         # ── Barva ─────────────────────────────────────────────────
-        color_raw = str(vals.get('DeviceColor') or '')
-        # Apple iPhone XS Space Gray = '1', Silver = '2', Gold = '3'
-        # Novější modely používají hex kódy
+        # DeviceEnclosureColor = skutečná barva těla; DeviceColor bývá jen přední sklo.
         COLOR_MAP_NUM = {
             '1': 'Space Gray', '2': 'Silver', '3': 'Gold',
             '4': 'Space Black', '5': 'Rose Gold',
@@ -601,12 +599,17 @@ def get_device_info(udid):
             '#4e4b46': 'Black Titanium', '#d4c5b0': 'Natural Titanium',
             '#e8e3d8': 'White Titanium', '#c6c8ca': 'Silver', '#e8e1d5': 'Gold',
         }
-        if color_raw.startswith('#'):
-            color = COLOR_MAP_HEX.get(color_raw.lower(), color_raw)
-        elif color_raw.isdigit():
-            color = COLOR_MAP_NUM.get(color_raw, f'Color {color_raw}')
-        else:
-            color = color_raw if color_raw else 'N/A'
+        def _map_color(raw):
+            raw = str(raw or '').strip()
+            if raw.startswith('#'):
+                return COLOR_MAP_HEX.get(raw.lower())
+            if raw.isdigit():
+                return COLOR_MAP_NUM.get(raw)
+            return raw or None
+        _enc = str(vals.get('DeviceEnclosureColor') or '')
+        _dev = str(vals.get('DeviceColor') or '')
+        color = _map_color(_enc) or _map_color(_dev) or _enc or _dev or 'N/A'
+        print(f"  Barva: DeviceEnclosureColor={_enc!r} DeviceColor={_dev!r} -> {color}")
 
         # ── Baterie – kondice z com.apple.mobile.battery ──────────
         battery_pct = vals.get('BatteryCurrentCapacity', 0) or 0
@@ -731,11 +734,14 @@ def get_device_info(udid):
             'build':          vals.get('BuildVersion', 'N/A'),
             'storage':        storage,
             'color':          color,
+            'region':         vals.get('RegionInfo', 'N/A'),
             'battery':        battery_pct,
             'battery_health': battery_health,
             'battery_cycles': battery_cycles,
             'activation':     vals.get('ActivationState', 'N/A'),
-            'icloud_lock':    vals.get('FMiPActivationLockIsActivatable', False),
+            # iCloud / Find My (Activation Lock): FMiP účet existuje = ON.
+            # (missing/False = OFF – ověřeno na odemčeném kuse; ON ověřit na zamčeném)
+            'icloud_lock':    bool(vals.get('FMiPAccountExists') or vals.get('FMiPActivationLockIsActivatable')),
         }
         print(f"  ✓ VÝSLEDEK: model={result['model']} | storage={result['storage']} | color={result['color']} | battery={result['battery']} | health={result['battery_health']}")
         return result
@@ -6152,6 +6158,7 @@ async def _hardware_report_collect(udid):
         "bluetooth_address": _hw_field("Bluetooth adresa (MAC)", lv("BluetoothAddress"), "lockdown"),
         "ethernet_address": _hw_field("Ethernet adresa (MAC)", lv("EthernetAddress"), "lockdown"),
         "wifi_address": _hw_field("Wi-Fi adresa (MAC)", lv("WiFiAddress", "WifiAddress"), "lockdown"),
+        "wifi_sn": _hw_field("Wi-Fi SN", lv("WirelessBoardSerialNumber"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
         "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
         "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),

@@ -1431,6 +1431,8 @@ function renderBody(slot) {
       ${show(d.a_number)?`<span style="color:var(--pink-dark);font-weight:600">${d.a_number}</span>`:''}
       ${show(d.storage)?`<span>${d.storage}</span>`:''}
       ${show(d.color)?`<span>${d.color}</span>`:''}
+      ${show(d.region)?`<span style="color:#6b7280">${d.region}</span>`:''}
+      <span style="font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;border:1px solid ${d.icloud?'#fca5a5':'#86efac'};color:${d.icloud?'#dc2626':'#15803d'};background:#fff;margin-left:4px">iCloud ${d.icloud?'ON':'OFF'}</span>
     </div>
     <div class="device-sub" style="margin-top:2px">
       ${show(d.ios)?`<span>iOS <strong style="color:var(--text)">${d.ios}</strong></span>`:''}
@@ -2437,6 +2439,7 @@ function _mkDevice(udid, info) {
   return {
     model: info.model || info.name || 'iPhone', a_number: info.a_number || '—',
     storage: info.storage || '—', color: info.color || '—', ios: info.ios || '—',
+    region: info.region || '—',
     build: info.build || '—', imei: info.imei || '—', serial: info.serial || '—',
     battery: info.battery || 0, battery_health: info.battery_health || 0,
     battery_cycles: info.battery_cycles || 0, icloud: info.icloud_lock || false,
