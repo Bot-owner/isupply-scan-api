@@ -1689,7 +1689,6 @@ function connectDevice(id, device) {
   Object.assign(slot, {state:'connected', device, tests:[], progress:0, grade:null, testedAt:null});
   usedDevices.push(device.imei);
   render();
-  addToDatabase(slot);   // zapiš telefon do databáze hned při připojení
   setTimeout(() => startTesting(id), 600);
 }
 
