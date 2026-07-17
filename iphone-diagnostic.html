@@ -2429,29 +2429,47 @@ function startUSBListener() {
   sseConnection.onerror = () => setTimeout(startUSBListener, 3000);
 }
 
-function handleDeviceConnected(udid, info) {
+function _infoReady(info) {
+  return !!(info && info.imei && info.imei !== 'Načítání...' && info.imei !== '—'
+            && info.model && info.model !== 'iPhone');
+}
+function _mkDevice(udid, info) {
+  return {
+    model: info.model || info.name || 'iPhone', a_number: info.a_number || '—',
+    storage: info.storage || '—', color: info.color || '—', ios: info.ios || '—',
+    build: info.build || '—', imei: info.imei || '—', serial: info.serial || '—',
+    battery: info.battery || 0, battery_health: info.battery_health || 0,
+    battery_cycles: info.battery_cycles || 0, icloud: info.icloud_lock || false,
+    changed: [], udid,
+  };
+}
+async function handleDeviceConnected(udid, info) {
   if (udidToSlot[udid] !== undefined || _connecting.has(udid)) return;
   _connecting.add(udid);
   const emptySlot = slots.find(s=>s.state==='empty');
   if (!emptySlot) { showToast('⚠ Všechny sloty jsou obsazeny'); _connecting.delete(udid); return; }
   udidToSlot[udid] = emptySlot.id;
   _connecting.delete(udid);
-  const device = {
-    model:          info.model || info.name || 'iPhone',
-    a_number:       info.a_number || '—',
-    storage:        info.storage || '—',
-    color:          info.color || '—',
-    ios:            info.ios || '—',
-    build:          info.build || '—',
-    imei:           info.imei || '—',
-    serial:         info.serial || '—',
-    battery:        info.battery || 0,
-    battery_health: info.battery_health || 0,
-    battery_cycles: info.battery_cycles || 0,
-    icloud:         info.icloud_lock || false,
-    changed:        [],
-    udid,
-  };
+
+  // Když základní data nedorazila (get_device_info spadlo na usbmux 183),
+  // NEZAČÍNEJ test – ukaž "Načítání…" a dotahuj info, dokud nedorazí IMEI/model.
+  if (!_infoReady(info)) {
+    const s = slots[emptySlot.id];
+    s.state = 'connected'; s.device = { udid, model: 'iPhone', imei: 'Načítání...' };
+    s.tests = []; s.progress = 0;
+    render();
+    for (let i = 0; i < 20; i++) {                 // ~40 s pokusů
+      if (udidToSlot[udid] === undefined) return;   // mezitím odpojeno
+      await new Promise(r => setTimeout(r, 2000));
+      try {
+        const r = await fetchJSON(`/api/device-info/${encodeURIComponent(udid)}`, {}, 30000);
+        if (_infoReady(r)) { info = r; break; }
+      } catch (e) {}
+    }
+    if (!_infoReady(info)) return;   // pořád nic – nech slot v "Načítání…", NETESTUJ
+  }
+
+  const device = _mkDevice(udid, info);
   showToast(`${t('toast_detected')} ${device.model} (${device.a_number}) · IMEI: ${device.imei}`);
   connectDevice(emptySlot.id, device);
 }

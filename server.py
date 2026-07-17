@@ -746,7 +746,7 @@ def get_device_info(udid):
     try:
         # Retry na transientní MuxException 183 (konkurenční usbmux při připojení).
         last_err = None
-        for _attempt in range(8):
+        for _attempt in range(3):
             try:
                 with _usbmux_lock:
                     result = loop.run_until_complete(_fetch())
@@ -755,8 +755,8 @@ def get_device_info(udid):
             except Exception as e:
                 last_err = e
                 if ('MuxException' in type(e).__name__) or ('183' in str(e)):
-                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/8, čekám…")
-                    _t.sleep(min(2.0, 0.5 * (_attempt + 1)))
+                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/3, čekám…")
+                    _t.sleep(1.2)
                     continue
                 raise
         raise last_err
@@ -2072,6 +2072,17 @@ def api_component_serials(udid):
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
+
+@app.route('/api/device-info/<udid>', methods=['GET'])
+def api_device_info(udid):
+    """Dotažení základních dat (model, IMEI, iOS, baterie) na vyžádání –
+    frontend to volá dokud get_device_info nespadne kvůli usbmux 183."""
+    try:
+        info = get_device_info(udid)
+        return jsonify(info), 200
+    except Exception as exc:
+        return jsonify({'udid': udid, 'model': 'iPhone', 'imei': 'Načítání...',
+                        'error': f'{type(exc).__name__}: {exc}'}), 200
 
 
 @app.route('/api/baseline/<udid>', methods=['GET'])
