@@ -1543,6 +1543,8 @@ function addToDatabase(slot) {
   // Pojistka: zapiš JEN dokončený telefon (nikdy během testu / při připojení).
   if (slot.state !== 'done-pass' && slot.state !== 'done-fail') return;
   const d = slot.device;
+  // Pojistka 2: nezapisuj nedočtený telefon (fallback z usbmux 183).
+  if (!d || d.imei === 'Načítání...' || !d.imei || d.model === 'iPhone' || d.model === 'N/A') return;
   const existing = database.findIndex(r => r.imei === d.imei);
   const record = {
     model:      d.model,
