@@ -628,7 +628,7 @@ const T = {
     t_battery:'Battery – condition', t_display:'Display', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Rear camera', t_camera_f:'Front camera', t_microphone:'Microphone',
     t_speaker:'Speaker', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Mainboard',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Mainboard', t_panic:'PanicFull',
     // Test results
     tr_original:'Functional', tr_replaced:'Replaced', tr_warning:'Possible fault',
     // Battery condition
@@ -715,7 +715,7 @@ const T = {
     t_battery:'Baterie – kondice', t_display:'Displej', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Zadní kamera', t_camera_f:'Přední kamera', t_microphone:'Mikrofon',
     t_speaker:'Reproduktor', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Základní deska',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Základní deska', t_panic:'PanicFull',
     tr_original:'Funkční', tr_replaced:'Vyměněno', tr_warning:'Možná závada',
     bc_excellent:'Výborná', bc_good:'Dobrá', bc_fair:'Přijatelná', bc_poor:'Slabá',
     rs_pass:'Funkční / Prošlo', rs_fail:'Vyměněné díly nalezeny',
@@ -787,7 +787,7 @@ const T = {
     t_battery:'Bateria – stan', t_display:'Wyświetlacz', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Aparat tylny', t_camera_f:'Aparat przedni', t_microphone:'Mikrofon',
     t_speaker:'Głośnik', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Płyta główna',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Płyta główna', t_panic:'PanicFull',
     tr_original:'Sprawny', tr_replaced:'Wymieniony', tr_warning:'Możliwa usterka',
     bc_excellent:'Doskonały', bc_good:'Dobry', bc_fair:'Akceptowalny', bc_poor:'Słaby',
     rs_pass:'Sprawny / Zaliczony', rs_fail:'Znaleziono wymienione części',
@@ -858,7 +858,7 @@ const T = {
     t_battery:'Батарея – состояние', t_display:'Дисплей', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Задняя камера', t_camera_f:'Передняя камера', t_microphone:'Микрофон',
     t_speaker:'Динамик', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Материнская плата',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Материнская плата', t_panic:'PanicFull',
     tr_original:'Работает', tr_replaced:'Заменено', tr_warning:'Возможная неисправность',
     bc_excellent:'Отличное', bc_good:'Хорошее', bc_fair:'Приемлемое', bc_poor:'Слабое',
     rs_pass:'Работает / Пройдено', rs_fail:'Обнаружены заменённые детали',
@@ -929,7 +929,7 @@ const T = {
     t_battery:'Batteria – condizione', t_display:'Display', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Fotocamera posteriore', t_camera_f:'Fotocamera anteriore', t_microphone:'Microfono',
     t_speaker:'Altoparlante', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Scheda madre',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Scheda madre', t_panic:'PanicFull',
     tr_original:'Funzionante', tr_replaced:'Sostituito', tr_warning:'Possibile guasto',
     bc_excellent:'Eccellente', bc_good:'Buona', bc_fair:'Accettabile', bc_poor:'Scarsa',
     rs_pass:'Funzionante / Superato', rs_fail:'Parti sostituite rilevate',
@@ -1000,7 +1000,7 @@ const T = {
     t_battery:'Batterie – état', t_display:'Écran', t_touchid:'Touch ID / Face ID',
     t_camera_b:'Caméra arrière', t_camera_f:'Caméra avant', t_microphone:'Microphone',
     t_speaker:'Haut-parleur', t_wifi:'Wi-Fi', t_bluetooth:'Bluetooth',
-    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Carte mère',
+    t_nfc:'NFC', t_gps:'GPS', t_charging:'Lightning / USB-C', t_mainboard:'Carte mère', t_panic:'PanicFull',
     tr_original:'Fonctionnel', tr_replaced:'Remplacé', tr_warning:'Défaut possible',
     bc_excellent:'Excellente', bc_good:'Bonne', bc_fair:'Acceptable', bc_poor:'Faible',
     rs_pass:'Fonctionnel / Réussi', rs_fail:'Pièces remplacées détectées',
@@ -1321,6 +1321,7 @@ const TEST_DEFS = [
   {id:'wifi',       tkey:'t_wifi',       icon:'📶'},
   {id:'bluetooth',  tkey:'t_bluetooth',  icon:'🔵'},
   {id:'charging',   tkey:'t_charging',   icon:'⚡'},
+  {id:'panic',      tkey:'t_panic',      icon:'⚠️'},
 ];
 // TESTS is always fresh with current language
 function getTests() { return TEST_DEFS.map(d => ({...d, name: t(d.tkey)})); }
@@ -1445,6 +1446,10 @@ function renderBody(slot) {
       if (tst.id==='battery' && (r.status==='pass'||r.status==='warn')) {
         // Baterie ve slotu: jen "procenta / cykly" (bez slovní kondice)
         val = `${(d.battery_health||d.battery)||0}% / ${d.battery_cycles||0}`;
+      }
+      else if (tst.id==='panic') {
+        const ps = d._panics;
+        val = (ps && ps.length) ? `${ps[0].cause||'Panic'} · vynucuje restart` : 'bez logu';
       }
       else if (r.status==='running') val = '...';
       else if (r.status==='pass') val = t('tr_original');
@@ -1708,6 +1713,13 @@ function _faceIdPresent(components) {
   return need.every(k => components[k] && components[k].available);
 }
 
+async function fetchPanics(udid) {
+  try {
+    const r = await fetchJSON(`/api/panic-logs/${encodeURIComponent(udid)}`, {}, 90000);
+    return (r && r.panics) ? r.panics : [];
+  } catch (e) { return null; }
+}
+
 async function fetchComponentPresence(udid) {
   // {display:bool, camera_b:bool, ...} nebo null při chybě/timeoutu.
   try {
@@ -1730,7 +1742,16 @@ async function startTesting(id) {
   slot.state = 'testing'; slot.tests = []; slot.progress = 0;
   render();
   // Nejdřív načti přítomnost SN komponent – podle toho se verdiktují testy se SN.
-  const snMap = (slot.device && slot.device.udid) ? await fetchComponentPresence(slot.device.udid) : null;
+  // Načti přítomnost SN komponent + panic logy (paralelně, bezpečně).
+  let snMap = null;
+  if (slot.device && slot.device.udid) {
+    const [sn, panics] = await Promise.all([
+      fetchComponentPresence(slot.device.udid),
+      fetchPanics(slot.device.udid),
+    ]);
+    snMap = sn;
+    slot.device._panics = panics; // null = nezjištěno, [] = žádný panic
+  }
   if (slot.state !== 'testing') return; // odpojeno během čtení
   let idx = 0;
   function next() {
@@ -1746,6 +1767,7 @@ async function startTesting(id) {
       if (isChanged) status = 'fail';
       else if (tdef.id==='battery' && slot.device.battery<80) status = 'warn';
       else if (snMap && (tdef.id in snMap) && snMap[tdef.id]===false) status = 'warn'; // SN chybí -> možná závada
+      else if (tdef.id==='panic') status = (slot.device._panics && slot.device._panics.length) ? 'fail' : 'pass';
       else status = 'pass';
       slot.tests = slot.tests.filter(r=>r.id!==tdef.id);
       slot.tests.push({id:tdef.id, status});
