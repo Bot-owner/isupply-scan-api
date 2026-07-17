@@ -2050,8 +2050,40 @@ def api_component_serials(udid):
 
 # ─── PANIC / CRASH LOGY ───────────────────────────────────────────────────
 def _classify_panic(bug_type, text):
-    """Jednoduchá klasifikace příčiny podle obsahu panicu (best-effort)."""
-    t = (str(text) or '').lower()
+    """Klasifikace příčiny panicu. Nejkonkrétnější je vzor "Missing sensor(s): X"
+    – tam přímo víme, co je vadné a co vyměnit."""
+    raw = str(text) or ''
+    t = raw.lower()
+
+    # 1) 'Missing sensor(s): Xxx' – co fyzicky chybí / je ve zkratu
+    # Mapování dle iPad Rehab (Jessa) + známé vzory. Kód senzoru -> co vyměnit.
+    SENSORS = {
+        'prs0': 'Barometr (PRS0) → nabíjecí konektor / jeho konektor na desce',
+        'prs':  'Barometr → nabíjecí konektor',
+        'baro': 'Barometr → nabíjecí konektor',
+        'mic1': 'Spodní mikrofon (Mic1) → nabíjecí konektor',
+        'mic2': 'Zadní mikrofon (Mic2) → kabel power tlačítka / blesku kamery',
+        'tg0v': 'Teplotní/napěťový senzor baterie (TG0V) → baterie / její konektor na desce',
+        'tg0b': 'Teplotní/napěťový senzor baterie (TG0B) → baterie / její konektor na desce',
+        'als0': 'Senzor světla (ALS) → přední flex',
+        'als':  'Senzor světla (ALS) → přední flex',
+        'prox': 'Proximity senzor → přední flex',
+        'gyro': 'Gyroskop → základní deska',
+        'gyr0': 'Gyroskop → základní deska',
+        'accel':'Akcelerometr → základní deska',
+        'acc0': 'Akcelerometr → základní deska',
+        'mag0': 'Magnetometr (kompas) → deska / anténní flex',
+        'mag':  'Magnetometr (kompas) → deska / anténní flex',
+        'humidity': 'Senzor vlhkosti → deska',
+    }
+    m = re.search(r'missing sensor\(s\):\s*([A-Za-z0-9,\s]+)', raw, re.IGNORECASE)
+    if m:
+        codes = [c.strip() for c in re.split(r'[,\s]+', m.group(1)) if c.strip()]
+        parts = [SENSORS.get(c.lower(), f'Chybí senzor {c}') for c in codes[:4]]
+        if parts:
+            return 'Chybí senzor: ' + '; '.join(parts)
+
+    # 2) obecné vzory podle textu panicu
     for needles, label in (
         (("wifi", "bcm", "brcm", "corecapture"), "Wi-Fi / síťový modul"),
         (("baseband", "modem", "cellular"), "Modem / baseband"),

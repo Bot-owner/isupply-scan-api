@@ -1381,8 +1381,9 @@ function battClass(p) { return p>=70?'batt-ok':p>=50?'batt-warn':'batt-bad'; }
 const slots = Array.from({length:10}, (_,i) => ({id:i, state:'empty', device:null, tests:[], progress:0, grade:null, testedAt:null}));
 let usedDevices = [];
 let printSlotId = null;
-// Databáze dokončených záznamů
-let database = [];
+// Databáze záznamů – persistentní přes localStorage (přežije restart appky)
+let database = (() => { try { return JSON.parse(localStorage.getItem('isupply_db') || '[]') || []; } catch (e) { return []; } })();
+function saveDatabase() { try { localStorage.setItem('isupply_db', JSON.stringify(database)); } catch (e) {} }
 
 // ═══ RENDER DIAGNOSTICS ═══
 function render() {
@@ -1521,6 +1522,7 @@ function clearDatabase() {
   const confirmed = confirm(`${t('confirm_clear_title')}\n\n${database.length} ${t('confirm_clear_body')}`);
   if (!confirmed) return;
   database = [];
+  saveDatabase();
   renderDatabase();
   updateStats();
   showToast(t('toast_db_cleared'));
@@ -1531,6 +1533,7 @@ function deleteRecord(index) {
   if (!r) return;
   if (!confirm(`${t('confirm_delete_record')}\n${r.model} · ${r.imei}?`)) return;
   database.splice(index, 1);
+  saveDatabase();
   renderDatabase();
   updateStats();
   showToast(`${t('toast_deleted')} ${r.model}`);
@@ -1550,7 +1553,7 @@ function addToDatabase(slot) {
     imei:       d.imei,
     serial:     d.serial || '—',
     grade:      '',
-    result:     slot.state==='done-pass' ? 'PROŠLO' : 'SELHALO',
+    result:     slot.state==='done-pass' ? 'PROŠLO' : (slot.state==='done-fail' ? 'SELHALO' : 'TESTUJE SE'),
     date:       new Date(slot.testedAt||Date.now()).toLocaleDateString('cs-CZ'),
     time:       new Date(slot.testedAt||Date.now()).toLocaleTimeString('cs-CZ'),
     technician: loggedInUser?.username || '—',
@@ -1558,7 +1561,9 @@ function addToDatabase(slot) {
   };
   if (existing >= 0) database[existing] = record;
   else database.push(record);
+  saveDatabase();
   updateStats();
+  if (document.getElementById('view-db') && document.getElementById('view-db').classList.contains('active')) renderDatabase();
 }
 
 // ═══ DEFINICE SLOUPCŮ PRO EXPORT ═══
@@ -1684,6 +1689,7 @@ function connectDevice(id, device) {
   Object.assign(slot, {state:'connected', device, tests:[], progress:0, grade:null, testedAt:null});
   usedDevices.push(device.imei);
   render();
+  addToDatabase(slot);   // zapiš telefon do databáze hned při připojení
   setTimeout(() => startTesting(id), 600);
 }
 
