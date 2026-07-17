@@ -646,49 +646,70 @@ def get_device_info(udid):
             else:
                 diag = DiagnosticsService(ld)
 
-            # iOS 26: 'AppleSmartBattery' se čte přes diag.ioregistry(name=...),
-            # NE přes ioregistry_entry (na novém iOS vrací prázdno). Proto dřív
-            # chyběly cykly a kondice padala na aktuální nabití (fallback).
-            iokit = await _read_ioreg(diag, "battery", "AppleSmartBattery", {})
-            if not (isinstance(iokit, dict) and iokit):
-                iokit = await _read_ioreg(diag, "charger", "AppleARMPMUCharger", {})
+            # Zkus ioregentry AppleSmartBattery (hlavní zdroj)
+            iokit = None
+            for entry_name in ['AppleSmartBattery', 'AppleARMPMUCharger']:
+                try:
+                    fn = getattr(diag, 'ioregistry_entry', None)
+                    if fn:
+                        iokit = fn(entry_name)
+                        if asyncio.iscoroutine(iokit):
+                            iokit = await iokit
+                        if iokit:
+                            print(f"  ✓ IOKit {entry_name} OK")
+                            break
+                except Exception as e:
+                    print(f"  IOKit {entry_name}: {e}")
 
-            # Rekurzivní hledání skalární hodnoty (CycleCount i kapacity můžou být
-            # vnořené v BatteryData). Top-level klíč má přednost.
-            def _bget(*keys):
-                stack = [iokit]; seen = 0
-                while stack and seen < 5000:
-                    cur = stack.pop(); seen += 1
-                    if isinstance(cur, dict):
-                        for k in keys:
-                            v = cur.get(k)
-                            if v is not None and not isinstance(v, (dict, list, bytes)):
-                                return v
-                        stack.extend(cur.values())
-                    elif isinstance(cur, (list, tuple)):
-                        stack.extend(cur)
-                return None
+            if not iokit:
+                # Fallback: get_battery() metoda
+                for method in ['get_battery', 'battery']:
+                    fn = getattr(diag, method, None)
+                    if fn:
+                        try:
+                            iokit = fn()
+                            if asyncio.iscoroutine(iokit):
+                                iokit = await iokit
+                            if iokit:
+                                break
+                        except Exception:
+                            pass
 
-            if isinstance(iokit, dict) and iokit:
-                # KONDICE (Maximum Capacity %) – stejná logika jako 3uTools/iOS.
-                # Pozn.: BatteryHealthMetric se ZÁMĚRNĚ nepoužívá (není to Max Cap %).
-                mcp = _bget('MaximumCapacityPercent')
+            if isinstance(iokit, dict):
+                # Vypiš klíče pro debug
+                cap_keys = {k:v for k,v in iokit.items()
+                            if any(x in k.lower() for x in ['cap','health','max','cycle','design','nominal'])}
+                print(f"  Battery IOKit keys: {cap_keys}")
+
+                # === METODA 1: MaximumCapacityPercent ===
+                # Přesná hodnota co zobrazuje iOS v Nastavení → Baterie
+                mcp = iokit.get('MaximumCapacityPercent')
                 if mcp is not None and 0 < int(mcp) <= 100:
                     battery_health = int(mcp)
+                    print(f"  ✓ MaximumCapacityPercent = {battery_health}%")
+
+                # === METODA 2: AppleRawMaxCapacity / DesignCapacity ===
+                # Stejný výpočet jako 3uTools a idevicediagnostics
+                # health% = (AppleRawMaxCapacity / DesignCapacity) * 100
                 if not battery_health:
-                    raw_max    = _bget('AppleRawMaxCapacity')
-                    design_cap = _bget('DesignCapacity')
+                    raw_max    = iokit.get('AppleRawMaxCapacity', 0)
+                    design_cap = iokit.get('DesignCapacity', 0)
                     if raw_max and design_cap and int(design_cap) > 0:
                         battery_health = min(100, round(int(raw_max) / int(design_cap) * 100))
+                        print(f"  ✓ AppleRawMaxCapacity/DesignCapacity = {raw_max}/{design_cap} = {battery_health}%")
+
+                # === METODA 3: NominalChargeCapacity / DesignCapacity ===
                 if not battery_health:
-                    nominal    = _bget('NominalChargeCapacity')
-                    design_cap = _bget('DesignCapacity')
+                    nominal    = iokit.get('NominalChargeCapacity', 0)
+                    design_cap = iokit.get('DesignCapacity', 0)
                     if nominal and design_cap and int(design_cap) > 0:
                         battery_health = min(100, round(int(nominal) / int(design_cap) * 100))
+                        print(f"  ✓ NominalChargeCapacity/DesignCapacity = {nominal}/{design_cap} = {battery_health}%")
 
-                # CYKLY – top-level i vnořené v BatteryData (iOS 26)
-                battery_cycles = _bget('CycleCount') or _bget('AppleRawCycleCount') or 0
-                print(f"  ✓ battery_health={battery_health}%  cycles={battery_cycles}")
+                # Počet nabíjecích cyklů (bonus info)
+                battery_cycles = iokit.get('CycleCount', 0) or iokit.get('AppleRawCycleCount', 0)
+                if battery_cycles:
+                    print(f"  ✓ CycleCount = {battery_cycles}")
 
         except Exception as be:
             print(f"  DiagnosticsService chyba: {be}")
@@ -720,12 +741,25 @@ def get_device_info(udid):
         return result
 
     # Vlastní izolovaný event loop
+    import time as _t
     loop = asyncio.new_event_loop()
     try:
-        with _usbmux_lock:
-            result = loop.run_until_complete(_fetch())
-        print(f"  ✓ {result['name']} | IMEI: {result['imei']} | iOS: {result['ios']} | Baterie: {result['battery']}%")
-        return result
+        # Retry na transientní MuxException 183 (konkurenční usbmux při připojení).
+        last_err = None
+        for _attempt in range(4):
+            try:
+                with _usbmux_lock:
+                    result = loop.run_until_complete(_fetch())
+                print(f"  ✓ {result['name']} | IMEI: {result['imei']} | iOS: {result['ios']} | Baterie: {result['battery']}%")
+                return result
+            except Exception as e:
+                last_err = e
+                if ('MuxException' in type(e).__name__) or ('183' in str(e)):
+                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/4, čekám…")
+                    _t.sleep(0.4 * (_attempt + 1))
+                    continue
+                raise
+        raise last_err
     except Exception as e:
         print(f"  ✗ get_device_info chyba: {e}")
         # Vrátit alespoň UDID
@@ -1807,23 +1841,6 @@ def _prox_variant_for(product_type):
 def _component_applicable(comp_key, product_type):
     return True
 
-def _board_status(values, components):
-    """Deska je "funkční", jen když software najde všech 5 klíčových údajů:
-    MLB (mainboard SN), modem firmware, IMEI, Wi-Fi adresu a Bluetooth adresu.
-    Chybí-li kterýkoli -> deska = možná závada."""
-    def has(*keys):
-        return bool(_component_serial_find(values, keys))
-    mlb      = bool((components.get("mainboard") or {}).get("available"))
-    baseband = has("BasebandVersion")
-    imei     = has("InternationalMobileEquipmentIdentity")
-    wifi     = has("WiFiAddress", "WifiAddress")
-    bt       = has("BluetoothAddress")
-    return {
-        "ok": all([mlb, baseband, imei, wifi, bt]),
-        "mlb": mlb, "baseband": baseband, "imei": imei,
-        "wifi": wifi, "bluetooth": bt,
-    }
-
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     if sources is None:
         sources = await _read_hw_sources(udid)
@@ -2022,7 +2039,6 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
         "reader": "strict-source-isolated-v29.7-possiblefault",
         "udid": udid,
         "components": components,
-        "board": _board_status(values, components),
         "groups": groups,
         "baseline": baseline_meta,
         "summary": {
@@ -2047,150 +2063,6 @@ def api_component_serials(udid):
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
-
-# ─── PANIC / CRASH LOGY ───────────────────────────────────────────────────
-def _classify_panic(bug_type, text):
-    """Klasifikace příčiny panicu. Nejkonkrétnější je vzor "Missing sensor(s): X"
-    – tam přímo víme, co je vadné a co vyměnit."""
-    raw = str(text) or ''
-    t = raw.lower()
-
-    # 1) 'Missing sensor(s): Xxx' – co fyzicky chybí / je ve zkratu
-    # Mapování dle iPad Rehab (Jessa) + známé vzory. Kód senzoru -> co vyměnit.
-    SENSORS = {
-        'prs0': 'Barometr (PRS0) → nabíjecí konektor / jeho konektor na desce',
-        'prs':  'Barometr → nabíjecí konektor',
-        'baro': 'Barometr → nabíjecí konektor',
-        'mic1': 'Spodní mikrofon (Mic1) → nabíjecí konektor',
-        'mic2': 'Zadní mikrofon (Mic2) → kabel power tlačítka / blesku kamery',
-        'tg0v': 'Teplotní/napěťový senzor baterie (TG0V) → baterie / její konektor na desce',
-        'tg0b': 'Teplotní/napěťový senzor baterie (TG0B) → baterie / její konektor na desce',
-        'als0': 'Senzor světla (ALS) → přední flex',
-        'als':  'Senzor světla (ALS) → přední flex',
-        'prox': 'Proximity senzor → přední flex',
-        'gyro': 'Gyroskop → základní deska',
-        'gyr0': 'Gyroskop → základní deska',
-        'accel':'Akcelerometr → základní deska',
-        'acc0': 'Akcelerometr → základní deska',
-        'mag0': 'Magnetometr (kompas) → deska / anténní flex',
-        'mag':  'Magnetometr (kompas) → deska / anténní flex',
-        'humidity': 'Senzor vlhkosti → deska',
-    }
-    m = re.search(r'missing sensor\(s\):\s*([A-Za-z0-9,\s]+)', raw, re.IGNORECASE)
-    if m:
-        codes = [c.strip() for c in re.split(r'[,\s]+', m.group(1)) if c.strip()]
-        parts = [SENSORS.get(c.lower(), f'Chybí senzor {c}') for c in codes[:4]]
-        if parts:
-            return 'Chybí senzor: ' + '; '.join(parts)
-
-    # 2) obecné vzory podle textu panicu
-    for needles, label in (
-        (("wifi", "bcm", "brcm", "corecapture"), "Wi-Fi / síťový modul"),
-        (("baseband", "modem", "cellular"), "Modem / baseband"),
-        (("gpu", "agx", "sgx"), "GPU / grafika"),
-        (("thermal", "overtemp", "temperature"), "Přehřátí"),
-        (("pmu", "charg", "battery", "power"), "Napájení / baterie"),
-        (("watchdog", "wdog", "hang"), "Watchdog / systém zamrzl"),
-        (("nand", "ans", "nvme", "smartio"), "Úložiště / NAND"),
-        (("aop", "audio"), "Audio"),
-        (("clcd", "backlight", "display"), "Displej"),
-    ):
-        if any(n in t for n in needles):
-            return label
-    return (f"Panic (typ {bug_type})" if bug_type else "Neurčeno")
-
-def _parse_ips(name, raw):
-    import json as _json
-    if isinstance(raw, (bytes, bytearray)):
-        raw = bytes(raw).decode('utf-8', errors='ignore')
-    bug_type = ts = summary = None
-    try:
-        parts = raw.split('\n', 1)
-        head = _json.loads(parts[0])
-        bug_type = head.get('bug_type'); ts = head.get('timestamp')
-        body = parts[1] if len(parts) > 1 else ''
-        try:
-            bj = _json.loads(body)
-            summary = bj.get('panicString') or bj.get('os_version')
-        except Exception:
-            summary = (body.strip().split(chr(10), 1)[0][:200]) or None
-    except Exception:
-        summary = (raw.strip().split(chr(10), 1)[0][:200]) or None
-    return {'name': name, 'bug_type': bug_type, 'timestamp': ts,
-            'summary': summary, 'cause': _classify_panic(bug_type, raw),
-            'full': raw[:20000]}
-
-async def _panic_logs_collect(udid):
-    import inspect
-    from pymobiledevice3.lockdown import create_using_usbmux
-    sig = inspect.signature(create_using_usbmux).parameters
-    ld = create_using_usbmux(serial=udid) if 'serial' in sig else (
-         create_using_usbmux(udid=udid) if 'udid' in sig else create_using_usbmux(udid))
-    if inspect.isawaitable(ld):
-        ld = await ld
-
-    async def _m(x):
-        return await x if inspect.isawaitable(x) else x
-
-    panics = []; errors = {}
-    try:
-        from pymobiledevice3.services.crash_reports import CrashReportsManager
-        mgr = (await CrashReportsManager(ld)) if inspect.iscoroutinefunction(CrashReportsManager) else CrashReportsManager(ld)
-
-        listing = None
-        for meth in ('ls', 'list'):
-            fn = getattr(mgr, meth, None)
-            if fn:
-                try:
-                    listing = await _m(fn())
-                    if listing:
-                        break
-                except Exception as e:
-                    errors[f'list:{meth}'] = f'{type(e).__name__}: {e}'
-        if listing is None:
-            afc = getattr(mgr, 'afc', None) or getattr(mgr, 'afc_service', None)
-            if afc is not None and hasattr(afc, 'listdir'):
-                try:
-                    listing = await _m(afc.listdir('/'))
-                except Exception as e:
-                    errors['afc_list'] = f'{type(e).__name__}: {e}'
-        listing = list(listing or [])
-
-        names = [n for n in listing if 'panic' in str(n).lower()]
-        for name in names[:20]:
-            content = None
-            for meth in ('get_crash', 'read', 'cat'):
-                fn = getattr(mgr, meth, None)
-                if fn:
-                    try:
-                        content = await _m(fn(name))
-                        if content:
-                            break
-                    except Exception:
-                        pass
-            if content is None:
-                afc = getattr(mgr, 'afc', None) or getattr(mgr, 'afc_service', None)
-                if afc is not None:
-                    fn = getattr(afc, 'get_file_contents', None)
-                    if fn:
-                        try:
-                            content = await _m(fn(name))
-                        except Exception as e:
-                            errors[f'read:{name}'] = f'{type(e).__name__}: {e}'
-            if content:
-                panics.append(_parse_ips(name, content))
-    except Exception as e:
-        errors['crash_reports'] = f'{type(e).__name__}: {e}'
-
-    return {'ok': True, 'udid': udid, 'count': len(panics), 'panics': panics, 'errors': errors}
-
-@app.route('/api/panic-logs/<udid>', methods=['GET'])
-def api_panic_logs(udid):
-    try:
-        result = _run_async_isolated(_panic_logs_collect(udid), timeout=90)
-        return jsonify(result), 200
-    except Exception as exc:
-        return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}', 'panics': []}), 200
 
 
 @app.route('/api/baseline/<udid>', methods=['GET'])
@@ -6105,14 +5977,6 @@ async def _hardware_report_collect(udid):
     health = mcp
     if health is None and design and nominal and design > 0:
         health = min(100, round(nominal / design * 100))
-    def _fmt_scaled(raw, div, unit, decimals):
-        try:
-            n = float(str(raw).strip())
-        except Exception:
-            return None
-        return f"{n/div:.{decimals}f}".replace(".", ",") + f" {unit}"
-    _temp = _fmt_scaled(bv("Temperature"), 100.0, "°C", 2)
-    _volt = _fmt_scaled(bv("Voltage"), 1000.0, "V", 3)
     battery_diag = {
         "serial": _hw_field("Sériové číslo", bv("Serial", "SerialNumber", "BatterySerialNumber")),
         "health_percent": _hw_field("Kondice (%)", str(health) if health is not None else None),
@@ -6122,8 +5986,8 @@ async def _hardware_report_collect(udid):
         "is_charging": _hw_field("Nabíjí se", bv("IsCharging")),
         "fully_charged": _hw_field("Plně nabito", bv("FullyCharged")),
         "external_connected": _hw_field("Napájení připojeno", bv("ExternalConnected")),
-        "temperature": _hw_field("Teplota", _temp),
-        "voltage": _hw_field("Napětí", _volt),
+        "temperature_raw": _hw_field("Teplota (raw)", bv("Temperature")),
+        "voltage_raw": _hw_field("Napětí (raw)", bv("Voltage")),
     }
 
     # ── KONEKTIVITA / BASEBAND (ADRESY a identifikatory, NE serialy dilu) ──
