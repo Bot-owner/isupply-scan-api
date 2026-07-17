@@ -646,70 +646,49 @@ def get_device_info(udid):
             else:
                 diag = DiagnosticsService(ld)
 
-            # Zkus ioregentry AppleSmartBattery (hlavní zdroj)
-            iokit = None
-            for entry_name in ['AppleSmartBattery', 'AppleARMPMUCharger']:
-                try:
-                    fn = getattr(diag, 'ioregistry_entry', None)
-                    if fn:
-                        iokit = fn(entry_name)
-                        if asyncio.iscoroutine(iokit):
-                            iokit = await iokit
-                        if iokit:
-                            print(f"  ✓ IOKit {entry_name} OK")
-                            break
-                except Exception as e:
-                    print(f"  IOKit {entry_name}: {e}")
+            # iOS 26: 'AppleSmartBattery' se čte přes diag.ioregistry(name=...),
+            # NE přes ioregistry_entry (na novém iOS vrací prázdno). Proto dřív
+            # chyběly cykly a kondice padala na aktuální nabití (fallback).
+            iokit = await _read_ioreg(diag, "battery", "AppleSmartBattery", {})
+            if not (isinstance(iokit, dict) and iokit):
+                iokit = await _read_ioreg(diag, "charger", "AppleARMPMUCharger", {})
 
-            if not iokit:
-                # Fallback: get_battery() metoda
-                for method in ['get_battery', 'battery']:
-                    fn = getattr(diag, method, None)
-                    if fn:
-                        try:
-                            iokit = fn()
-                            if asyncio.iscoroutine(iokit):
-                                iokit = await iokit
-                            if iokit:
-                                break
-                        except Exception:
-                            pass
+            # Rekurzivní hledání skalární hodnoty (CycleCount i kapacity můžou být
+            # vnořené v BatteryData). Top-level klíč má přednost.
+            def _bget(*keys):
+                stack = [iokit]; seen = 0
+                while stack and seen < 5000:
+                    cur = stack.pop(); seen += 1
+                    if isinstance(cur, dict):
+                        for k in keys:
+                            v = cur.get(k)
+                            if v is not None and not isinstance(v, (dict, list, bytes)):
+                                return v
+                        stack.extend(cur.values())
+                    elif isinstance(cur, (list, tuple)):
+                        stack.extend(cur)
+                return None
 
-            if isinstance(iokit, dict):
-                # Vypiš klíče pro debug
-                cap_keys = {k:v for k,v in iokit.items()
-                            if any(x in k.lower() for x in ['cap','health','max','cycle','design','nominal'])}
-                print(f"  Battery IOKit keys: {cap_keys}")
-
-                # === METODA 1: MaximumCapacityPercent ===
-                # Přesná hodnota co zobrazuje iOS v Nastavení → Baterie
-                mcp = iokit.get('MaximumCapacityPercent')
+            if isinstance(iokit, dict) and iokit:
+                # KONDICE (Maximum Capacity %) – stejná logika jako 3uTools/iOS.
+                # Pozn.: BatteryHealthMetric se ZÁMĚRNĚ nepoužívá (není to Max Cap %).
+                mcp = _bget('MaximumCapacityPercent')
                 if mcp is not None and 0 < int(mcp) <= 100:
                     battery_health = int(mcp)
-                    print(f"  ✓ MaximumCapacityPercent = {battery_health}%")
-
-                # === METODA 2: AppleRawMaxCapacity / DesignCapacity ===
-                # Stejný výpočet jako 3uTools a idevicediagnostics
-                # health% = (AppleRawMaxCapacity / DesignCapacity) * 100
                 if not battery_health:
-                    raw_max    = iokit.get('AppleRawMaxCapacity', 0)
-                    design_cap = iokit.get('DesignCapacity', 0)
+                    raw_max    = _bget('AppleRawMaxCapacity')
+                    design_cap = _bget('DesignCapacity')
                     if raw_max and design_cap and int(design_cap) > 0:
                         battery_health = min(100, round(int(raw_max) / int(design_cap) * 100))
-                        print(f"  ✓ AppleRawMaxCapacity/DesignCapacity = {raw_max}/{design_cap} = {battery_health}%")
-
-                # === METODA 3: NominalChargeCapacity / DesignCapacity ===
                 if not battery_health:
-                    nominal    = iokit.get('NominalChargeCapacity', 0)
-                    design_cap = iokit.get('DesignCapacity', 0)
+                    nominal    = _bget('NominalChargeCapacity')
+                    design_cap = _bget('DesignCapacity')
                     if nominal and design_cap and int(design_cap) > 0:
                         battery_health = min(100, round(int(nominal) / int(design_cap) * 100))
-                        print(f"  ✓ NominalChargeCapacity/DesignCapacity = {nominal}/{design_cap} = {battery_health}%")
 
-                # Počet nabíjecích cyklů (bonus info)
-                battery_cycles = iokit.get('CycleCount', 0) or iokit.get('AppleRawCycleCount', 0)
-                if battery_cycles:
-                    print(f"  ✓ CycleCount = {battery_cycles}")
+                # CYKLY – top-level i vnořené v BatteryData (iOS 26)
+                battery_cycles = _bget('CycleCount') or _bget('AppleRawCycleCount') or 0
+                print(f"  ✓ battery_health={battery_health}%  cycles={battery_cycles}")
 
         except Exception as be:
             print(f"  DiagnosticsService chyba: {be}")
@@ -1828,6 +1807,23 @@ def _prox_variant_for(product_type):
 def _component_applicable(comp_key, product_type):
     return True
 
+def _board_status(values, components):
+    """Deska je "funkční", jen když software najde všech 5 klíčových údajů:
+    MLB (mainboard SN), modem firmware, IMEI, Wi-Fi adresu a Bluetooth adresu.
+    Chybí-li kterýkoli -> deska = možná závada."""
+    def has(*keys):
+        return bool(_component_serial_find(values, keys))
+    mlb      = bool((components.get("mainboard") or {}).get("available"))
+    baseband = has("BasebandVersion")
+    imei     = has("InternationalMobileEquipmentIdentity")
+    wifi     = has("WiFiAddress", "WifiAddress")
+    bt       = has("BluetoothAddress")
+    return {
+        "ok": all([mlb, baseband, imei, wifi, bt]),
+        "mlb": mlb, "baseband": baseband, "imei": imei,
+        "wifi": wifi, "bluetooth": bt,
+    }
+
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     if sources is None:
         sources = await _read_hw_sources(udid)
@@ -2026,6 +2022,7 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
         "reader": "strict-source-isolated-v29.7-possiblefault",
         "udid": udid,
         "components": components,
+        "board": _board_status(values, components),
         "groups": groups,
         "baseline": baseline_meta,
         "summary": {
