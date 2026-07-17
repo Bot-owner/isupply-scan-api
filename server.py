@@ -746,7 +746,7 @@ def get_device_info(udid):
     try:
         # Retry na transientní MuxException 183 (konkurenční usbmux při připojení).
         last_err = None
-        for _attempt in range(4):
+        for _attempt in range(8):
             try:
                 with _usbmux_lock:
                     result = loop.run_until_complete(_fetch())
@@ -755,8 +755,8 @@ def get_device_info(udid):
             except Exception as e:
                 last_err = e
                 if ('MuxException' in type(e).__name__) or ('183' in str(e)):
-                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/4, čekám…")
-                    _t.sleep(0.4 * (_attempt + 1))
+                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/8, čekám…")
+                    _t.sleep(min(2.0, 0.5 * (_attempt + 1)))
                     continue
                 raise
         raise last_err
@@ -790,10 +790,14 @@ def usb_monitor_thread():
 
         while True:
             try:
+                # Serializuj s get_device_info přes STEJNÝ zámek – jinak
+                # poll monitoru koliduje se čtením telefonu → usbmux 183.
                 if inspect.iscoroutinefunction(select_devices_by_connection_type):
-                    devs = await select_devices_by_connection_type(connection_type='USB')
+                    with _usbmux_lock:
+                        devs = await select_devices_by_connection_type(connection_type='USB')
                 else:
-                    devs = select_devices_by_connection_type(connection_type='USB')
+                    with _usbmux_lock:
+                        devs = select_devices_by_connection_type(connection_type='USB')
 
                 current = set()
                 for d in devs:
