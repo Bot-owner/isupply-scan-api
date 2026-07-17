@@ -1540,6 +1540,8 @@ function deleteRecord(index) {
 }
 
 function addToDatabase(slot) {
+  // Pojistka: zapiš JEN dokončený telefon (nikdy během testu / při připojení).
+  if (slot.state !== 'done-pass' && slot.state !== 'done-fail') return;
   const d = slot.device;
   const existing = database.findIndex(r => r.imei === d.imei);
   const record = {
@@ -1750,12 +1752,11 @@ async function startTesting(id) {
   // Načti přítomnost SN komponent + panic logy (paralelně, bezpečně).
   let snMap = null;
   if (slot.device && slot.device.udid) {
-    const [sn, panics] = await Promise.all([
-      fetchComponentPresence(slot.device.udid),
-      fetchPanics(slot.device.udid),
-    ]);
-    snMap = sn;
-    slot.device._panics = panics; // null = nezjištěno, [] = žádný panic
+    // Komponenty počkají (na nich stojí SN verdikt)...
+    snMap = await fetchComponentPresence(slot.device.udid);
+    // ...ale panic logy jdou NA POZADÍ, ať nezaseknou test (endpoint bývá pomalý).
+    slot.device._panics = null;
+    fetchPanics(slot.device.udid).then(p => { slot.device._panics = p; render(); });
   }
   if (slot.state !== 'testing') return; // odpojeno během čtení
   let idx = 0;
