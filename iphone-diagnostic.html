@@ -142,8 +142,8 @@
   .imei-label{font-family:var(--mono);font-size:9px;color:var(--pink-dark);letter-spacing:0.1em;text-transform:uppercase;font-weight:600}
   .imei-value{font-family:var(--mono);font-size:11px;color:var(--text);font-weight:600;letter-spacing:0.04em}
   .device-info{margin-bottom:8px}
-  .device-model{font-size:12px;font-weight:600;color:var(--text);margin-bottom:2px}
-  .device-sub{font-family:var(--mono);font-size:9px;color:var(--text-dim)}
+  .device-model{font-size:15px;font-weight:700;color:var(--text);margin-bottom:2px}
+  .device-sub{font-family:var(--mono);font-size:11px;color:var(--text-dim)}
   .test-list{display:flex;flex-direction:column;gap:2px}
   .test-item{display:flex;align-items:center;justify-content:space-between;padding:3px 6px;border-radius:4px;transition:background .15s}
   .test-item.pending{opacity:.35}
@@ -1432,7 +1432,7 @@ function renderBody(slot) {
       ${show(d.storage)?`<span>${d.storage}</span>`:''}
       ${show(d.color)?`<span>${d.color}</span>`:''}
       ${show(d.region)?`<span style="color:#6b7280">${d.region}</span>`:''}
-      <span style="font-family:var(--mono);font-size:9px;padding:1px 5px;border-radius:3px;font-weight:600;border:1px solid ${d.icloud?'#fca5a5':'#86efac'};color:${d.icloud?'#dc2626':'#15803d'};background:#fff;margin-left:4px">iCloud ${d.icloud?'ON':'OFF'}</span>
+      <span title="Spolehlivě jen přes online dotaz (Apple servery)" style="font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;border:1px solid ${d.icloud?'#fca5a5':'#d4d4d8'};color:${d.icloud?'#dc2626':'#9ca3af'};background:#fff;margin-left:4px">iCloud ${d.icloud?'ON':'?'}</span>
     </div>
     <div class="device-sub" style="margin-top:2px">
       ${show(d.ios)?`<span>iOS <strong style="color:var(--text)">${d.ios}</strong></span>`:''}
