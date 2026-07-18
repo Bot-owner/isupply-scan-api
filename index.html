@@ -105,6 +105,26 @@
   .btn-cta:hover{transform:translateY(-1px);box-shadow:0 0 24px rgba(236,72,153,.5)}
   .nav-toggle{display:none;background:none;border:none;font-size:22px;cursor:pointer}
 
+  /* ── 🖤 Tmavá (černá) horní lišta ── */
+  header.nav{background:rgba(10,10,12,.88);border-bottom:1px solid rgba(255,255,255,.10);
+    box-shadow:0 1px 0 rgba(255,255,255,.04), 0 10px 30px rgba(0,0,0,.28)}
+  header.nav .logo{color:#fff}
+  header.nav .logo span{color:var(--pink)}
+  header.nav .logo .iS{background:#fff;color:var(--pink-dark)}
+  header.nav .nav-links a.nlink{color:rgba(255,255,255,.72)}
+  header.nav .nav-links a.nlink:hover{color:#fff}
+  header.nav .dl-beam{color:var(--pink);background:rgba(251,145,209,.12)}
+  header.nav .dl-beam:hover{background:rgba(251,145,209,.20)}
+  header.nav .lang{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
+  header.nav .lang-item{color:var(--pink)}
+  header.nav .btn-admin{color:rgba(255,255,255,.72);background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
+  header.nav .btn-admin:hover{border-color:var(--pink);color:var(--pink)}
+  header.nav .nav-toggle{color:#fff}
+  @media(max-width:900px){
+    header.nav .nav-links{background:rgba(10,10,12,.96);}
+  }
+  /* ── /Tmavá horní lišta ── */
+
   .hero{padding:88px 0 72px}
   .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
   /* ✨ Nadpis: gradient tmavá → jemnější */
