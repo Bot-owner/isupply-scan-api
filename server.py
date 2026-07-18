@@ -894,6 +894,12 @@ def api_driver_check():
     import platform
     if platform.system() != 'Windows':
         return jsonify({'installed': True, 'platform': platform.system()})
+    # 0) Kdyz uz appka nejaky telefon precetla, driver JEDNOZNACNE funguje.
+    try:
+        if connected_devices:
+            return jsonify({'installed': True, 'method': 'connected'})
+    except Exception:
+        pass
     # 1) Nejspolehlivejsi: zkusit spojeni pres usbmux (to, co appka realne potrebuje)
     try:
         from pymobiledevice3 import usbmux
@@ -906,8 +912,17 @@ def api_driver_check():
         return jsonify({'installed': True, 'method': 'usbmux'})
     except Exception:
         pass
-    # 2) Windows sluzba (klasicky iTunes standalone)
     import subprocess, os
+    # 1b) Microsoft Store "Apple Devices" balicek (moderni instalace driveru)
+    try:
+        r = subprocess.run(['powershell', '-NoProfile', '-Command',
+                            "if (Get-AppxPackage *AppleInc.AppleDevices*) {'YES'}"],
+                           capture_output=True, text=True, timeout=10)
+        if 'YES' in (r.stdout or ''):
+            return jsonify({'installed': True, 'method': 'store-app'})
+    except Exception:
+        pass
+    # 2) Windows sluzba (klasicky iTunes standalone)
     try:
         r = subprocess.run(['sc', 'query', 'Apple Mobile Device Service'],
                            capture_output=True, text=True, timeout=6)
