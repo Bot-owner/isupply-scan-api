@@ -120,10 +120,41 @@
   header.nav .btn-admin{color:rgba(255,255,255,.72);background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
   header.nav .btn-admin:hover{border-color:var(--pink);color:var(--pink)}
   header.nav .nav-toggle{color:#fff}
-  @media(max-width:900px){
-    header.nav .nav-links{background:rgba(10,10,12,.96);}
-  }
   /* ── /Tmavá horní lišta ── */
+
+  /* ── 📐 Responzivní lišta — nic se nezalamuje ani nepřetéká ── */
+  body{overflow-x:clip}
+  .nav-inner{gap:18px;flex-wrap:nowrap}
+  .logo{flex:0 0 auto;white-space:nowrap}
+  .nav-links{flex:0 1 auto;min-width:0}
+  .nav-links a{white-space:nowrap}
+  .nav-right{flex:0 0 auto}
+  /* mezistav: uber mezery a schovej Admin, at se to vejde */
+  @media(max-width:1180px){
+    .nav-links{gap:18px}
+    .btn-admin{display:none}
+  }
+  /* mobil / uzke okno: skutecne rozbalovaci menu misto zalamovani */
+  @media(max-width:1040px){
+    .nav-links{position:absolute;top:60px;left:0;right:0;display:none;
+      flex-direction:column;align-items:stretch;gap:0;padding:8px 24px 18px;
+      background:rgba(10,10,12,.98);backdrop-filter:blur(14px);
+      border-bottom:1px solid rgba(255,255,255,.10);
+      box-shadow:0 18px 40px rgba(0,0,0,.35)}
+    .nav-links.open{display:flex}
+    .nav-links a.nlink{padding:13px 2px;font-size:15px;border-bottom:1px solid rgba(255,255,255,.07)}
+    .nav-links .dl-beam{margin-top:12px;justify-content:center;padding:11px 13px}
+    /* vpravo zustane jen: jazyk + hamburger */
+    .nav-inner{justify-content:flex-start;gap:12px}
+    .nav-right{margin-left:auto;gap:10px}
+    .btn-cta{display:none}
+    .nav-toggle{display:block;line-height:1;padding:2px 4px}
+  }
+  @media(max-width:420px){
+    .nav-inner{gap:8px}
+    .logo{font-size:16px}
+  }
+  /* ── /Responzivní lišta ── */
 
   .hero{padding:88px 0 72px}
   .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:56px;align-items:center}
@@ -177,8 +208,6 @@
   .demo-grade{text-align:center;margin-top:6px;padding:4px;border-radius:4px;font-weight:700;font-size:12px}
   .demo-grade.A{background:rgba(22,163,74,.15);color:#4ade80;border:1px solid rgba(22,163,74,.2)}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
-  @keyframes scanLine{0%{transform:translateY(-100%)}100%{transform:translateY(400%)}}
-  .scan-line{position:absolute;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--pink),transparent);animation:scanLine 3s linear infinite;opacity:.4}
 
   section{padding:80px 0}
   .sec-head{max-width:640px;margin-bottom:44px}
@@ -314,7 +343,6 @@
 
   @media(max-width:900px){
     .hero-grid{grid-template-columns:1fr;gap:36px}.hero h1{font-size:44px}
-    .nav-links{display:none}.nav-toggle{display:block}
     .feat-grid,.steps,.compat-grid,.plans,.dl-grid,.ft-grid{grid-template-columns:1fr}
     .cta{padding:40px 24px}.cta h2{font-size:26px}
   }
@@ -342,7 +370,7 @@
       <a class="btn-admin" href="/admin" data-i18n="nav_admin">Admin Panel →</a>
       <a class="btn-cta" href="#pricing" data-i18n="nav_get">Get started</a>
     </div>
-    <button class="nav-toggle" onclick="document.querySelector('.nav-links').style.display='flex'">☰</button>
+    <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-label="Menu" onclick="toggleNav()">☰</button>
   </div>
 </header>
 
@@ -380,7 +408,6 @@
             <div class="demo-grade A">A</div>
           </div>
           <div class="demo-slot active" id="demo-slot2">
-            <div class="scan-line"></div>
             <div class="demo-slot-header"><span class="demo-slot-num">SLOT 02</span><span class="demo-badge badge-testing">Testing ●</span></div>
             <div class="demo-imei"><span class="demo-imei-lbl">IMEI</span><span class="demo-imei-val">35224093658</span></div>
             <div class="demo-model">iPhone 15 Pro</div>
@@ -779,7 +806,6 @@ function demoNext(){
     slot.className='demo-slot done';
     slot.querySelector('.demo-badge').className='demo-badge badge-done';
     slot.querySelector('.demo-badge').textContent='OK ✓';
-    var sl=slot.querySelector('.scan-line'); if(sl) sl.style.display='none';
     var g=document.createElement('div'); g.className='demo-grade A'; g.textContent='A'; slot.appendChild(g);
     setTimeout(demoReset,3000);
   }
@@ -790,7 +816,6 @@ function demoReset(){
   slot.className='demo-slot active';
   slot.querySelector('.demo-badge').className='demo-badge badge-testing';
   slot.querySelector('.demo-badge').textContent='Testing ●';
-  var sl=slot.querySelector('.scan-line'); if(sl) sl.style.display='';
   var g=slot.querySelector('.demo-grade'); if(g) g.remove();
   demoTestsEl.innerHTML='<div class="demo-test pass">🔋 Battery · 89% · Good</div>'+
     '<div class="demo-test pass">📱 Display · Original</div>'+
@@ -813,6 +838,35 @@ document.querySelectorAll('.feat,.compat,.plan,.dl-card').forEach(function(card)
     card.style.setProperty('--my',(e.clientY - r.top)+'px');
   });
 });
+</script>
+
+<script>
+/* ── Mobilni navigace ── */
+function toggleNav(){
+  var links=document.querySelector('.nav-links');
+  var btn=document.getElementById('navToggle');
+  if(!links||!btn) return;
+  var open=links.classList.toggle('open');
+  btn.setAttribute('aria-expanded',open?'true':'false');
+  btn.textContent=open?'\u2715':'\u2630';
+}
+function closeNav(){
+  var links=document.querySelector('.nav-links');
+  var btn=document.getElementById('navToggle');
+  if(!links||!btn) return;
+  links.classList.remove('open');
+  btn.setAttribute('aria-expanded','false');
+  btn.textContent='\u2630';
+}
+/* zavrit po kliknuti na odkaz */
+document.querySelectorAll('.nav-links a').forEach(function(a){a.addEventListener('click',closeNav);});
+/* zavrit pri kliknuti mimo listu */
+document.addEventListener('click',function(e){
+  var hdr=document.querySelector('header.nav');
+  if(hdr && !hdr.contains(e.target)) closeNav();
+});
+/* zavrit pri roztazeni okna zpet na desktop */
+window.addEventListener('resize',function(){ if(window.innerWidth>1040) closeNav(); });
 </script>
 </body>
 </html>
