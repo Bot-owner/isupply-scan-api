@@ -99,10 +99,6 @@
   /* v tmavém pruhu (kdyby se přepínač někdy objevil na černém) */
   .bg-soft .lang{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.14)}
   .bg-soft .lang-item{color:var(--pink)}
-  .btn-admin{font-family:var(--mono);font-size:11px;font-weight:600;color:var(--gray-600);background:var(--gray-100);border:1.5px solid var(--gray-200);padding:6px 12px;border-radius:7px;transition:border-color .2s,color .2s}
-  .btn-admin:hover{border-color:var(--pink);color:var(--pink-dark)}
-  .btn-cta{background:var(--pink-dark);color:#fff;font-size:13px;font-weight:600;padding:8px 16px;border-radius:8px;box-shadow:0 0 14px rgba(236,72,153,.3);transition:transform .2s,box-shadow .2s}
-  .btn-cta:hover{transform:translateY(-1px);box-shadow:0 0 24px rgba(236,72,153,.5)}
   .nav-toggle{display:none;background:none;border:none;font-size:22px;cursor:pointer}
 
   /* ── 🖤 Tmavá (černá) horní lišta ── */
@@ -117,8 +113,6 @@
   header.nav .dl-beam:hover{background:rgba(251,145,209,.20)}
   header.nav .lang{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
   header.nav .lang-item{color:var(--pink)}
-  header.nav .btn-admin{color:rgba(255,255,255,.72);background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.16)}
-  header.nav .btn-admin:hover{border-color:var(--pink);color:var(--pink)}
   header.nav .nav-toggle{color:#fff}
   /* ── /Tmavá horní lišta ── */
 
@@ -129,10 +123,9 @@
   .nav-links{flex:0 1 auto;min-width:0}
   .nav-links a{white-space:nowrap}
   .nav-right{flex:0 0 auto}
-  /* mezistav: uber mezery a schovej Admin, at se to vejde */
+  /* mezistav: uber mezery, at se to vejde */
   @media(max-width:1180px){
     .nav-links{gap:18px}
-    .btn-admin{display:none}
   }
   /* mobil / uzke okno: skutecne rozbalovaci menu misto zalamovani */
   @media(max-width:1040px){
@@ -147,7 +140,6 @@
     /* vpravo zustane jen: jazyk + hamburger */
     .nav-inner{justify-content:flex-start;gap:12px}
     .nav-right{margin-left:auto;gap:10px}
-    .btn-cta{display:none}
     .nav-toggle{display:block;line-height:1;padding:2px 4px}
   }
   @media(max-width:420px){
@@ -375,8 +367,6 @@
           <span class="lang-item">CZ</span>
         </span>
       </button>
-      <a class="btn-admin" href="/admin" data-i18n="nav_admin">Admin Panel →</a>
-      <a class="btn-cta" href="#pricing" data-i18n="nav_get">Get started</a>
     </div>
     <button class="nav-toggle" id="navToggle" aria-expanded="false" aria-label="Menu" onclick="toggleNav()">☰</button>
   </div>
@@ -492,7 +482,7 @@
           <li><span class="ck">✓</span><span data-i18n="p_basic_1">Up to 200 scans / month</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
-          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="x">✕</span><span data-i18n="p_excel">Excel import / export</span></li>
           <li><span class="x">✕</span><span data-i18n="p_priority">Priority support</span></li>
         </ul>
         <a class="btn-plan" href="mailto:info@isupply.cz?subject=Basic%20licence" data-i18n="p_buy_basic">Get Basic</a>
@@ -507,7 +497,7 @@
           <li><span class="ck">✓</span><span data-i18n="p_pro_1">Up to 500 scans / month</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
-          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel import / export</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_email">Email support</span></li>
         </ul>
         <a class="btn-plan fill" href="mailto:info@isupply.cz?subject=Pro%20licence" data-i18n="p_buy_pro">Get Pro</a>
@@ -521,7 +511,7 @@
           <li><span class="ck">✓</span><span data-i18n="p_biz_1">Up to 1000 scans / month</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
-          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel import / export</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_priority">Priority support</span></li>
         </ul>
         <a class="btn-plan" href="mailto:info@isupply.cz?subject=Business%20licence" data-i18n="p_buy_biz">Get Business</a>
@@ -535,7 +525,7 @@
           <li><span class="ck">✓</span><span data-i18n="p_ent_1">Unlimited scans</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_full">Full diagnostics (12 tests)</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_label">Label printing</span></li>
-          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel export</span></li>
+          <li><span class="ck">✓</span><span data-i18n="p_excel">Excel import / export</span></li>
           <li><span class="ck">✓</span><span data-i18n="p_ent_2">Dedicated support + API</span></li>
         </ul>
         <a class="btn-plan" href="mailto:info@isupply.cz?subject=Enterprise%20enquiry" data-i18n="p_buy_ent">Contact us</a>
@@ -633,7 +623,6 @@
         <a href="mailto:info@isupply.cz">info@isupply.cz</a>
         <a href="tel:+420703125125">+420 703 125 125</a>
         <a href="/support" data-i18n="ft_support">Support & FAQ</a>
-        <a href="/admin" data-i18n="nav_admin">Admin Panel →</a>
       </div>
     </div>
     <div class="ft-bottom">
@@ -647,7 +636,7 @@
 var I18N = {
   en: {
     nav_features:"Features", nav_how:"How it works", nav_pricing:"Pricing", nav_compat:"Compatibility",
-    nav_download:"Download", nav_admin:"Admin Panel →", nav_get:"Get started",
+    nav_download:"Download",
     hero_eyebrow:"Professional iPhone diagnostics",
     hero_h1a:"Know exactly what's", hero_h1b:"inside every iPhone",
     hero_lead:"iSupply Scan tests 12 components in seconds: display, Touch ID, cameras, battery health and more. Includes label printing. Built for EU refurbishers who demand accuracy.",
@@ -670,7 +659,7 @@ var I18N = {
     price_monthly:"Monthly", price_yearly:"Yearly", price_per:"per month",
     p_basic_tag:"For small shops and repair centers.", p_pro_tag:"For mid-size buyers and refurbishers.",
     p_biz_tag:"For large wholesalers and ITAD.", p_ent_tag:"For operations over 1000 units / month.",
-    p_full:"Full diagnostics (12 tests)", p_label:"Label printing", p_excel:"Excel export",
+    p_full:"Full diagnostics (12 tests)", p_label:"Label printing", p_excel:"Excel import / export",
     p_priority:"Priority support", p_email:"Email support", p_popular:"Most popular",
     p_basic_1:"Up to 200 scans / month", p_pro_1:"Up to 500 scans / month", p_biz_1:"Up to 1000 scans / month",
     p_ent_1:"Unlimited scans", p_ent_2:"Dedicated support + API",
@@ -695,7 +684,7 @@ var I18N = {
   },
   cs: {
     nav_features:"Funkce", nav_how:"Jak to funguje", nav_pricing:"Ceník", nav_compat:"Kompatibilita",
-    nav_download:"Stáhnout", nav_admin:"Admin panel →", nav_get:"Začít",
+    nav_download:"Stáhnout",
     hero_eyebrow:"Profesionální diagnostika iPhonů",
     hero_h1a:"Víš přesně, co je", hero_h1b:"uvnitř každého iPhonu",
     hero_lead:"iSupply Scan otestuje 12 komponent během vteřin: displej, Touch ID, fotoaparáty, kondici baterie a další. Umí i tisk štítků. Postaveno pro EU refurbishery, co chtějí přesnost.",
@@ -718,7 +707,7 @@ var I18N = {
     price_monthly:"Měsíčně", price_yearly:"Ročně", price_per:"za měsíc",
     p_basic_tag:"Pro malé obchody a servisy.", p_pro_tag:"Pro střední výkupny a refurbishery.",
     p_biz_tag:"Pro velké velkoobchody a ITAD.", p_ent_tag:"Pro operace nad 1000 ks / měsíc.",
-    p_full:"Plná diagnostika (12 testů)", p_label:"Tisk štítků", p_excel:"Export do Excelu",
+    p_full:"Plná diagnostika (12 testů)", p_label:"Tisk štítků", p_excel:"Import / export do Excelu",
     p_priority:"Prioritní podpora", p_email:"Email podpora", p_popular:"Nejoblíbenější",
     p_basic_1:"Do 200 skenů / měsíc", p_pro_1:"Do 500 skenů / měsíc", p_biz_1:"Do 1000 skenů / měsíc",
     p_ent_1:"Neomezené skeny", p_ent_2:"Dedikovaná podpora + API",
