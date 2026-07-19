@@ -684,7 +684,16 @@ def licence_heartbeat():
         if not lic:
             return jsonify(error="licence_invalid"), 404
 
-        # UPSERT na existující tabulku activations
+        if data.get("offline"):
+            # Aplikace se ukoncuje — posuneme last_seen do minulosti,
+            # aby v admin panelu okamzite zhasla zelena tecka.
+            cur.execute(
+                """UPDATE activations SET last_seen = now() - INTERVAL '1 hour'
+                   WHERE license_id = %s AND hwid = %s""",
+                (lic["id"], hwid),
+            )
+            return jsonify(ok=True, offline=True)
+
         cur.execute(
             """INSERT INTO activations (license_id, hwid, hostname, last_seen)
                VALUES (%s, %s, %s, now())

@@ -194,13 +194,15 @@ def components_from_result(result):
 # ─────────────────────────────────────────────────────────────────────
 # 5) Heartbeat — hlasi serveru, ze aplikace bezi
 # ─────────────────────────────────────────────────────────────────────
-_HEARTBEAT_SEC = 180
+_HEARTBEAT_SEC = 60   # kratsi interval = rychlejsi prechod na offline
 _heartbeat_started = False
+_HWID = None
 
 
 def start_heartbeat(hwid, hostname=None, version=None):
-    """Spusti vlakno, ktere kazde 3 minuty hlasi serveru, ze aplikace bezi."""
-    global _heartbeat_started
+    """Spusti vlakno, ktere pravidelne hlasi serveru, ze aplikace bezi."""
+    global _heartbeat_started, _HWID
+    _HWID = hwid
     if _heartbeat_started or not _LICENCE_KEY:
         return
     _heartbeat_started = True
@@ -219,3 +221,23 @@ def start_heartbeat(hwid, hostname=None, version=None):
             time.sleep(_HEARTBEAT_SEC)
 
     threading.Thread(target=_loop, daemon=True).start()
+
+
+def send_offline():
+    """
+    Nahlasi serveru, ze aplikace koncí. Bez toho by v admin panelu
+    zustala zelena tecka az do vyprseni okna neaktivity.
+    """
+    if not _LICENCE_KEY:
+        return
+    try:
+        import socket
+        requests.post(
+            f"{_API_BASE}/api/licence/heartbeat",
+            json={"licence_key": _LICENCE_KEY, "hwid": _HWID,
+                  "hostname": socket.gethostname(), "offline": True},
+            timeout=5,
+        )
+        print("  [kvota] odhlaseno")
+    except Exception as exc:
+        print(f"  [kvota] odhlaseni selhalo: {exc}")

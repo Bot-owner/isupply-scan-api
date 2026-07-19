@@ -5,7 +5,7 @@ cd /d "%~dp0"
 
 echo.
 echo  ================================================
-echo   iSupply Scan - Build Windows EXE
+echo   iSupply Scan - Build Windows EXE (okno, bez konzole)
 echo  ================================================
 echo.
 
@@ -17,10 +17,12 @@ if not exist "iphone-diagnostic.html" ( echo [CHYBA] Ve slozce chybi iphone-diag
 if not exist "isupply_admin.html"     ( echo [CHYBA] Ve slozce chybi isupply_admin.html & pause & exit /b 1 )
 if not exist "support.html"           ( echo [CHYBA] Ve slozce chybi support.html & pause & exit /b 1 )
 if not exist "server.py"              ( echo [CHYBA] Ve slozce chybi server.py & pause & exit /b 1 )
+if not exist "launcher.py"            ( echo [CHYBA] Ve slozce chybi launcher.py & pause & exit /b 1 )
+if not exist "scan_quota.py"          ( echo [CHYBA] Ve slozce chybi scan_quota.py & pause & exit /b 1 )
 echo  OK - buildim PRESNE ty soubory, ktere mas ve slozce (zadny GitHub, zadna cache)
 
 echo  [2/4] Instalace zavislosti...
-python -m pip install pyinstaller==6.3.0 flask flask-cors PyJWT pymobiledevice3 readchar --quiet
+python -m pip install pyinstaller==6.3.0 flask flask-cors PyJWT pymobiledevice3 readchar requests pywebview --quiet
 echo  OK
 
 echo  [3/4] Cisteni stareho buildu...
@@ -31,7 +33,7 @@ echo  OK
 echo  [4/4] Build EXE...
 python -m PyInstaller ^
   --onefile ^
-  --console ^
+  --noconsole ^
   --name "iSupply Scan" ^
   --add-data "iphone-diagnostic.html;." ^
   --add-data "isupply_admin.html;." ^
@@ -50,7 +52,13 @@ python -m PyInstaller ^
   --hidden-import encodings.ascii ^
   --hidden-import encodings.latin_1 ^
   --hidden-import winreg ^
-  server.py
+  --hidden-import scan_quota ^
+  --collect-all webview ^
+  --hidden-import webview.platforms.edgechromium ^
+  --hidden-import clr_loader ^
+  --hidden-import pythonnet ^
+  --hidden-import requests ^
+  launcher.py
 
 if exist "dist\iSupply Scan.exe" (
     copy "iphone-diagnostic.html" "dist\" >nul

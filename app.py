@@ -347,7 +347,7 @@ def admin_list_licenses():
                COALESCE((
                    SELECT count(*) FROM activations a3
                    WHERE a3.license_id = l.id
-                     AND a3.last_seen > now() - INTERVAL '10 minutes'
+                     AND a3.last_seen > now() - INTERVAL '3 minutes'
                ), 0) AS devices_online
         FROM licenses l
         LEFT JOIN activations a ON a.license_id = l.id
