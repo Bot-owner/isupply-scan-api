@@ -192,6 +192,7 @@
           <th>Email</th>
           <th>Plán</th>
           <th>Zařízení</th>
+          <th>Skeny</th>
           <th>Platnost</th>
           <th>Stav</th>
           <th>Akce</th>
@@ -300,6 +301,31 @@ function renderTable(list) {
     const seatsUsed = parseInt(l.seats_used)||0;
     const seatsTotal = parseInt(l.seats)||1;
     const seatsColor = seatsUsed >= seatsTotal ? 'color:var(--red)' : seatsUsed > 0 ? 'color:var(--green)' : '';
+
+    // ── Zustatek skenu: mesicni kvota + dokoupene kredity ──
+    const scansUsed  = parseInt(l.scans_used)||0;
+    const scanLimit  = parseInt(l.scan_limit)||0;
+    const credits    = parseInt(l.credits_remaining)||0;
+    const unlimited  = l.unlimited === true || l.unlimited === 't';
+    let scansCell;
+    if (unlimited) {
+      scansCell = '<span style="font-family:var(--mono);font-size:11px;color:var(--green)">∞</span>';
+    } else if (!scanLimit) {
+      scansCell = '<span style="font-family:var(--mono);font-size:11px;color:var(--text-dim)">—</span>';
+    } else {
+      const left = Math.max(0, scanLimit - scansUsed);
+      const pct  = scanLimit ? (left / scanLimit) : 0;
+      const col  = left === 0 ? 'var(--red)' : pct <= 0.2 ? 'var(--yellow)' : 'var(--green)';
+      scansCell =
+        `<div style="font-family:var(--mono);font-size:11px;line-height:1.5">
+           <span style="color:${col};font-weight:600">${left}</span>
+           <span style="color:var(--text-dim)">/${scanLimit}</span>
+           ${credits ? `<br><span style="color:var(--text-dim)">+${credits} kreditů</span>` : ''}
+           <div style="margin-top:3px;height:3px;border-radius:2px;background:rgba(255,255,255,.12);overflow:hidden">
+             <div style="height:100%;width:${Math.round(pct*100)}%;background:${col}"></div>
+           </div>
+         </div>`;
+    }
     return `<tr>
       <td><span class="key-display" onclick="copyText('${l.license_key}')" title="Klikni pro kopírování">${l.license_key}</span></td>
       <td style="font-weight:600">${l.company||'—'}</td>
@@ -310,6 +336,7 @@ function renderTable(list) {
           💻 ${seatsUsed}/${seatsTotal}
         </button>
       </td>
+      <td>${scansCell}</td>
       <td>${validStr}</td>
       <td><span class="badge badge-${st}">${STATUS_LABELS[st]}</span></td>
       <td>
@@ -321,7 +348,7 @@ function renderTable(list) {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-dim);font-family:var(--mono)">Žádné licence</td></tr>';
+  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);font-family:var(--mono)">Žádné licence</td></tr>';
 }
 
 function filterTable(q) {
