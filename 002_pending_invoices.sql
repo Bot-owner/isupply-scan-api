@@ -8,7 +8,7 @@ BEGIN;
 CREATE TABLE IF NOT EXISTS pending_invoices (
   id                  BIGSERIAL PRIMARY KEY,
   ref                 TEXT        NOT NULL UNIQUE,   -- krátká značka do Telegramu, např. OBJ-4F2A9C
-  licence_id          INT         REFERENCES licences(id) ON DELETE SET NULL,
+  license_id          INT         REFERENCES licenses(id) ON DELETE SET NULL,
 
   -- fakturační údaje ze Stripe checkoutu
   email               TEXT        NOT NULL,

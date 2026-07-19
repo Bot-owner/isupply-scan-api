@@ -95,29 +95,30 @@ def db():
 def _locked_licence(cur, licence_key):
     """Načte licenci a zamkne řádek do konce transakce (proti souběžným skenům)."""
     cur.execute(
-        """SELECT id, tier, status, scan_limit, unlimited, period_start, period_end
-           FROM licences WHERE key = %s FOR UPDATE""",
+        """SELECT id, plan AS tier, active, scan_limit, unlimited,
+                  period_start, period_end
+           FROM licenses WHERE license_key = %s FOR UPDATE""",
         (licence_key,),
     )
     return cur.fetchone()
 
 
-def _usage(cur, licence_id, period_start):
+def _usage(cur, license_id, period_start):
     cur.execute(
         """SELECT count(*) FROM scan_events
-           WHERE licence_id = %s AND billed AND source = 'subscription'
+           WHERE license_id = %s AND billed AND source = 'subscription'
              AND period_start = %s""",
-        (licence_id, period_start),
+        (license_id, period_start),
     )
     return cur.fetchone()[0]
 
 
-def _credits_left(cur, licence_id):
+def _credits_left(cur, license_id):
     cur.execute(
         """SELECT coalesce(sum(remaining), 0) FROM credit_packs
-           WHERE licence_id = %s AND remaining > 0
+           WHERE license_id = %s AND remaining > 0
              AND (expires_at IS NULL OR expires_at > now())""",
-        (licence_id,),
+        (license_id,),
     )
     return cur.fetchone()[0]
 
@@ -138,13 +139,13 @@ def authorize_scan():
         lic = _locked_licence(cur, licence_key)
         if not lic:
             return jsonify(error="licence_invalid"), 404
-        if lic["status"] != "active":
-            return jsonify(error="licence_inactive", status=lic["status"]), 403
+        if not lic["active"]:
+            return jsonify(error="licence_inactive"), 403
 
         # ── a) Otevřené fakturační okno? Opakovaný sken je zdarma.
         cur.execute(
             """SELECT id, free_until FROM scan_events
-               WHERE licence_id = %s AND imei = %s AND billed AND free_until > now()
+               WHERE license_id = %s AND imei = %s AND billed AND free_until > now()
                ORDER BY free_until DESC LIMIT 1""",
             (lic["id"], imei),
         )
@@ -152,7 +153,7 @@ def authorize_scan():
         if parent:
             cur.execute(
                 """INSERT INTO scan_events
-                     (licence_id, imei, billed, parent_id, period_start,
+                     (license_id, imei, billed, parent_id, period_start,
                       model, ios_version)
                    VALUES (%s, %s, FALSE, %s, %s, %s, %s) RETURNING id""",
                 (lic["id"], imei, parent["id"], lic["period_start"],
@@ -176,7 +177,7 @@ def authorize_scan():
                 # ── c) Čerpání z dokoupených kreditů (nejdřív ty, co dřív propadnou)
                 cur.execute(
                     """SELECT id FROM credit_packs
-                       WHERE licence_id = %s AND remaining > 0
+                       WHERE license_id = %s AND remaining > 0
                          AND (expires_at IS NULL OR expires_at > now())
                        ORDER BY expires_at NULLS LAST, created_at
                        LIMIT 1 FOR UPDATE SKIP LOCKED""",
@@ -205,7 +206,7 @@ def authorize_scan():
 
         cur.execute(
             """INSERT INTO scan_events
-                 (licence_id, imei, billed, free_until, source, credit_pack_id,
+                 (license_id, imei, billed, free_until, source, credit_pack_id,
                   period_start, model, ios_version)
                VALUES (%s, %s, TRUE, now() + %s * INTERVAL '1 day', %s, %s, %s, %s, %s)
                RETURNING id, free_until""",
@@ -327,8 +328,9 @@ def licence_status():
 
     with db() as cur:
         cur.execute(
-            """SELECT id, tier, status, scan_limit, unlimited, period_start, period_end
-               FROM licences WHERE key = %s""",
+            """SELECT id, plan AS tier, active, scan_limit, unlimited,
+                      period_start, period_end
+               FROM licenses WHERE license_key = %s""",
             (licence_key,),
         )
         lic = cur.fetchone()
@@ -337,7 +339,7 @@ def licence_status():
 
         used = _usage(cur, lic["id"], lic["period_start"])
         return jsonify(
-            tier=lic["tier"], status=lic["status"], unlimited=lic["unlimited"],
+            tier=lic["tier"], active=lic["active"], unlimited=lic["unlimited"],
             scan_limit=lic["scan_limit"], used=used,
             subscription_remaining=(None if lic["unlimited"]
                                     else max(0, lic["scan_limit"] - used)),
@@ -374,15 +376,15 @@ def require_feature(feature):
 
             with db() as cur:
                 cur.execute(
-                    "SELECT id, tier, status FROM licences WHERE key = %s",
+                    "SELECT id, plan AS tier, active FROM licenses WHERE license_key = %s",
                     (licence_key,),
                 )
                 lic = cur.fetchone()
 
             if not lic:
                 return jsonify(error="licence_invalid"), 404
-            if lic["status"] != "active":
-                return jsonify(error="licence_inactive", status=lic["status"]), 403
+            if not lic["active"]:
+                return jsonify(error="licence_inactive"), 403
             if not has_feature(lic["tier"], feature):
                 return jsonify(
                     error="feature_locked",
@@ -416,7 +418,7 @@ def credits_checkout():
                        message=f"Dostupné balíčky: {list(PUBLIC_PACKS)}"), 400
 
     with db() as cur:
-        cur.execute("SELECT id FROM licences WHERE key = %s", (licence_key,))
+        cur.execute("SELECT id FROM licenses WHERE license_key = %s", (licence_key,))
         if not cur.fetchone():
             return jsonify(error="licence_invalid"), 404
 
@@ -474,7 +476,8 @@ def stripe_webhook():
             with db() as cur:
                 # idempotence: webhook může dorazit vícekrát
                 cur.execute(
-                    "SELECT id, key, tier, scan_limit FROM licences WHERE stripe_subscription_id = %s",
+                    """SELECT id, license_key AS key, plan AS tier, scan_limit
+                       FROM licenses WHERE stripe_subscription_id = %s""",
                     (sub_id,),
                 )
                 existing = cur.fetchone()
@@ -503,7 +506,7 @@ def stripe_webhook():
                         description=f"iSupply Scan {tier.capitalize()} — předplatné",
                         amount_cents=obj.get("amount_total") or 0,
                         currency=obj.get("currency", "eur"),
-                        licence_id=lic["id"],
+                        license_id=lic["id"],
                         company=cust.get("name"),
                         vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
                         address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
@@ -533,12 +536,12 @@ def stripe_webhook():
             expires = ("now() + INTERVAL '%d months'" % CREDIT_VALIDITY_MONTHS
                        if CREDIT_VALIDITY_MONTHS else "NULL")
             with db() as cur:
-                cur.execute("SELECT id FROM licences WHERE key = %s", (licence_key,))
+                cur.execute("SELECT id FROM licenses WHERE license_key = %s", (licence_key,))
                 lic = cur.fetchone()
                 if lic:
                     cur.execute(
                         f"""INSERT INTO credit_packs
-                              (licence_id, amount, remaining, price_cents, currency,
+                              (license_id, amount, remaining, price_cents, currency,
                                stripe_payment_intent, stripe_session_id, expires_at)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, {expires})
                             ON CONFLICT (stripe_session_id) DO NOTHING""",
@@ -555,7 +558,7 @@ def stripe_webhook():
                         description=f"iSupply Scan — balíček {credits} skenů",
                         amount_cents=obj.get("amount_total") or 0,
                         currency=obj.get("currency", "eur"),
-                        licence_id=lic["id"],
+                        license_id=lic["id"],
                         company=cust.get("name"),
                         vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
                         address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
@@ -572,10 +575,10 @@ def stripe_webhook():
         if sub_id and period.get("start") and period.get("end"):
             with db() as cur:
                 cur.execute(
-                    """UPDATE licences
+                    """UPDATE licenses
                        SET period_start = to_timestamp(%s),
                            period_end   = to_timestamp(%s),
-                           status       = 'active'
+                           active       = TRUE
                        WHERE stripe_subscription_id = %s""",
                     (period["start"], period["end"], sub_id),
                 )
@@ -587,7 +590,7 @@ def stripe_webhook():
         if sub_id:
             with db() as cur:
                 cur.execute(
-                    "UPDATE licences SET status = 'suspended' WHERE stripe_subscription_id = %s",
+                    "UPDATE licenses SET active = FALSE WHERE stripe_subscription_id = %s",
                     (sub_id,),
                 )
 

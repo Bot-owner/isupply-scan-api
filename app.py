@@ -13,6 +13,7 @@ Env proměnné které musíš nastavit na Railway:
 """
 
 import os
+import hmac
 import hashlib
 import datetime
 import secrets
@@ -29,7 +30,16 @@ CORS(app)
 _APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SECRET_KEY    = os.environ.get('SECRET_KEY', 'change-this-in-production')
-ADMIN_PASS    = os.environ.get('ADMIN_PASSWORD', 'isupply-admin-2024')
+
+# BEZPECNOST: zadny vychozi fallback. Repo je verejne, takze hardcodovane
+# heslo by znamenalo, ze admin API je otevrene komukoli. Kdyz promenna chybi,
+# vygeneruje se nahodne heslo -> admin API je nepristupne, dokud ji nenastavis.
+ADMIN_PASS = os.environ.get('ADMIN_PASSWORD')
+if not ADMIN_PASS:
+    ADMIN_PASS = secrets.token_urlsafe(32)
+    print('[SECURITY] ADMIN_PASSWORD neni nastavene! Admin API je zamcene '
+          'nahodnym heslem. Nastav promennou na Railway a redeployni.', flush=True)
+
 DATABASE_URL  = os.environ.get('DATABASE_URL', '')
 TOKEN_HOURS   = 24  # Token platný 24 hodin
 
@@ -312,7 +322,8 @@ def deactivate_device():
 
 def require_admin():
     auth = request.headers.get('X-Admin-Password', '')
-    return auth == ADMIN_PASS
+    # hmac.compare_digest = porovnani v konstantnim case (proti timing utoku)
+    return bool(auth) and hmac.compare_digest(auth, ADMIN_PASS)
 
 
 @app.route('/api/admin/licenses', methods=['GET'])
@@ -449,6 +460,37 @@ def admin_log():
     rows = c.fetchall()
     conn.close()
     return jsonify({'ok': True, 'log': [dict(r) for r in rows]})
+
+
+# ─── MODULY: kvoty, fakturace, POHODA ────────────────────────────────────────
+# Registrace je zamerne v try/except: kdyby nekteremu modulu chybela promenna
+# prostredi, licencni API musi bezet dal. Do logu se napise, co se nepodarilo.
+
+def _register_modules():
+    try:
+        from quota import bp as quota_bp
+        app.register_blueprint(quota_bp)
+        print('[modules] quota OK', flush=True)
+    except Exception as exc:
+        print(f'[modules] quota se nenacetl: {exc}', flush=True)
+
+    try:
+        from invoices import bp as invoices_bp
+        app.register_blueprint(invoices_bp)
+        print('[modules] invoices OK', flush=True)
+    except Exception as exc:
+        print(f'[modules] invoices se nenacetl: {exc}', flush=True)
+
+    try:
+        from pohoda import bp as pohoda_bp
+        app.register_blueprint(pohoda_bp)
+        print('[modules] pohoda OK', flush=True)
+    except Exception as exc:
+        print(f'[modules] pohoda se nenacetl: {exc}', flush=True)
+
+
+# Vola se i pri startu pres gunicorn (tam neplati __name__ == '__main__')
+_register_modules()
 
 
 # ─── START ───────────────────────────────────────────────────────────────────

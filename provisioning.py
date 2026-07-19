@@ -37,20 +37,21 @@ def create_licence(cur, email, tier, stripe_customer_id, stripe_subscription_id,
     tier = (tier or "basic").lower()
     for _ in range(8):
         key = generate_licence_key()
-        cur.execute("SELECT 1 FROM licences WHERE key = %s", (key,))
+        cur.execute("SELECT 1 FROM licenses WHERE license_key = %s", (key,))
         if not cur.fetchone():
             break
     else:
         raise RuntimeError("Nepodařilo se vygenerovat unikátní licenční klíč.")
 
     cur.execute(
-        """INSERT INTO licences
-             (key, email, company, vat_id, tier, status, scan_limit, unlimited,
-              stripe_customer_id, stripe_subscription_id, period_start, period_end)
-           VALUES (%s, %s, %s, %s, %s, 'active', %s, %s, %s, %s,
-                   to_timestamp(%s), to_timestamp(%s))
-           RETURNING id, key""",
-        (key, email, company, vat_id, tier,
+        """INSERT INTO licenses
+             (license_key, email, company, vat_id, plan, active, seats, valid_until,
+              scan_limit, unlimited, stripe_customer_id, stripe_subscription_id,
+              period_start, period_end)
+           VALUES (%s, %s, %s, %s, %s, TRUE, 1, to_timestamp(%s)::date,
+                   %s, %s, %s, %s, to_timestamp(%s), to_timestamp(%s))
+           RETURNING id, license_key AS key""",
+        (key, email, company, vat_id, tier, period_end,
          TIER_LIMITS.get(tier, 200), tier == "enterprise",
          stripe_customer_id, stripe_subscription_id, period_start, period_end),
     )

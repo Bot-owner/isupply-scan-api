@@ -75,7 +75,7 @@ def money(cents, currency):
 # 1) Založení položky po platbě  (volá se ze Stripe webhooku)
 # ─────────────────────────────────────────────────────────────────────
 def queue_invoice(cur, *, email, kind, description, amount_cents, currency="eur",
-                  licence_id=None, company=None, vat_id=None, address=None,
+                  license_id=None, company=None, vat_id=None, address=None,
                   country=None, stripe_session_id=None, stripe_payment_intent=None):
     """Založí položku ve frontě a upozorní tě v Telegramu. Idempotentní přes session id."""
     if stripe_session_id:
@@ -87,12 +87,12 @@ def queue_invoice(cur, *, email, kind, description, amount_cents, currency="eur"
     ref = make_ref()
     cur.execute(
         """INSERT INTO pending_invoices
-             (ref, licence_id, email, company, vat_id, address, country,
+             (ref, license_id, email, company, vat_id, address, country,
               kind, description, amount_cents, currency,
               stripe_session_id, stripe_payment_intent)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
            RETURNING id, ref""",
-        (ref, licence_id, email, company, vat_id, address, country,
+        (ref, license_id, email, company, vat_id, address, country,
          kind, description, amount_cents, currency,
          stripe_session_id, stripe_payment_intent),
     )
