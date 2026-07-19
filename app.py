@@ -332,9 +332,22 @@ def admin_list_licenses():
         return jsonify({'ok': False, 'error': 'Unauthorized'}), 403
     conn = get_db()
     c    = conn.cursor()
+    # Ke kazde licenci dopocitame spotrebu skenu v aktualnim obdobi
+    # a zustatek dokoupenych kreditu.
     c.execute('''
         SELECT l.*,
-               COUNT(a.id) as seats_used
+               COUNT(DISTINCT a.id) AS seats_used,
+               COALESCE((
+                   SELECT count(*) FROM scan_events se
+                   WHERE se.license_id = l.id AND se.billed
+                     AND se.source = 'subscription'
+                     AND se.period_start = l.period_start
+               ), 0) AS scans_used,
+               COALESCE((
+                   SELECT sum(cp.remaining) FROM credit_packs cp
+                   WHERE cp.license_id = l.id AND cp.remaining > 0
+                     AND (cp.expires_at IS NULL OR cp.expires_at > now())
+               ), 0) AS credits_remaining
         FROM licenses l
         LEFT JOIN activations a ON a.license_id = l.id
         GROUP BY l.id
