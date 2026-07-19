@@ -23,6 +23,17 @@ PORT = 5000
 URL = f"http://127.0.0.1:{PORT}"
 
 
+def _resource(name):
+    """Cesta k pribalenemu souboru — v EXE lezi v docasnem _MEIPASS."""
+    for root in (getattr(sys, "_MEIPASS", None), _base_dir()):
+        if not root:
+            continue
+        p = os.path.join(root, name)
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def _base_dir():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -135,8 +146,59 @@ def shutdown():
     sys.stdout.flush()
 
 
+
+
 # ─────────────────────────────────────────────────────────────────────
-# 5) Hlavni beh
+# 6) Ikona okna
+#    V EXE ji nastavi uz PyInstaller (--icon), ale pri spusteni
+#    ze zdrojaku by okno melo ikonu Pythonu. Tohle to srovna v obou
+#    pripadech a zaroven doplni ikonu na hlavni panel.
+# ─────────────────────────────────────────────────────────────────────
+def apply_window_icon():
+    ico = _resource("icon.ico")
+    if not ico:
+        print("[launcher] icon.ico nenalezen, ikonu nenastavuji")
+        return
+    try:
+        u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
+
+        # Vlastni AppUserModelID -> Windows nesloucí okno s Pythonem
+        try:
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "iSupply.Scan.Desktop")
+        except Exception:
+            pass
+
+        IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x00000010, 0x00000040
+        WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
+
+        hicon_big = u32.LoadImageW(None, ico, IMAGE_ICON, 256, 256,
+                                   LR_LOADFROMFILE)
+        hicon_small = u32.LoadImageW(None, ico, IMAGE_ICON, 32, 32,
+                                     LR_LOADFROMFILE)
+        if not hicon_big:
+            hicon_big = u32.LoadImageW(None, ico, IMAGE_ICON, 0, 0,
+                                       LR_LOADFROMFILE | LR_DEFAULTSIZE)
+        if not hicon_big:
+            return
+
+        # Okno vznika az po startu webview, proto par pokusu
+        for _ in range(40):
+            hwnd = u32.FindWindowW(None, APP_NAME)
+            if hwnd:
+                u32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+                u32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL,
+                                 hicon_small or hicon_big)
+                print("[launcher] ikona okna nastavena")
+                return
+            time.sleep(0.25)
+        print("[launcher] okno pro nastaveni ikony nenalezeno")
+    except Exception as exc:
+        print(f"[launcher] ikonu se nepodarilo nastavit: {exc}")
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 7) Hlavni beh
 # ─────────────────────────────────────────────────────────────────────
 def main():
     os.chdir(_base_dir())
@@ -206,6 +268,8 @@ def main():
         window.events.closed += shutdown
     except Exception:
         pass
+
+    threading.Thread(target=apply_window_icon, daemon=True).start()
 
     try:
         webview.start()

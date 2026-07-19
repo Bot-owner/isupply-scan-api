@@ -19,6 +19,7 @@ if not exist "support.html"           ( echo [CHYBA] Ve slozce chybi support.htm
 if not exist "server.py"              ( echo [CHYBA] Ve slozce chybi server.py & pause & exit /b 1 )
 if not exist "launcher.py"            ( echo [CHYBA] Ve slozce chybi launcher.py & pause & exit /b 1 )
 if not exist "scan_quota.py"          ( echo [CHYBA] Ve slozce chybi scan_quota.py & pause & exit /b 1 )
+if not exist "icon.ico"               ( echo [CHYBA] Ve slozce chybi icon.ico & pause & exit /b 1 )
 echo  OK - buildim PRESNE ty soubory, ktere mas ve slozce (zadny GitHub, zadna cache)
 
 echo  [2/4] Instalace zavislosti...
@@ -35,6 +36,9 @@ python -m PyInstaller ^
   --onefile ^
   --noconsole ^
   --name "iSupply Scan" ^
+  --icon "icon.ico" ^
+  --add-data "icon.ico;." ^
+  --add-data "iS.png;." ^
   --add-data "iphone-diagnostic.html;." ^
   --add-data "isupply_admin.html;." ^
   --add-data "support.html;." ^
@@ -55,8 +59,8 @@ python -m PyInstaller ^
   --hidden-import scan_quota ^
   --collect-all webview ^
   --hidden-import webview.platforms.edgechromium ^
-  --hidden-import clr_loader ^
-  --hidden-import pythonnet ^
+  --collect-all clr_loader ^
+  --collect-all pythonnet ^
   --hidden-import requests ^
   launcher.py
 
