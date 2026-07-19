@@ -22,7 +22,7 @@ BASE_URL = os.environ.get("APP_BASE_URL", "https://isupply-scan.cz")
 # Bez znaků, které jdou splést: 0/O, 1/I/L
 ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
-TIER_LIMITS = {"basic": 200, "pro": 500, "business": 1000, "enterprise": 0}
+TIER_LIMITS = {"test": 50, "basic": 200, "pro": 500, "business": 1000, "enterprise": 0}
 
 
 def generate_licence_key():

@@ -43,14 +43,24 @@ CREDIT_VALIDITY_MONTHS = 12
 
 # Jednorázové balíčky: velikost -> (Stripe Price ID, cena v centech)
 CREDIT_PACKS = {
+    10:  (os.environ.get("STRIPE_PRICE_CREDITS_10", ""), 100),   # ⚠️ testovací, neveřejný
     100: (os.environ.get("STRIPE_PRICE_CREDITS_100", ""), 2300),
     200: (os.environ.get("STRIPE_PRICE_CREDITS_200", ""), 4500),
     500: (os.environ.get("STRIPE_PRICE_CREDITS_500", ""), 11000),
 }
 
+# Co se nabízí zákazníkovi při vyčerpání kvóty. Desítka za euro tam nepatří.
+PUBLIC_PACKS = (100, 200, 500)
+
+# E-maily, které smí koupit testovací tarif nebo testovací balíček.
+# Komukoli jinému se tarif sníží na basic, i kdyby odkaz získal.
+TEST_EMAILS = {e.strip().lower()
+               for e in os.environ.get("TEST_ALLOWED_EMAILS", "").split(",") if e.strip()}
+
 # ── Funkce podle tarifu ──────────────────────────────────────────────
 # Basic nemá Excel import/export — odemyká se od Pro výš.
 TIER_FEATURES = {
+    "test":       {"diagnostics", "label_print", "excel_io", "priority_support", "api"},
     "basic":      {"diagnostics", "label_print"},
     "pro":        {"diagnostics", "label_print", "excel_io"},
     "business":   {"diagnostics", "label_print", "excel_io", "priority_support"},
@@ -184,8 +194,8 @@ def authorize_scan():
                         period_end=lic["period_end"].isoformat(),
                         upgrade_url=f"{BASE_URL}/#pricing",
                         topup_url=f"{BASE_URL}/credits",
-                        packs=[{"credits": c, "price_eur": p / 100}
-                               for c, (_, p) in sorted(CREDIT_PACKS.items())],
+                        packs=[{"credits": c, "price_eur": CREDIT_PACKS[c][1] / 100}
+                               for c in PUBLIC_PACKS],
                     ), 402
                 cur.execute(
                     "UPDATE credit_packs SET remaining = remaining - 1 WHERE id = %s",
@@ -403,7 +413,7 @@ def credits_checkout():
 
     if credits not in CREDIT_PACKS:
         return jsonify(error="bad_request",
-                       message=f"Dostupné balíčky: {sorted(CREDIT_PACKS)}"), 400
+                       message=f"Dostupné balíčky: {list(PUBLIC_PACKS)}"), 400
 
     with db() as cur:
         cur.execute("SELECT id FROM licences WHERE key = %s", (licence_key,))
@@ -446,6 +456,19 @@ def stripe_webhook():
                  or obj.get("customer_email"))
         tier = (meta.get("tier") or "basic").lower()
         sub_id = obj.get("subscription")
+
+        # Testovací tarif smí jen povolený e-mail. Ostatním spadne na basic,
+        # i kdyby se odkaz dostal ven.
+        if tier == "test" and (email or "").lower() not in TEST_EMAILS:
+            print(f"[security] pokus o testovací tarif z {email} — snižuji na basic",
+                  flush=True)
+            tier = "basic"
+            try:
+                from invoices import notify
+                notify(f"🚨 Někdo cizí zkusil koupit testovací tarif: <b>{email}</b>\n"
+                       f"Licence vydána jako <b>basic</b>. Zruš ten Payment Link.")
+            except Exception:
+                pass
 
         if email and sub_id:
             with db() as cur:
