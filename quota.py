@@ -659,3 +659,47 @@ def stripe_webhook():
                 )
 
     return jsonify(received=True)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 6) Heartbeat — kdo právě používá aplikaci
+# ─────────────────────────────────────────────────────────────────────
+@bp.post("/api/licence/heartbeat")
+def licence_heartbeat():
+    """
+    Aplikace hlásí, že běží. Volá se po startu a pak každých pár minut.
+    Tělo: { licence_key, hwid, hostname, version }
+    """
+    data = request.get_json(silent=True) or {}
+    licence_key = (data.get("licence_key") or "").strip()
+    hwid = (data.get("hwid") or "").strip()[:128]
+
+    if not licence_key or not hwid:
+        return jsonify(error="bad_request"), 400
+
+    with db() as cur:
+        cur.execute("SELECT id, active FROM licenses WHERE license_key = %s",
+                    (licence_key,))
+        lic = cur.fetchone()
+        if not lic:
+            return jsonify(error="licence_invalid"), 404
+
+        # UPSERT na existující tabulku activations
+        cur.execute(
+            """INSERT INTO activations (license_id, hwid, hostname, last_seen)
+               VALUES (%s, %s, %s, now())
+               ON CONFLICT (license_id, hwid)
+               DO UPDATE SET last_seen = now(),
+                             hostname = COALESCE(EXCLUDED.hostname, activations.hostname)""",
+            (lic["id"], hwid, (data.get("hostname") or "")[:64]),
+        )
+
+        used = _usage(cur, lic["id"], _period_start(cur, lic["id"]))
+
+    return jsonify(ok=True, active=lic["active"], used=used)
+
+
+def _period_start(cur, license_id):
+    cur.execute("SELECT period_start FROM licenses WHERE id = %s", (license_id,))
+    row = cur.fetchone()
+    return row["period_start"] if row else None

@@ -189,3 +189,33 @@ def components_from_result(result):
             if isinstance(val, dict) and val.get("component"):
                 out.append(val)
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────
+# 5) Heartbeat — hlasi serveru, ze aplikace bezi
+# ─────────────────────────────────────────────────────────────────────
+_HEARTBEAT_SEC = 180
+_heartbeat_started = False
+
+
+def start_heartbeat(hwid, hostname=None, version=None):
+    """Spusti vlakno, ktere kazde 3 minuty hlasi serveru, ze aplikace bezi."""
+    global _heartbeat_started
+    if _heartbeat_started or not _LICENCE_KEY:
+        return
+    _heartbeat_started = True
+
+    def _loop():
+        while True:
+            try:
+                requests.post(
+                    f"{_API_BASE}/api/licence/heartbeat",
+                    json={"licence_key": _LICENCE_KEY, "hwid": hwid,
+                          "hostname": hostname, "version": version},
+                    timeout=_TIMEOUT,
+                )
+            except Exception:
+                pass  # vypadek site neni duvod cokoli hlasit
+            time.sleep(_HEARTBEAT_SEC)
+
+    threading.Thread(target=_loop, daemon=True).start()

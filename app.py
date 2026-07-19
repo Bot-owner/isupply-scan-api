@@ -347,7 +347,9 @@ def admin_list_licenses():
                    SELECT sum(cp.remaining) FROM credit_packs cp
                    WHERE cp.license_id = l.id AND cp.remaining > 0
                      AND (cp.expires_at IS NULL OR cp.expires_at > now())
-               ), 0) AS credits_remaining
+               ), 0) AS credits_remaining,
+               (SELECT max(a2.last_seen) FROM activations a2
+                 WHERE a2.license_id = l.id) AS last_seen
         FROM licenses l
         LEFT JOIN activations a ON a.license_id = l.id
         GROUP BY l.id

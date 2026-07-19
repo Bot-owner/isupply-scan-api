@@ -215,6 +215,11 @@ def check_license() -> tuple[bool, str]:
 
     LICENSE_KEY = load_license_key()
     scan_quota.configure(api_base=LICENSE_API, licence_key=LICENSE_KEY)
+    try:
+        import socket as _sock
+        scan_quota.start_heartbeat(get_hwid(), hostname=_sock.gethostname())
+    except Exception as _e:
+        print(f"  [kvota] heartbeat se nespustil: {_e}")
     if not LICENSE_KEY:
         return False, "❌ Licence nenalezena. Vytvořte soubor 'licence.key' s vaším licenčním klíčem."
 

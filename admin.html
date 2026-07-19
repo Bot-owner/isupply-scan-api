@@ -187,6 +187,7 @@
     <table>
       <thead>
         <tr>
+          <th></th>
           <th>Licenční klíč</th>
           <th>Firma</th>
           <th>Email</th>
@@ -326,7 +327,17 @@ function renderTable(list) {
            </div>
          </div>`;
     }
+    // ── Online indikátor: heartbeat mladší než 10 minut ──
+    const seen = l.last_seen ? new Date(l.last_seen) : null;
+    const minAgo = seen ? (Date.now() - seen.getTime())/60000 : null;
+    const online = minAgo !== null && minAgo < 10;
+    const dotCol = online ? 'var(--green)' : minAgo !== null && minAgo < 1440 ? 'var(--yellow)' : 'rgba(255,255,255,.18)';
+    const dotTitle = seen
+      ? (online ? 'Právě používá aplikaci' : `Naposledy ${seen.toLocaleString('cs-CZ')}`)
+      : 'Aplikace zatím nehlásila aktivitu';
+
     return `<tr>
+      <td title="${dotTitle}"><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${dotCol}${online?';box-shadow:0 0 8px var(--green)':''}"></span></td>
       <td><span class="key-display" onclick="copyText('${l.license_key}')" title="Klikni pro kopírování">${l.license_key}</span></td>
       <td style="font-weight:600">${l.company||'—'}</td>
       <td style="font-size:12px;color:var(--text-dim)">${l.email||'—'}</td>
@@ -348,7 +359,7 @@ function renderTable(list) {
         </div>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="9" style="text-align:center;padding:24px;color:var(--text-dim);font-family:var(--mono)">Žádné licence</td></tr>';
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-dim);font-family:var(--mono)">Žádné licence</td></tr>';
 }
 
 function filterTable(q) {
