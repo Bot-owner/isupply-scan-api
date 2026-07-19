@@ -265,12 +265,34 @@ function copyText(text) {
   navigator.clipboard.writeText(text).then(() => toast('✓ Zkopírováno: ' + text));
 }
 
+// ── LIVE AKTUALIZACE ──
+// Panel se obnovuje sám každých 10 s, dokud je záložka viditelná.
+// Poznáš tak připojené PC (zelená tečka) i ubývající skeny bez F5.
+let _autoTimer = null;
+
+function startAutoRefresh() {
+  if (_autoTimer) return;
+  _autoTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && !document.querySelector('.modal.open')) {
+      load(true);
+    }
+  }, 10000);
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') load(true);
+});
+startAutoRefresh();
+
 // ── LOAD ──
-async function load() {
+async function load(silent) {
   const r = await apiFetch('/api/admin/licenses');
   if (!r.ok) return;
   allLicenses = r.licenses;
-  renderTable(allLicenses);
+  const q = (document.querySelector('.search-input')?.value || '').trim().toLowerCase();
+  renderTable(q ? allLicenses.filter(l =>
+    (l.license_key||'').toLowerCase().includes(q) ||
+    (l.company||'').toLowerCase().includes(q) ||
+    (l.email||'').toLowerCase().includes(q)) : allLicenses);
 
   document.getElementById('s-total').textContent   = allLicenses.length;
   document.getElementById('s-active').textContent  = allLicenses.filter(l=>licStatus(l)==='active').length;

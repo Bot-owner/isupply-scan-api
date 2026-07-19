@@ -283,6 +283,34 @@ connected_devices = {}
 # umely zpusobovaly nahodne MuxException chyby.
 _usbmux_lock = threading.Lock()
 
+# ── Kratkodoba cache device-info ──
+# Frontend se pta na kazdy slot kazdych par vterin. Bez cache to znamena
+# desitky soubeznych usbmux spojeni za minutu, coz je hlavni zdroj chyb 183.
+_device_info_cache = {}
+_device_info_cache_lock = threading.Lock()
+DEVICE_INFO_TTL = 20  # vteriny
+
+
+def _device_info_cache_put(udid, data):
+    with _device_info_cache_lock:
+        _device_info_cache[udid] = (time.time(), data)
+
+
+def _device_info_cache_get(udid, max_age=DEVICE_INFO_TTL):
+    with _device_info_cache_lock:
+        hit = _device_info_cache.get(udid)
+    if hit and (time.time() - hit[0]) < max_age:
+        return hit[1]
+    return None
+
+
+def device_info_cache_clear(udid=None):
+    with _device_info_cache_lock:
+        if udid:
+            _device_info_cache.pop(udid, None)
+        else:
+            _device_info_cache.clear()
+
 # ─── DB ─────────────────────────────────────────────────────────────────────
 
 def get_db():
@@ -753,25 +781,44 @@ def get_device_info(udid):
     import time as _t
     loop = asyncio.new_event_loop()
     try:
-        # Retry na transientní MuxException 183 (konkurenční usbmux při připojení).
+        # ── Retry na transientni chyby usbmux (183 / Number:3) ──
+        # Exponencialni backoff s jitterem. Fixni 1,2 s bylo malo:
+        # kdyz si zarizeni drzi jina aplikace (3uTools, iTunes, Apple Devices),
+        # trva jeji uvolneni klidne 5-10 vterin.
+        import random as _rnd
         last_err = None
-        for _attempt in range(3):
+        _delays = [0.6, 1.2, 2.4, 4.0, 6.0]
+        for _attempt, _delay in enumerate(_delays, start=1):
             try:
                 with _usbmux_lock:
                     result = loop.run_until_complete(_fetch())
+                _device_info_cache_put(udid, result)
                 print(f"  ✓ {result['name']} | IMEI: {result['imei']} | iOS: {result['ios']} | Baterie: {result['battery']}%")
                 return result
             except Exception as e:
                 last_err = e
-                if ('MuxException' in type(e).__name__) or ('183' in str(e)):
-                    print(f"  ⟳ usbmux 183, pokus {_attempt+1}/3, čekám…")
-                    _t.sleep(1.2)
+                _txt = str(e)
+                _transient = (('MuxException' in type(e).__name__)
+                              or ('183' in _txt)
+                              or ("'Number': 3" in _txt)
+                              or ('ConnectionFailedError' in type(e).__name__))
+                if _transient and _attempt < len(_delays):
+                    _wait = _delay + _rnd.uniform(0, 0.4)
+                    print(f"  ⟳ usbmux zaneprazdnen, pokus {_attempt}/{len(_delays)}, "
+                          f"cekam {_wait:.1f}s…")
+                    _t.sleep(_wait)
                     continue
                 raise
         raise last_err
     except Exception as e:
         print(f"  ✗ get_device_info chyba: {e}")
-        # Vrátit alespoň UDID
+        if '183' in str(e) or 'MuxException' in type(e).__name__:
+            print("     Tip: zavri 3uTools / iTunes / Apple Devices — drzi si zarizeni.")
+        # Kdyz uz jsme zarizeni jednou precetli, vrat posledni znamou hodnotu.
+        _cached = _device_info_cache_get(udid, max_age=300)
+        if _cached:
+            print("     (vracim posledni znamou hodnotu z cache)")
+            return _cached
         return {
             'udid': udid, 'imei': 'Načítání...', 'serial': udid[:12],
             'model': 'iPhone', 'name': 'iPhone', 'ios': 'N/A',
@@ -817,6 +864,8 @@ def usb_monitor_thread():
                 # Nově připojená
                 for uid in current - known:
                     print(f"  📱 Připojeno: {uid}")
+                    device_info_cache_clear(uid)  # stará data pryč
+                    await asyncio.sleep(1.0)      # iOS po připojení chvíli startuje služby
                     # Info načíst ve vlastním vlákně aby se nesmíchaly event loops
                     info_thread = threading.Thread(
                         target=lambda u=uid: _handle_connect(u),
@@ -828,6 +877,7 @@ def usb_monitor_thread():
                 # Odpojená
                 for uid in known - current:
                     print(f"  📵 Odpojeno: {uid}")
+                    device_info_cache_clear(uid)
                     connected_devices.pop(uid, None)
                     usb_event_queue.put({'event': 'disconnected', 'udid': uid})
                     known.discard(uid)
@@ -2155,9 +2205,13 @@ def api_component_serials(udid):
 
 @app.route('/api/device-info/<udid>', methods=['GET'])
 def api_device_info(udid):
-    """Dotažení základních dat (model, IMEI, iOS, baterie) na vyžádání –
-    frontend to volá dokud get_device_info nespadne kvůli usbmux 183."""
+    """Dotažení základních dat (model, IMEI, iOS, baterie) na vyžádání.
+    Frontend se pta opakovane, proto cteme z kratke cache — jinak by
+    kazdy dotaz otevrel nove usbmux spojeni a zpusoboval chyby 183."""
     try:
+        cached = _device_info_cache_get(udid)
+        if cached and cached.get('imei') not in (None, '', 'Načítání...'):
+            return jsonify(cached), 200
         info = get_device_info(udid)
         return jsonify(info), 200
     except Exception as exc:
