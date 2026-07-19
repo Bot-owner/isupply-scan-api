@@ -124,6 +124,8 @@ SESSION_TOKEN  = None   # JWT token z Railway API
 TOKEN_FILE     = os.path.join(_get_base_dir(), '.token_cache')
 LICENSE_FILE   = os.path.join(_get_base_dir(), 'licence.key')
 
+import scan_quota  # odecitani skenu z kvoty (klientska cast)
+
 
 # ─── LICENCE VALIDACE ───────────────────────────────────────────────────────
 
@@ -212,6 +214,7 @@ def check_license() -> tuple[bool, str]:
     global SESSION_TOKEN, LICENSE_KEY
 
     LICENSE_KEY = load_license_key()
+    scan_quota.configure(api_base=LICENSE_API, licence_key=LICENSE_KEY)
     if not LICENSE_KEY:
         return False, "❌ Licence nenalezena. Vytvořte soubor 'licence.key' s vaším licenčním klíčem."
 
@@ -2067,8 +2070,64 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
 
 @app.route('/api/component-serials/<udid>', methods=['GET'])
 def api_component_serials(udid):
+    # ── KVOTA: nejdriv se zeptej serveru, jestli smime skenovat ──
+    imei = None
+    dev_info = {}
+    try:
+        dev_info = get_device_info(udid) or {}
+        imei = dev_info.get('imei')
+    except Exception as exc:
+        print(f"  [kvota] nepodarilo se zjistit IMEI: {exc}")
+
+    auth = scan_quota.authorize_scan(
+        imei, model=dev_info.get('model'), ios_version=dev_info.get('ios'))
+
+    if not auth.get('allowed'):
+        return jsonify({
+            'ok': False,
+            'udid': udid,
+            'quota_blocked': True,
+            'error': auth.get('error') or 'quota_exceeded',
+            'message': auth.get('message') or 'Sken nebyl povolen licencnim serverem.',
+            'used': auth.get('used'),
+            'scan_limit': auth.get('scan_limit'),
+            'upgrade_url': auth.get('upgrade_url'),
+            'topup_url': auth.get('topup_url'),
+            'packs': auth.get('packs'),
+        }), 200
+
+    if auth.get('billed'):
+        print(f"  [kvota] sken odecten · zbyva "
+              f"{auth.get('subscription_remaining')} + {auth.get('credits_remaining')} kreditu")
+    elif auth.get('reason') == 'free_rescan_window':
+        print(f"  [kvota] opakovany sken zdarma (do {auth.get('free_until')})")
+
     try:
         result = _run_async_isolated(_component_serials_collect(udid), timeout=90)
+
+        # ── Ulozeni baseline komponent na server (na pozadi) ──
+        try:
+            scan_quota.complete_scan(
+                imei,
+                device={
+                    'model': dev_info.get('model'),
+                    'serial_number': dev_info.get('serial'),
+                    'model_identifier': dev_info.get('product_type'),
+                    'ios_version': dev_info.get('ios'),
+                },
+                components=scan_quota.components_from_result(result),
+                scan_event_id=auth.get('scan_event_id'),
+            )
+        except Exception as exc:
+            print(f"  [kvota] baseline se neodeslala: {exc}")
+
+        if isinstance(result, dict):
+            result['quota'] = {
+                'billed': auth.get('billed'),
+                'subscription_remaining': auth.get('subscription_remaining'),
+                'credits_remaining': auth.get('credits_remaining'),
+                'free_until': auth.get('free_until'),
+            }
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
