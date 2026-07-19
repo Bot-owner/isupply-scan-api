@@ -373,27 +373,85 @@ def admin_create_license():
     conn = get_db()
     c    = conn.cursor()
     try:
+        plan = (data.get('plan') or 'pro').lower()
+        # Kvota skenu podle tarifu — pocet PC uz nehraje roli, uctuje se sken.
+        from provisioning import TIER_LIMITS
+        scan_limit = TIER_LIMITS.get(plan, 200)
+
         c.execute('''
-            INSERT INTO licenses (license_key, email, company, plan, seats, valid_until, notes)
-            VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id, license_key
+            INSERT INTO licenses (license_key, email, company, plan, seats, valid_until,
+                                  notes, scan_limit, unlimited, period_start, period_end)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s, now(), now() + INTERVAL '30 days')
+            RETURNING id, license_key
         ''', (
             key,
             data.get('email', ''),
             data.get('company', ''),
-            data.get('plan', 'pro'),
-            data.get('seats', 1),
+            plan,
+            1,                     # seats se uz nepouziva, drzime 1 kvuli schematu
             data.get('valid_until', str(datetime.date.today() + datetime.timedelta(days=365))),
             data.get('notes', ''),
+            scan_limit,
+            plan == 'enterprise',
         ))
         row = c.fetchone()
         conn.commit()
         conn.close()
         log_action(key, 'CREATED', data.get('company', ''))
-        return jsonify({'ok': True, 'id': row['id'], 'license_key': row['license_key']}), 201
+
+        # ── Volitelne odeslani klice zakaznikovi ──
+        mail_sent, mail_error = False, None
+        if data.get('send_email') and data.get('email'):
+            try:
+                from provisioning import send_licence_email
+                send_licence_email(data['email'], row['license_key'],
+                                   plan, scan_limit,
+                                   lang=(data.get('lang') or 'cs'))
+                mail_sent = True
+                log_action(row['license_key'], 'EMAIL_SENT', data['email'])
+            except Exception as exc:
+                mail_error = str(exc)
+                print(f"[admin] odeslani klice selhalo: {exc}", flush=True)
+
+        return jsonify({'ok': True, 'id': row['id'],
+                        'license_key': row['license_key'],
+                        'mail_sent': mail_sent, 'mail_error': mail_error}), 201
     except Exception as e:
         conn.rollback()
         conn.close()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@app.route('/api/admin/licenses/<int:lid>/send-email', methods=['POST'])
+def admin_send_license_email(lid):
+    """Posle zakaznikovi e-mail s licencnim klicem — stejnou sablonou
+    jako automaticky e-mail po nakupu pres Stripe."""
+    if not require_admin():
+        return jsonify({'ok': False, 'error': 'Unauthorized'}), 403
+
+    data = request.get_json(silent=True) or {}
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('SELECT license_key, email, plan, scan_limit FROM licenses WHERE id = %s', (lid,))
+    lic = c.fetchone()
+    conn.close()
+
+    if not lic:
+        return jsonify({'ok': False, 'error': 'Licence nenalezena'}), 404
+
+    to = (data.get('email') or lic['email'] or '').strip()
+    if not to:
+        return jsonify({'ok': False, 'error': 'Licence nema e-mail'}), 400
+
+    try:
+        from provisioning import send_licence_email
+        send_licence_email(to, lic['license_key'], lic['plan'],
+                           lic['scan_limit'] or 0,
+                           lang=(data.get('lang') or 'cs'))
+        log_action(lic['license_key'], 'EMAIL_SENT', to)
+        return jsonify({'ok': True, 'sent_to': to})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
 @app.route('/api/admin/licenses/<int:lid>', methods=['PUT'])

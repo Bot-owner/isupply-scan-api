@@ -122,13 +122,21 @@
           <option value="enterprise">Enterprise</option>
         </select>
       </div>
-      <div class="field"><label>Max. zařízení (Seats)</label><input type="number" id="f-seats" value="1" min="1" max="100" /></div>
+      <div class="field"><label>Jazyk e-mailu</label>
+        <select id="f-lang"><option value="cs">Čeština</option><option value="en">English</option></select>
+      </div>
       <div class="field"><label>Platnost do</label><input type="date" id="f-valid" /></div>
       <div class="field"><label>Stav</label>
         <select id="f-active">
           <option value="1">Aktivní</option>
           <option value="0">Pozastavena</option>
         </select>
+      </div>
+      <div class="field full">
+        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:12px;color:var(--text)">
+          <input type="checkbox" id="f-sendmail" checked style="width:15px;height:15px;accent-color:var(--pink);cursor:pointer" />
+          Poslat zákazníkovi e-mail s licenčním klíčem a návodem
+        </label>
       </div>
       <div class="field full"><label>Poznámka</label><input type="text" id="f-notes" placeholder="Interní poznámka..." /></div>
     </div>
@@ -265,6 +273,17 @@ function copyText(text) {
   navigator.clipboard.writeText(text).then(() => toast('✓ Zkopírováno: ' + text));
 }
 
+// ── ODESLANI KLICE E-MAILEM ──
+async function sendLicEmail(id, email) {
+  const to = prompt('Poslat licenční klíč na e-mail:', email || '');
+  if (!to) return;
+  toast('Odesílám…');
+  const r = await apiFetch(`/api/admin/licenses/${id}/send-email`, 'POST',
+                           { email: to.trim(), lang: 'cs' });
+  if (r.ok) toast('✓ E-mail odeslán na ' + r.sent_to);
+  else toast('Chyba: ' + (r.error || 'nepodařilo se odeslat'), true);
+}
+
 // ── LIVE AKTUALIZACE ──
 // Panel se obnovuje sám každých 10 s, dokud je záložka viditelná.
 // Poznáš tak připojené PC (zelená tečka) i ubývající skeny bez F5.
@@ -374,6 +393,7 @@ function renderTable(list) {
       <td>
         <div class="actions">
           <button class="btn-sm" onclick="openEditLic(${l.id})">✏ Upravit</button>
+          <button class="btn-sm" onclick="sendLicEmail(${l.id}, '${(l.email||'').replace(/'/g,"\\'")}')" title="Poslat klíč e-mailem">✉ E-mail</button>
           <button class="btn-sm success" onclick="extendYear(${l.id},'${l.valid_until}')">+1 rok</button>
           <button class="btn-sm" onclick="toggleActive(${l.id},${l.active})">${l.active?'⏸ Pozastavit':'▶ Aktivovat'}</button>
           <button class="btn-sm danger" onclick="deleteLicense(${l.id},'${l.license_key}')">🗑 Smazat</button>
@@ -400,7 +420,8 @@ function openNewLic() {
   document.getElementById('new-key-result').innerHTML = '';
   ['f-email','f-company','f-notes'].forEach(id => document.getElementById(id).value='');
   document.getElementById('f-plan').value = 'pro';
-  document.getElementById('f-seats').value = '1';
+  document.getElementById('f-sendmail').checked = true;
+  document.getElementById('f-lang').value = 'cs';
   document.getElementById('f-active').value = '1';
   const d = new Date(); d.setFullYear(d.getFullYear()+1);
   document.getElementById('f-valid').value = d.toISOString().slice(0,10);
@@ -417,7 +438,7 @@ function openEditLic(id) {
   document.getElementById('f-company').value = l.company||'';
   document.getElementById('f-notes').value   = l.notes||'';
   document.getElementById('f-plan').value    = l.plan||'pro';
-  document.getElementById('f-seats').value   = l.seats||1;
+  document.getElementById('f-sendmail').checked = false;
   document.getElementById('f-active').value  = l.active?'1':'0';
   document.getElementById('f-valid').value   = l.valid_until?.slice(0,10)||'';
   document.getElementById('lic-modal').classList.remove('hidden');
@@ -434,7 +455,8 @@ async function saveLicense() {
     email:       document.getElementById('f-email').value,
     company:     document.getElementById('f-company').value,
     plan:        document.getElementById('f-plan').value,
-    seats:       parseInt(document.getElementById('f-seats').value),
+    send_email:  document.getElementById('f-sendmail').checked,
+    lang:        document.getElementById('f-lang').value,
     valid_until: document.getElementById('f-valid').value,
     active:      document.getElementById('f-active').value === '1',
     notes:       document.getElementById('f-notes').value,
@@ -454,7 +476,10 @@ async function saveLicense() {
       el.innerHTML = `<div class="new-key-box">
         <div style="font-size:10px;font-family:var(--mono);color:var(--text-dim);letter-spacing:.1em">NOVÝ LICENČNÍ KLÍČ – klikni pro kopírování</div>
         <div class="new-key-val" onclick="copyText('${r.license_key}')">${r.license_key}</div>
-        <div class="new-key-hint">Pošli tento klíč klientovi. Zobrazí se jen jednou.</div>
+        <div class="new-key-hint">${
+          r.mail_sent ? '✓ E-mail s klíčem odeslán zákazníkovi.'
+          : r.mail_error ? '⚠ E-mail se nepodařilo odeslat: ' + r.mail_error
+          : 'Pošli tento klíč klientovi. Zobrazí se jen jednou.'}</div>
       </div>`;
       toast('✓ Licence vytvořena: ' + r.license_key);
       load();
