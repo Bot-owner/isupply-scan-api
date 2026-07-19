@@ -438,6 +438,20 @@ def credits_checkout():
     return jsonify(checkout_url=session.url, session_id=session.id)
 
 
+
+def _vat_id(session):
+    """
+    DIČ zadané zákazníkem v Checkoutu. Stripe ho vrací
+    v `customer_details.tax_ids`, ne na úrovni session.
+    """
+    tax_ids = (session.get("customer_details") or {}).get("tax_ids") or []
+    for t in tax_ids:
+        val = (t or {}).get("value")
+        if val:
+            return val
+    return None
+
+
 def _resolve_tier(session):
     """
     Zjisti tarif objednavky. Metadata `tier` jsou na PRODUKTU ve Stripe,
@@ -533,7 +547,7 @@ def stripe_webhook():
                         period_start=sub["current_period_start"],
                         period_end=sub["current_period_end"],
                         company=cust.get("name"),
-                        vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
+                        vat_id=_vat_id(obj),
                     )
                     key, limit = lic["key"], TIER_LIMITS.get(tier, 200)
 
@@ -547,7 +561,7 @@ def stripe_webhook():
                         currency=obj.get("currency", "eur"),
                         license_id=lic["id"],
                         company=cust.get("name"),
-                        vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
+                        vat_id=_vat_id(obj),
                         address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
                                                         addr.get("postal_code")])) or None,
                         country=addr.get("country"),
@@ -610,7 +624,7 @@ def stripe_webhook():
                         currency=obj.get("currency", "eur"),
                         license_id=lic["id"],
                         company=cust.get("name"),
-                        vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
+                        vat_id=_vat_id(obj),
                         address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
                                                         addr.get("postal_code")])) or None,
                         country=addr.get("country"),
