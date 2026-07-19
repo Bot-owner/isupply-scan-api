@@ -1,0 +1,21 @@
+; POHODA agent — zkopíruj na agent.ini a vyplň
+[server]
+api_base      = https://isupply-scan.cz
+token         = ZMEN_ME_dlouhy_nahodny_retezec
+poll_seconds  = 60
+
+[pohoda]
+mserver_url   = http://127.0.0.1:444/xml
+user          = @
+password      =
+ico           = 23199351
+
+; číselné řady — musí existovat v POHODĚ
+series_card     = 
+series_transfer = 
+
+; účty v POHODĚ
+account_stripe  = STRIPE
+account_bank    = 
+
+due_days      = 14
