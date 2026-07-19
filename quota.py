@@ -438,6 +438,36 @@ def credits_checkout():
     return jsonify(checkout_url=session.url, session_id=session.id)
 
 
+def _resolve_tier(session):
+    """
+    Zjisti tarif objednavky. Metadata `tier` jsou na PRODUKTU ve Stripe,
+    ne na checkout session — Stripe je mezi objekty nekopiruje. Ctem je
+    proto pres polozky objednavky.
+
+    Poradi hledani:
+      1. metadata primo na session (kdyz checkout vytvari nas kod)
+      2. metadata na produktu z polozek objednavky (Payment Link, Buy Button)
+    """
+    meta = session.get("metadata") or {}
+    if meta.get("tier"):
+        return meta["tier"].strip().lower()
+
+    try:
+        items = stripe.checkout.Session.list_line_items(
+            session["id"], limit=10, expand=["data.price.product"])
+    except Exception as exc:
+        print(f"[webhook] nepodarilo se nacist polozky objednavky: {exc}", flush=True)
+        return None
+
+    for item in items.auto_paging_iter():
+        product = (item.get("price") or {}).get("product")
+        if isinstance(product, dict):
+            tier = (product.get("metadata") or {}).get("tier")
+            if tier:
+                return tier.strip().lower()
+    return None
+
+
 # ─────────────────────────────────────────────────────────────────────
 # 5) Stripe webhook
 # ─────────────────────────────────────────────────────────────────────
@@ -454,19 +484,18 @@ def stripe_webhook():
 
     # ── Nové předplatné → vygenerovat licenci a poslat klíč e-mailem
     if event["type"] == "checkout.session.completed" and obj.get("mode") == "subscription":
-        meta = obj.get("metadata") or {}
-
         # ⚠️ Stripe účet je sdílený s e-shopem isupply.cz. Tenhle webhook proto
-        # zpracuje POUZE platby označené metadatem `tier` — tedy produkty
-        # iSupply Scan. Cokoli jiného (objednávky z e-shopu) se ignoruje.
-        if not meta.get("tier"):
-            print("[webhook] subscription bez metadata `tier` — ignoruji "
+        # zpracuje POUZE produkty označené metadatem `tier`. Cokoli jiného
+        # (objednávky z e-shopu) se ignoruje.
+        tier = _resolve_tier(obj)
+        if not tier:
+            print("[webhook] platba bez metadata `tier` na produktu — ignoruji "
                   f"(session {obj.get('id')})", flush=True)
             return jsonify(received=True, skipped="not_a_scan_product")
 
+        meta = obj.get("metadata") or {}
         email = ((obj.get("customer_details") or {}).get("email")
                  or obj.get("customer_email"))
-        tier = meta["tier"].lower()
         sub_id = obj.get("subscription")
 
         # Testovací tarif smí jen povolený e-mail. Ostatním spadne na basic,
