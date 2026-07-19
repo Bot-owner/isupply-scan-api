@@ -61,6 +61,7 @@ TEST_EMAILS = {e.strip().lower()
 # Basic nemá Excel import/export — odemyká se od Pro výš.
 TIER_FEATURES = {
     "test":       {"diagnostics", "label_print", "excel_io", "priority_support", "api"},
+    "trial":      {"diagnostics", "label_print"},
     "basic":      {"diagnostics", "label_print"},
     "pro":        {"diagnostics", "label_print", "excel_io"},
     "business":   {"diagnostics", "label_print", "excel_io", "priority_support"},
@@ -454,9 +455,18 @@ def stripe_webhook():
     # ── Nové předplatné → vygenerovat licenci a poslat klíč e-mailem
     if event["type"] == "checkout.session.completed" and obj.get("mode") == "subscription":
         meta = obj.get("metadata") or {}
+
+        # ⚠️ Stripe účet je sdílený s e-shopem isupply.cz. Tenhle webhook proto
+        # zpracuje POUZE platby označené metadatem `tier` — tedy produkty
+        # iSupply Scan. Cokoli jiného (objednávky z e-shopu) se ignoruje.
+        if not meta.get("tier"):
+            print("[webhook] subscription bez metadata `tier` — ignoruji "
+                  f"(session {obj.get('id')})", flush=True)
+            return jsonify(received=True, skipped="not_a_scan_product")
+
         email = ((obj.get("customer_details") or {}).get("email")
                  or obj.get("customer_email"))
-        tier = (meta.get("tier") or "basic").lower()
+        tier = meta["tier"].lower()
         sub_id = obj.get("subscription")
 
         # Testovací tarif smí jen povolený e-mail. Ostatním spadne na basic,
@@ -531,7 +541,18 @@ def stripe_webhook():
     elif event["type"] == "checkout.session.completed" and obj.get("mode") == "payment":
         meta = obj.get("metadata") or {}
         licence_key = meta.get("licence_key")
-        credits = int(meta.get("credits", 0))
+        try:
+            credits = int(meta.get("credits", 0))
+        except (TypeError, ValueError):
+            credits = 0
+
+        # Opět: jednorázové platby z e-shopu nemají `credits` ani `licence_key`,
+        # takže se sem nedostanou.
+        if not (licence_key and credits):
+            print("[webhook] jednorazova platba bez `credits`/`licence_key` — "
+                  f"ignoruji (session {obj.get('id')})", flush=True)
+            return jsonify(received=True, skipped="not_a_scan_product")
+
         if licence_key and credits:
             expires = ("now() + INTERVAL '%d months'" % CREDIT_VALIDITY_MONTHS
                        if CREDIT_VALIDITY_MONTHS else "NULL")
