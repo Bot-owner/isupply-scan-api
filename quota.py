@@ -25,6 +25,7 @@ import psycopg2.extras
 import stripe
 from flask import Blueprint, jsonify, request
 
+from invoices import queue_invoice
 from provisioning import TIER_LIMITS, create_licence, send_licence_email
 
 bp = Blueprint("quota", __name__)
@@ -470,6 +471,24 @@ def stripe_webhook():
                         vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
                     )
                     key, limit = lic["key"], TIER_LIMITS.get(tier, 200)
+
+                    addr = (cust.get("address") or {})
+                    queue_invoice(
+                        cur,
+                        email=email,
+                        kind="subscription",
+                        description=f"iSupply Scan {tier.capitalize()} — předplatné",
+                        amount_cents=obj.get("amount_total") or 0,
+                        currency=obj.get("currency", "eur"),
+                        licence_id=lic["id"],
+                        company=cust.get("name"),
+                        vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
+                        address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
+                                                        addr.get("postal_code")])) or None,
+                        country=addr.get("country"),
+                        stripe_session_id=obj.get("id"),
+                        stripe_payment_intent=obj.get("payment_intent"),
+                    )
                 else:
                     key, limit = existing["key"], existing["scan_limit"]
 
@@ -503,6 +522,24 @@ def stripe_webhook():
                         (lic["id"], credits, credits, obj.get("amount_total"),
                          obj.get("currency", "eur"), obj.get("payment_intent"),
                          obj.get("id")),
+                    )
+                    cust = obj.get("customer_details") or {}
+                    addr = cust.get("address") or {}
+                    queue_invoice(
+                        cur,
+                        email=(cust.get("email") or obj.get("customer_email")),
+                        kind="credits",
+                        description=f"iSupply Scan — balíček {credits} skenů",
+                        amount_cents=obj.get("amount_total") or 0,
+                        currency=obj.get("currency", "eur"),
+                        licence_id=lic["id"],
+                        company=cust.get("name"),
+                        vat_id=((obj.get("customer_tax_ids") or [{}])[0] or {}).get("value"),
+                        address=", ".join(filter(None, [addr.get("line1"), addr.get("city"),
+                                                        addr.get("postal_code")])) or None,
+                        country=addr.get("country"),
+                        stripe_session_id=obj.get("id"),
+                        stripe_payment_intent=obj.get("payment_intent"),
                     )
 
     # ── Obnova předplatného = reset měsíční kvóty
