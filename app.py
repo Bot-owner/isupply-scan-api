@@ -244,16 +244,10 @@ def validate_license():
         c.execute('UPDATE activations SET last_seen=NOW(), hostname=%s WHERE id=%s', (host, existing['id']))
         conn.commit()
     else:
-        # Nové zařízení – zkontroluj počet seats
+        # NEOMEZENY POCET PC. Ucetni jednotkou je sken, ne pocet pocitacu —
+        # kdyz firma preda pristup dal, spotrebuje vic skenu a zaplati vic.
+        # Zarizeni se proto jen evidují kvuli prehledu v admin panelu.
         active_count = len(activations)
-        if active_count >= lic['seats']:
-            conn.close()
-            log_action(key, 'SEATS_EXCEEDED', f"{active_count}/{lic['seats']}", hwid=hwid_hash, ip=ip)
-            return jsonify({
-                'ok':    False,
-                'error': f"Seat limit reached ({active_count}/{lic['seats']}). "
-                         f"Deactivate another device or upgrade at isupply.cz"
-            }), 403
 
         # Aktivuj nové zařízení
         c.execute(
@@ -281,7 +275,7 @@ def validate_license():
         'email':       lic['email'],
         'valid_until': str(lic['valid_until']),
         'seats_used':  seats_used,
-        'seats_total': lic['seats'],
+        'seats_total': 0,          # 0 = bez limitu
     })
 
 
@@ -349,7 +343,12 @@ def admin_list_licenses():
                      AND (cp.expires_at IS NULL OR cp.expires_at > now())
                ), 0) AS credits_remaining,
                (SELECT max(a2.last_seen) FROM activations a2
-                 WHERE a2.license_id = l.id) AS last_seen
+                 WHERE a2.license_id = l.id) AS last_seen,
+               COALESCE((
+                   SELECT count(*) FROM activations a3
+                   WHERE a3.license_id = l.id
+                     AND a3.last_seen > now() - INTERVAL '10 minutes'
+               ), 0) AS devices_online
         FROM licenses l
         LEFT JOIN activations a ON a.license_id = l.id
         GROUP BY l.id

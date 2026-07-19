@@ -204,6 +204,17 @@ def validate_token_offline(token: str) -> dict:
         return {'ok': False}
 
 
+def clear_token_cache():
+    """Smaze cachovany token. Vola se, kdyz server licenci odmitne —
+    jinak by stary token umoznil beh i s neplatnym klicem."""
+    try:
+        if os.path.exists(TOKEN_FILE):
+            os.remove(TOKEN_FILE)
+            print("  Cache tokenu smazána.")
+    except Exception as exc:
+        print(f"  Cache tokenu nelze smazat: {exc}")
+
+
 def check_license() -> tuple[bool, str]:
     """
     Hlavní validační funkce.
@@ -238,27 +249,32 @@ def check_license() -> tuple[bool, str]:
         print(f"  ✓ Licence OK: {company} | Plan: {plan} | Platnost: {valid} | Seats: {seats_u}/{seats_t}")
         return True, f"✓ {company} · {plan.upper()} · platnost do {valid}"
 
-    # Online selhalo – zkus offline token
-    print(f"  Online validace selhala: {result.get('error', '?')}")
+    # ── Server licenci VYSLOVNE odmitl ──
+    # Neplatny, pozastaveny nebo vyprseny klic = tvrdy konec.
+    # Cache tokenu tohle NESMI prebit, jinak by stacilo mit stary token.
+    err = result.get('error', 'Neznámá chyba')
+    unreachable = ('Cannot reach' in err) or ('connect' in err.lower())
+
+    if not unreachable:
+        print(f"  ✗ Licence odmítnuta serverem: {err}")
+        clear_token_cache()
+        return False, f"❌ {err}"
+
+    # ── Server je nedostupny ──
+    # Tady tolerance dava smysl: samotne skenovani se stejne autorizuje
+    # online pri kazdem skenu, takze bez site se nic neodskenuje.
+    print(f"  Licenční server nedostupný: {err}")
     cached = load_token_cache()
     if cached:
         offline = validate_token_offline(cached)
         if offline.get('ok'):
             SESSION_TOKEN = cached
-            print(f"  ✓ Offline token platný (do {datetime.datetime.fromtimestamp(offline.get('exp',0))})")
-            return True, f"✓ Offline mode · token platný 24h"
+            exp = datetime.datetime.fromtimestamp(offline.get('exp', 0))
+            print(f"  ✓ Offline token platný do {exp}")
+            return True, f"⚠ Offline režim · skenování bude nedostupné"
 
-    # Pokud licence.key existuje ale server není dostupný → DEV MODE
-    # (dočasné chování do nasazení Railway API)
-    err = result.get('error', '')
-    if 'Cannot reach' in err or 'connect' in err.lower():
-        print(f"  ⚠ Licence server nedostupný – spouštím v DEV MODE")
-        print(f"  ⚠ Po nasazení Railway API bude vyžadována online validace")
-        return True, f"⚠ DEV MODE (licence server offline) · klíč: {LICENSE_KEY[:12]}..."
-
-    # Klíč je neplatný nebo vypršel
-    err = result.get('error', 'Neznámá chyba')
-    return False, f"❌ {err}"
+    return False, ("❌ Licenční server je nedostupný a nemáš platný offline token. "
+                   "Zkontroluj připojení k internetu.")
 
 usb_event_queue = queue.Queue()
 connected_devices = {}
@@ -9291,8 +9307,24 @@ if __name__ == '__main__':
     lic_ok, lic_msg = check_license()
     print(f"  Licence: {lic_msg}")
     if not lic_ok:
-        print("  ⚠ Licence nenalezena – server poběží v aktivačním módu")
-        print("  ⚠ Otevři prohlížeč a zadej licenční klíč")
+        print("")
+        print("  " + "─" * 50)
+        print("  APLIKACE SE NESPUSTÍ")
+        print("  " + "─" * 50)
+        print(f"  {lic_msg}")
+        print("")
+        print("  Co s tím:")
+        print("   1. Zkontroluj soubor 'licence.key' vedle aplikace")
+        print("   2. Ověř, že klíč sedí s tím z e-mailu po nákupu")
+        print("   3. Zkontroluj připojení k internetu")
+        print("")
+        print("   Podpora: info@isupply.cz")
+        print("  " + "─" * 50)
+        try:
+            input("\n  Stiskni Enter pro ukončení...")
+        except Exception:
+            time.sleep(20)
+        _sys.exit(1)
 
     _check_apple_driver()
     init_db()

@@ -192,7 +192,7 @@
           <th>Firma</th>
           <th>Email</th>
           <th>Plán</th>
-          <th>Zařízení</th>
+          <th>PC</th>
           <th>Skeny</th>
           <th>Platnost</th>
           <th>Stav</th>
@@ -275,7 +275,7 @@ async function load() {
   document.getElementById('s-total').textContent   = allLicenses.length;
   document.getElementById('s-active').textContent  = allLicenses.filter(l=>licStatus(l)==='active').length;
   document.getElementById('s-expired').textContent = allLicenses.filter(l=>licStatus(l)==='expired'||licStatus(l)==='suspended').length;
-  document.getElementById('s-seats').textContent   = allLicenses.reduce((a,l)=>a+(parseInt(l.seats_used)||0),0);
+  document.getElementById('s-seats').textContent   = allLicenses.reduce((a,l)=>a+(parseInt(l.devices_online)||0),0);
 
   // Audit log
   const lr = await apiFetch('/api/admin/log');
@@ -300,8 +300,7 @@ function renderTable(list) {
         ? `<span style="color:var(--yellow);font-family:var(--mono);font-size:11px">⚠ ${l.valid_until} (${days}d)</span>`
         : `<span style="font-family:var(--mono);font-size:11px">${l.valid_until}</span>`;
     const seatsUsed = parseInt(l.seats_used)||0;
-    const seatsTotal = parseInt(l.seats)||1;
-    const seatsColor = seatsUsed >= seatsTotal ? 'color:var(--red)' : seatsUsed > 0 ? 'color:var(--green)' : '';
+    const devOnline  = parseInt(l.devices_online)||0;
 
     // ── Zustatek skenu: mesicni kvota + dokoupene kredity ──
     const scansUsed  = parseInt(l.scans_used)||0;
@@ -343,8 +342,8 @@ function renderTable(list) {
       <td style="font-size:12px;color:var(--text-dim)">${l.email||'—'}</td>
       <td><span class="badge badge-${l.plan}">${l.plan}</span></td>
       <td>
-        <button class="btn-sm" onclick="openDevices(${l.id},'${l.license_key}')" style="${seatsColor}">
-          💻 ${seatsUsed}/${seatsTotal}
+        <button class="btn-sm" onclick="openDevices(${l.id},'${l.license_key}')" title="Počet počítačů (bez limitu)">
+          💻 ${seatsUsed}${devOnline ? `<span style="color:var(--green);font-weight:600"> · ${devOnline} online</span>` : ''}
         </button>
       </td>
       <td>${scansCell}</td>
