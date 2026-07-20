@@ -365,10 +365,10 @@ def admin_create_license():
         return jsonify({'ok': False, 'error': 'Unauthorized'}), 403
     data = request.get_json() or {}
 
-    # Vygeneruj unikátní klíč
-    key = 'ISUP-' + '-'.join(
-        secrets.token_hex(2).upper() for _ in range(3)
-    )
+    # Vygeneruj unikátní klíč — stejný formát ISPL-XXXX-XXXX-XXXX
+    # jako po Stripe platbě (generator je jen v provisioning.py).
+    from provisioning import generate_licence_key
+    key = generate_licence_key()
 
     conn = get_db()
     c    = conn.cursor()
