@@ -6316,7 +6316,6 @@ async def _hardware_report_collect(udid):
     components = {
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
-        "mainboard": from_comp("mainboard", "Základní deska"),
         "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
     }
 
@@ -6369,7 +6368,6 @@ async def _hardware_report_collect(udid):
         "wifi_sn": _hw_field("Wi-Fi SN", lv("WirelessBoardSerialNumber"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
         "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
-        "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
     }
 
     # ── DISPLEJ ──
@@ -6384,21 +6382,20 @@ async def _hardware_report_collect(udid):
     if _faceid_new_gen:
         display["proximity_flex"] = from_comp("distance_sensor", "Proximity / display flex")
 
-    # ── ÚLOŽIŠTĚ / HARDWARE ──
-    storage = {
-        "mainboard_serial": _hw_field("Sériové číslo desky (MLB)", lv("MLBSerialNumber", "LogicBoardSerialNumber"), "lockdown"),
-    }
-
     # ── MOBILNÍ DATA (kartičky – klíčové indikátory aktivace/datové sítě) ──
     mobile_data = {
         "modem_firmware": _hw_field("Modem firmware (Baseband)", lv("BasebandVersion"), "lockdown"),
         "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+        "mainboard": from_comp("mainboard", "Základní deska"),
+        "wifi_sn": _hw_field("Wi-Fi SN", lv("WirelessBoardSerialNumber"), "lockdown"),
+        "wifi_address": _hw_field("Wi-Fi adresa (MAC)", lv("WiFiAddress", "WifiAddress"), "lockdown"),
+        "bluetooth_address": _hw_field("Bluetooth adresa (MAC)", lv("BluetoothAddress"), "lockdown"),
     }
 
     sections = {
         "device": device, "cameras": cameras, "face_id": face_id, "mobile_data": mobile_data,
         "components": components, "battery": battery_diag,
-        "connectivity": connectivity, "display": display, "storage": storage,
+        "connectivity": connectivity, "display": display,
     }
     total = sum(len(s) for s in sections.values())
     available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
