@@ -1368,6 +1368,17 @@ const TEST_DEFS = [
 // TESTS is always fresh with current language
 function getTests() { return TEST_DEFS.map(d => ({...d, name: t(d.tkey)})); }
 
+// Touch ID mají jen iPhone 8 / 8 Plus a řada SE — všechno od iPhonu X výš je Face ID.
+// Popisek i ikona testu se volí podle konkrétního připojeného modelu.
+function biometryLabel(model) {
+  return /iPhone\s*(5|6|7|8|SE)/i.test(String(model || '')) ? 'Touch ID' : 'Face ID';
+}
+function biometryIcon(model) {
+  return biometryLabel(model) === 'Touch ID'
+    ? '<svg class="ti"><use href="#i-touchid"/></svg>'
+    : '<svg class="ti"><use href="#i-face"/></svg>';
+}
+
 function statusIcon(s) { return s==='pass'?'✅':s==='fail'?'❌':s==='warn'?'⚠️':''; }
 function batteryCondition(p) {
   if (!p || p <= 0 || p > 100) return '—';
@@ -1498,7 +1509,9 @@ function renderBody(slot) {
   if (slot.state !== 'empty' && slot.state !== 'connected') {
     testsHTML = '<div class="test-list">' + getTests().map(tst => {
       const r = slot.tests.find(x=>x.id===tst.id);
-      if (!r) return `<div class="test-item pending"><span class="test-name">${tst.icon} ${tst.name}</span><span class="test-value pending">—</span></div>`;
+      const tname = tst.id === 'touchid' ? biometryLabel(d.model) : tst.name;
+      const ticon = tst.id === 'touchid' ? biometryIcon(d.model) : tst.icon;
+      if (!r) return `<div class="test-item pending"><span class="test-name">${ticon} ${tname}</span><span class="test-value pending">—</span></div>`;
       let val;
       if (tst.id==='battery' && (r.status==='pass'||r.status==='warn')) {
         // Baterie ve slotu: jen "procenta / cykly" (bez slovní kondice)
@@ -1515,7 +1528,7 @@ function renderBody(slot) {
       else val = '—';
       const icon = r.status!=='running' ? statusIcon(r.status) : '';
       const valCls = r.status==='fail'?'changed':r.status==='warn'?'warn':r.status==='pass'?'ok':'pending';
-      return `<div class="test-item ${r.status}"><span class="test-name ${r.status}">${tst.icon} ${tst.name}${r.status==='running'?'<span class="spinner"></span>':''}</span><span class="test-value ${valCls}">${icon?icon+' ':''}${val}</span></div>`;
+      return `<div class="test-item ${r.status}"><span class="test-name ${r.status}">${ticon} ${tname}${r.status==='running'?'<span class="spinner"></span>':''}</span><span class="test-value ${valCls}">${icon?icon+' ':''}${val}</span></div>`;
     }).join('') + '</div>';
   }
   const progressHTML = slot.state==='testing' ? `<div class="progress-wrap"><div class="progress-bar" style="width:${slot.progress}%"></div></div>` : '';
@@ -1862,7 +1875,8 @@ function labelParts(slot) {
   const ids = ['mainboard','display','touchid','camera_b','camera_f','wifi','bluetooth','charging'];
   return ids.map(id => {
     const r = (slot.tests||[]).find(x=>x.id===id);
-    const name = getTests().find(x=>x.id===id)?.name || id;
+    const name = id === 'touchid' ? biometryLabel(slot.device && slot.device.model)
+               : (getTests().find(x=>x.id===id)?.name || id);
     const ok = r && r.status==='pass';
     return `<span style="white-space:nowrap;margin-right:7px;color:${ok?'#15803d':'#dc2626'}">${ok?'\u2713':'\u2717'} ${name}</span>`;
   }).join('');
