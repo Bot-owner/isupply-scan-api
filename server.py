@@ -1204,6 +1204,7 @@ _COMPONENT_SERIAL_LABELS = {
     "tele_camera": "Teleobjektiv",
     "ultrawide_camera": "Ultraširokoúhlá kamera",
     "front_ir_camera": "Přední IR kamera",
+    "touch_id": "Touch ID (Mesa)",
     "true_depth_projector": "Dot projektor (Lattice)",
     "distance_sensor": "Distance Sensor",
     "ambient_light_sensor": "Ambient Light Sensor",
@@ -1222,7 +1223,7 @@ _COMPONENT_SERIAL_GROUPS = {
         "rear_camera", "front_camera", "tele_camera", "ultrawide_camera",
         "front_ir_camera", "true_depth_projector"]},
     "sensors": {"label": "Senzory", "components": [
-        "distance_sensor", "ambient_light_sensor"]},
+        "distance_sensor", "ambient_light_sensor", "touch_id"]},
     "display": {"label": "Displej", "components": ["screen"]},
     "connectivity": {"label": "Konektivita", "components": ["wifi", "bluetooth", "cellular"]},
     "hardware": {"label": "Hardware", "components": [
@@ -1743,6 +1744,11 @@ async def _read_hw_sources(udid):
     als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
     vibrator = await read_all("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
     nand = await read_all("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
+    # TOUCH ID (Mesa). Uzly zatim NEJSOU overene na fyzickem kusu - ctou se jako
+    # kandidati a dokud se netrefime, komponenta zustane "unavailable".
+    # Presny uzel se potvrdi pres /api/serial-trace/<udid>?value=<SN z JCID>.
+    touchid = await read_all("touchid", ("AppleMesa", "AppleMesaSEPDriver", "Mesa",
+                                         "AppleBiometricSensor", "AppleBiometricServices"))
 
     io_service = {}
     try:
@@ -1764,6 +1770,7 @@ async def _read_hw_sources(udid):
     return {"values": values, "camera": camera, "pearl": pearl,
             "clcd": clcd, "battery": battery, "proximity": proximity,
             "als": als, "vibrator": vibrator, "nand": nand,
+            "touchid": touchid,
             "io_service": io_service, "errors": errors}
 
 
@@ -1921,7 +1928,39 @@ def _prox_variant_for(product_type):
 # komponenta na dane generaci FYZICKY existuje (rozlisi "unavailable" od
 # "not_applicable"). Proximity slot je vzdy applicable - jen meni variantu
 # (distance vs. front flex), takze se zde neresi.
+# ── TOUCH ID vs FACE ID ──────────────────────────────────────────────────────
+# Touch ID ma iPhone 6s/7/8/8 Plus a cela rada SE. Face ID zacina iPhonem X.
+# Pozor: iPhone10,1/2/4/5 = iPhone 8 (Touch ID), ale iPhone10,3/6 = iPhone X
+# (Face ID) - podle major cisla to rozlisit NELZE, proto explicitni seznam.
+_TOUCH_ID_PRODUCT_TYPES = {
+    "iPhone8,4",                                     # SE (2016)
+    "iPhone12,8",                                    # SE (2020)
+    "iPhone14,6",                                    # SE (2022)
+    "iPhone10,1", "iPhone10,2", "iPhone10,4", "iPhone10,5",   # 8 / 8 Plus
+}
+
+# Komponenty TrueDepth modulu - na Touch ID telefonech fyzicky neexistuji.
+_FACE_ID_ONLY = ("front_ir_camera", "true_depth_projector")
+
+
+def _has_touch_id(product_type):
+    pt = str(product_type or "").strip()
+    if pt in _TOUCH_ID_PRODUCT_TYPES:
+        return True
+    major = _iphone_major(pt)
+    # iPhone 6s (iPhone8,1/8,2) a 7 (iPhone9,x) - vse pod X ma Touch ID.
+    return bool(major is not None and major <= 9)
+
+
 def _component_applicable(comp_key, product_type):
+    if not product_type:
+        return True
+    touch = _has_touch_id(product_type)
+    if comp_key in _FACE_ID_ONLY:
+        # Bez TrueDepth modulu nema smysl hlasit chybejici hodnotu jako zavadu.
+        return not touch
+    if comp_key == "touch_id":
+        return touch
     return True
 
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
@@ -1942,6 +1981,7 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
         "als": sources.get("als", {}),
         "vibrator": sources.get("vibrator", {}),
         "nand": sources.get("nand", {}),
+        "touchid": sources.get("touchid", {}),
         "IOService": sources.get("io_service", {}),
         # Lockdown je zpristupnen VYHRADNE pro mainboard (exact klic MLBSerialNumber).
         # Nikdy se z nej nehleda generic SerialNumber (to je device SN) - zadny
@@ -2009,6 +2049,13 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
             ("ModuleSerial", "ModuleSerialNumber", "VibratorSerialNumber",
              "VibratorNumber", "TapticEngineSerialNumber", "HapticSerialNumber",
              "RosalineSerialNumber")),
+        "touch_id": (
+            # NEOVERENO na fyzickem kusu - kandidatni uzly i klice. Generic
+            # "SerialNumber" je zamerne az posledni a hodnota shodna s device SN
+            # se zahazuje (viz kontrola nize), aby se nehlasil device serial.
+            ("touchid", "IOService"),
+            ("MesaSerialNumber", "TouchIDSerialNumber", "BiometricSerialNumber",
+             "ModuleSerialNumber", "ModuleSerial", "SerialNumber")),
         "nand": (
             # Best-effort: NAND uzly (AppleANS2NVMeController apod.) na mnoha
             # generacich/iOS verzich nevraci pojmenovany vlastni objekt (fallback
@@ -6328,13 +6375,20 @@ async def _hardware_report_collect(udid):
         "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
     }
 
-    # ── FACE ID (do iPhone 12 vč. Distance senzoru; od iPhone 13 jen IR + Dot) ──
-    face_id = {
-        "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
-        "front_ir_camera": from_comp("front_ir_camera", "IR kamera"),
-    }
-    if not _faceid_new_gen:
-        face_id["distance_sensor"] = from_comp("distance_sensor", "Distance senzor")
+    # ── BIOMETRIE ──
+    # Touch ID telefony (8/8 Plus/SE, 6s, 7) NEMAJI TrueDepth modul, takze IR
+    # kamera ani Dot projektor se u nich necetou - hlasily by falesnou zavadu.
+    _touch_id_device = _has_touch_id(_pt)
+    if _touch_id_device:
+        face_id = {"touch_id": from_comp("touch_id", "Touch ID (Mesa)")}
+    else:
+        # Face ID: do iPhone 12 vc. Distance senzoru; od iPhone 13 jen IR + Dot.
+        face_id = {
+            "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
+            "front_ir_camera": from_comp("front_ir_camera", "IR kamera"),
+        }
+        if not _faceid_new_gen:
+            face_id["distance_sensor"] = from_comp("distance_sensor", "Distance senzor")
 
     # ── BATERIE (diagnostika – jen to, co ioreg realne vyda) ──
     def _int_or_none(v):
@@ -6405,6 +6459,7 @@ async def _hardware_report_collect(udid):
         "device": device, "cameras": cameras, "face_id": face_id, "mobile_data": mobile_data,
         "components": components, "battery": battery_diag,
         "connectivity": connectivity, "display": display,
+        "biometry_kind": ("touch_id" if _touch_id_device else "face_id"),
     }
     total = sum(len(s) for s in sections.values())
     available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
