@@ -1984,10 +1984,15 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
             ("als", "IOService"),
             ("AmbientLightSensorSerialNumber", "ALSSerialNumber",
              "AmbientLightSerialNumber", "ModuleSerial", "SerialNumber")),
+        # DISPLEJ: na iOS 17.4+ zmizel MobileGestalt a od iOS 26 je spravny\r
+        # uzel AppleCLCD2 (ne AppleCLCD). Poradi napovid je od nejnovejsi\r
+        # generace k nejstarsi, aby se iPhone 15/16 trefil hned napoprve.
         "screen": (
-            ("display", "IOService"),
-            ("Panel_ID", "PanelID", "DisplaySerialNumber", "ScreenSerialNumber",
-             "PanelSerialNumber")),
+            ("AppleCLCD2", "AppleCLCD", "IOMobileFramebuffer", "display", "IOService"),
+            ("DisplaySerialNumber", "PanelSerialNumber", "ScreenSerialNumber",
+             "DisplaySerialNumString", "PanelSerialNumString",
+             "SerialNumber", "ModuleSerialNumber",
+             "Panel_ID", "PanelID")),
         "battery": (
             ("battery",),
             ("BatterySerialNumber", "SerialNumber", "Serial")),
@@ -3714,6 +3719,81 @@ def _dot_score(path, key):
                "pearl": 5, "factory": 10, "exfactory": 14, "serial": 6,
                "calibration": 5, "module": 3, "current": 2}
     return sum(weight for token, weight in weights.items() if token in hay)
+
+async def _serial_trace_collect(udid, needle):
+    """
+    Najde KAZDY vyskyt zadane hodnoty v IORegistry vcetne cesty a klice.
+    Slouzi k dohledani, ze ktereho zdroje hodnota pochazi — bez toho
+    nelze rozhodnout, jestli je rozdil skutecna vymena dilu, nebo jen
+    dva ruzne klice s temer stejnou hodnotou.
+    """
+    import inspect
+    needle_up = (needle or "").strip().upper()
+    hits = []
+    ld, diag = await _open_diag(udid)
+    try:
+        tree = await diag.ioregistry(plane="IOService")
+        if not isinstance(tree, dict):
+            return {"ok": False, "udid": udid, "error": "IOService nevratil dict"}
+
+        def walk(node, path=""):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    p = f"{path}/{k}" if path else str(k)
+                    if isinstance(v, (dict, list)):
+                        walk(v, p)
+                    else:
+                        try:
+                            sval = v.decode("ascii", "ignore") if isinstance(v, bytes) else str(v)
+                        except Exception:
+                            continue
+                        if needle_up and needle_up in sval.upper():
+                            hits.append({"path": path, "key": str(k),
+                                         "value": sval,
+                                         "type": type(v).__name__})
+            elif isinstance(node, list):
+                for i, v in enumerate(node):
+                    walk(v, f"{path}[{i}]")
+
+        walk(tree)
+    except Exception as exc:
+        return {"ok": False, "udid": udid, "error": f"{type(exc).__name__}: {exc}"}
+    finally:
+        for _o in (diag, ld):
+            for _m in ("close", "aclose", "disconnect"):
+                _f = getattr(_o, _m, None)
+                if _f:
+                    try:
+                        _r = _f()
+                        if inspect.isawaitable(_r):
+                            await _r
+                    except Exception:
+                        pass
+                    break
+
+    # seskupit podle hodnoty — hned je videt, ktere klice se lisi
+    by_value = {}
+    for h in hits:
+        by_value.setdefault(h["value"], []).append(f"{h['path']}/{h['key']}")
+
+    return {"ok": True, "udid": udid, "needle": needle,
+            "count": len(hits), "hits": hits,
+            "distinct_values": {v: srcs for v, srcs in by_value.items()}}
+
+
+@app.route('/api/serial-trace/<udid>', methods=['GET'])
+def api_serial_trace(udid):
+    """?value=A3F6  → vypise vsechny klice v IORegistry obsahujici tuto hodnotu."""
+    needle = (request.args.get('value') or '').strip()
+    if len(needle) < 4:
+        return jsonify({'ok': False, 'error': 'Zadej ?value= s aspon 4 znaky'}), 200
+    try:
+        result = _run_async_isolated(_serial_trace_collect(udid, needle), timeout=180)
+        return jsonify(result), 200
+    except Exception as exc:
+        return jsonify({'ok': False, 'udid': udid,
+                        'error': f'{type(exc).__name__}: {exc}'}), 200
+
 
 async def _dot_projector_factory_probe_collect(udid):
     import inspect
@@ -6647,7 +6727,7 @@ def api_reset_password():
 
     if not license_key or not username or not new_password:
         return jsonify({'ok': False, 'error': 'Missing fields'}), 400
-    if not license_key.startswith('ISUP-'):
+    if not license_key.startswith(('ISPL-', 'ISUP-')):
         return jsonify({'ok': False, 'error': 'Invalid licence key format'}), 400
     if len(new_password) < 4:
         return jsonify({'ok': False, 'error': 'Password too short'}), 400
@@ -6715,7 +6795,7 @@ def api_activate():
 
     if not license_key or not username or not password:
         return jsonify({'ok': False, 'error': 'Missing fields'}), 400
-    if not license_key.startswith('ISUP-'):
+    if not license_key.startswith(('ISPL-', 'ISUP-')):
         return jsonify({'ok': False, 'error': 'Invalid licence key format'}), 400
 
     # Overeni klice na Railway API
