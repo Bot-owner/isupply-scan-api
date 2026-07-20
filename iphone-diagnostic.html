@@ -2250,6 +2250,230 @@ const HW_SECTIONS = [
   {key:'storage',      icon:'<svg class="ti"><use href="#i-storage"/></svg>', label:'Úložiště / hardware', kind:'rows'},
 ];
 
+/* ═══════════════════════════════════════════════════════════════════
+   iSupply Scan — odhad příčiny závady
+
+   Nevypisuje jen seznam možností. Nejdřív se podívá na výsledky VŠECH
+   komponent a podle jejich kombinace určí, co je nejpravděpodobnější.
+
+   Základní úvaha technika, kterou to napodobuje:
+     · nefunguje víc kamer naráz  → chyba je společná, tedy základní deska
+     · nefunguje jedna kamera     → chyba je v modulu, flexu nebo konektoru
+     · vypadl baseband/IMEI/WiFi  → rozlepené vrstvy desky nebo řídicí čip
+   ═══════════════════════════════════════════════════════════════════ */
+
+const FAULT_ENGINE = (function () {
+
+  // Stavy, které bereme jako "nefunkční / nepřečteno"
+  const BAD = ['POSSIBLE_FAULT', 'CURRENT_VALUE_UNAVAILABLE', 'UNAVAILABLE'];
+
+  function isBad(c) {
+    if (!c) return false;
+    if (c.status !== undefined && c.status !== null) return BAD.includes(c.status);
+    if (c.available === false) return true;
+    return false;
+  }
+
+  /* ── Sběr kontextu napříč všemi sekcemi reportu ────────────────── */
+  function buildContext(report) {
+    const all = {};
+    const push = (k, v) => { if (v && !all[k]) all[k] = v; };
+
+    (report && report.sections ? report.sections : []).forEach(sec => {
+      const items = sec.items || sec.cards || sec.rows || [];
+      (Array.isArray(items) ? items : Object.entries(items).map(([k, v]) => ({ key: k, ...v })))
+        .forEach(it => push(it.key || it.id, it));
+    });
+
+    // Fallback: report může přijít i jako plochá mapa
+    if (report && report.components && !Object.keys(all).length) {
+      Object.entries(report.components).forEach(([k, v]) => push(k, v));
+    }
+
+    const camKeys = ['rear_camera', 'tele_camera', 'front_camera'];
+    const badCams = camKeys.filter(k => isBad(all[k]));
+
+    // Teleobjektiv a zadní kamera sdílí jeden modul → počítáme je jako
+    // jednu jednotku. Deska je podezřelá teprve, když selže i přední
+    // nebo IR kamera, tedy nezávislý modul na druhé straně telefonu.
+    const rearGroupBad = isBad(all.rear_camera) || isBad(all.tele_camera);
+    const frontBad = isBad(all.front_camera);
+    const irBad = isBad(all.front_ir_camera);
+    const multiSideFailure = (rearGroupBad && frontBad) ||
+                             (rearGroupBad && irBad) ||
+                             (frontBad && irBad);
+
+    return { all, badCams, rearGroupBad, frontBad, irBad, multiSideFailure };
+  }
+
+  /* ── Pravidla pro jednotlivé komponenty ────────────────────────── */
+  function analyze(key, comp, ctx) {
+    const boardHint = {
+      headline: 'S vysokou pravděpodobností jde o závadu základní desky.',
+      detail: 'Současně je nefunkčních více kamerových modulů na různých ' +
+              'stranách zařízení. Společnou příčinou bývá řídicí obvod nebo ' +
+              'rozlepený propoj na základní desce, ne samotné moduly.',
+      level: 'high',
+    };
+
+    switch (key) {
+
+      /* ── Přední kamera ── */
+      case 'front_camera':
+        if (ctx.multiSideFailure) return boardHint;
+        return {
+          headline: 'Nejpravděpodobněji vadný modul, flex nebo konektor.',
+          detail: 'Ostatní kamery odpovídají, takže závada je nejspíš ' +
+                  'omezená na tento modul.',
+          causes: ['vadný konektor nebo flex kabel',
+                   'poškozený modul, často po vytopení',
+                   'závada na základní desce (méně pravděpodobná)'],
+          level: 'medium',
+        };
+
+      /* ── Zadní kamery ── */
+      case 'rear_camera':
+      case 'tele_camera': {
+        if (ctx.multiSideFailure) return boardHint;
+        const note = key === 'tele_camera'
+          ? 'Teleobjektiv sdílí modul se zadní kamerou. Projeví se obvykle ' +
+            'nefunkčním zoomem v určitém režimu, ne výpadkem celého fotoaparátu.'
+          : 'Zadní kamera může vyřadit celý kamerový modul včetně teleobjektivu.';
+        return {
+          headline: 'Nejpravděpodobněji vadný kamerový modul.',
+          detail: 'Selhala jen jedna strana zařízení, což ukazuje spíš na modul ' +
+                  'než na společnou příčinu na desce. ' + note,
+          causes: ['vadný kamerový modul',
+                   'poškození po vytopení',
+                   'vadný konektor nebo flex',
+                   'závada základní desky (méně pravděpodobná)'],
+          level: 'medium',
+        };
+      }
+
+      /* ── IR kamera ── */
+      case 'front_ir_camera':
+        if (ctx.multiSideFailure) return {
+          headline: 'Zvýšená pravděpodobnost závady základní desky.',
+          detail: 'Nefunguje víc kamerových modulů naráz. IR kamera má sice ' +
+                  'vlastní řídicí obvod, takže deska je u ní méně častou ' +
+                  'příčinou než u běžných kamer, ale kombinace výpadků na ni ukazuje.',
+          causes: ['závada na základní desce', 'poškozený modul', 'přerušený flex'],
+          level: 'high',
+        };
+        return {
+          headline: 'Nejpravděpodobněji poškozený modul nebo flex.',
+          detail: 'IR kamera má vlastní řídicí obvod, proto je závada základní ' +
+                  'desky méně častá než u běžných kamer.',
+          causes: ['poškozený modul', 'vytopení', 'přerušený flex',
+                   'vadný řídicí obvod IR kamery'],
+          level: 'medium',
+        };
+
+      /* ── Dot projektor ── */
+      case 'true_depth_projector':
+        return {
+          headline: 'S velmi vysokou pravděpodobností je poškozen přímo Dot projektor.',
+          detail: 'Tento díl je nejcitlivější částí Face ID. Ve více než 99 % ' +
+                  'případů je závada uvnitř modulu, ne na desce. Bývá poškozen ' +
+                  'i po lehké oxidaci nebo pádu.',
+          causes: ['oxidace po kontaktu s vodou',
+                   'lehké vytopení',
+                   'poškození po pádu',
+                   'nesprávná poloha modulu (vzácné, do 1 %)'],
+          level: 'high',
+        };
+
+      /* ── Senzor okolního světla ── */
+      case 'ambient_light_sensor':
+      case 'distance_sensor':
+        return {
+          headline: 'Nejpravděpodobněji oxidace nebo poškozený flex.',
+          detail: 'Senzor je umístěný u sluchátka, kam se vlhkost dostane ' +
+                  'nejsnáz. Praskliny na flexu sluchátka jsou druhou nejčastější příčinou.',
+          causes: ['oxidace', 'vytopení', 'prasklý flex sluchátka',
+                   'poškození samotného modulu'],
+          level: 'medium',
+        };
+
+      /* ── Baterie ── */
+      case 'battery':
+        return {
+          headline: 'Problém nemusí být v samotné baterii.',
+          detail: 'Chybějící identifikace baterie stejně často způsobuje ' +
+                  'komunikační cesta na desce jako článek samotný.',
+          causes: ['vadné BMS baterie',
+                   'vadný BSI obvod na základní desce',
+                   'špatný kontakt konektoru baterie'],
+          level: 'medium',
+        };
+
+      /* ── Baseband, IMEI, Wi-Fi, Bluetooth ── */
+      case 'modem_firmware':
+      case 'imei':
+      case 'imei2':
+      case 'wifi_serial':
+      case 'wifi_mac':
+      case 'bluetooth_mac': {
+        const chip = {
+          modem_firmware: 'Baseband IC',
+          imei: 'Baseband IC',
+          imei2: 'Baseband IC',
+          wifi_serial: 'Wi-Fi IC',
+          wifi_mac: 'Wi-Fi IC',
+          bluetooth_mac: 'Bluetooth IC',
+        }[key] || 'příslušný řídicí čip';
+        return {
+          headline: 'Nejčastěji rozlepené vrstvy základní desky nebo vadný ' + chip + '.',
+          detail: 'Popraskané propoje mezi horní a spodní částí desky jsou ' +
+                  'nejčastější závadou zejména u donor desek. Bez funkčního ' +
+                  'basebandu nebudou fungovat mobilní data.',
+          causes: ['rozlepené vrstvy základní desky',
+                   'popraskané interposer propoje mezi deskami',
+                   'vadný ' + chip],
+          level: 'high',
+        };
+      }
+
+      default:
+        return null;
+    }
+  }
+
+  /* ── Vykreslení ────────────────────────────────────────────────── */
+  function render(key, comp, ctx) {
+    if (!isBad(comp)) return '';
+    const r = analyze(key, comp, ctx);
+    if (!r) return '';
+
+    const tone = r.level === 'high'
+      ? { bd: '#fecaca', bg: '#fff5f5', fg: '#b91c1c' }
+      : { bd: '#fde68a', bg: '#fffbeb', fg: '#b45309' };
+
+    const causes = (r.causes || []).length
+      ? `<ul style="margin:6px 0 0;padding-left:15px;color:#6b7280;line-height:1.55">
+           ${r.causes.map(c => `<li>${c}</li>`).join('')}
+         </ul>` : '';
+
+    return `
+      <div class="fault-hint" style="margin-top:9px;padding:9px 11px;border-radius:9px;
+           border:1px solid ${tone.bd};background:${tone.bg};font-size:10.5px;line-height:1.5">
+        <div style="font-weight:700;color:${tone.fg};margin-bottom:3px">
+          ${r.level === 'high' ? 'Pravděpodobná příčina' : 'Možná příčina'}
+        </div>
+        <div style="color:#3a4457">${r.headline}</div>
+        ${r.detail ? `<div style="color:#6b7280;margin-top:4px">${r.detail}</div>` : ''}
+        ${causes}
+      </div>`;
+  }
+
+  return { buildContext, render, isBad, analyze };
+})();
+
+
+// globalni kontext posledniho reportu
+let FAULT_CTX = { all:{}, badCams:[], multiSideFailure:false };
+
 function renderComponentCard(key, c) {
   const icon = COMPONENT_ICONS[key] || '<svg class="ti"><use href="#i-board"/></svg>';
   const hasVerification = c.status !== undefined && c.status !== null;
@@ -2280,6 +2504,7 @@ function renderComponentCard(key, c) {
         <div>Aktuální: <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
       </div>
       ${c.status === 'POSSIBLE_FAULT' && c.note ? `<div style="margin-top:6px;font-size:10.5px;color:#b45309;line-height:1.4">${esc(c.note)}</div>` : ''}
+      ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
     </div>`;
   }
   return `<div style="border:1.5px solid ${c.available?'#e8e8e8':'#fde68a'};border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fffbeb'}">
@@ -2290,6 +2515,7 @@ function renderComponentCard(key, c) {
     <div style="font-family:var(--mono,monospace);font-size:12.5px;${c.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'};word-break:break-all">
       ${c.available ? esc(c.value) : 'nedostupné'}
     </div>
+    ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
   </div>`;
 }
 
@@ -2375,6 +2601,16 @@ async function openComponentSerialsModal(id) {
       return;
     }
     body.style.padding = '0'; body.style.textAlign = 'left';
+
+    // Nejdriv posbirej vysledky VSECH komponent — teprve pak se da rozhodnout,
+    // jestli je pricinou spolecna deska, nebo jednotlivy modul.
+    FAULT_CTX = FAULT_ENGINE.buildContext({
+      sections: Object.entries(r.sections).map(([k, v]) => ({
+        key: k,
+        items: Object.entries(v).map(([ik, iv]) => ({ key: ik, ...iv })),
+      })),
+    });
+
     body.innerHTML = HW_SECTIONS.map(sec => {
       const data = r.sections[sec.key];
       if (!data || !Object.keys(data).length) return '';
