@@ -1427,6 +1427,20 @@ let printSlotId = null;
 let database = (() => { try { return JSON.parse(localStorage.getItem('isupply_db') || '[]') || []; } catch (e) { return []; } })();
 function saveDatabase() { try { localStorage.setItem('isupply_db', JSON.stringify(database)); } catch (e) {} }
 
+// Telefon, ktery uz v databazi je a prave se znovu pripojil:
+// zaznam se presune nahoru a na hodinu se lehce ruzove rozsviti.
+function markReconnected(imei) {
+  if (!imei || imei === '—' || imei === 'Načítání...') return false;
+  const i = database.findIndex(r => r.imei === imei);
+  if (i < 0) return false;
+  const [rec] = database.splice(i, 1);
+  rec._recon = Date.now();
+  database.unshift(rec);
+  saveDatabase();
+  if (document.getElementById('view-db') && document.getElementById('view-db').classList.contains('active')) renderDatabase();
+  return true;
+}
+
 // ═══ RENDER DIAGNOSTICS ═══
 function render() {
   document.getElementById('grid').innerHTML = slots.map(renderSlot).join('');
@@ -1465,16 +1479,14 @@ function renderBody(slot) {
   if (slot.state==='empty') return `<div class="empty-state"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="15" rx="2.6"/><path d="M10.5 4.4h3"/><path d="M12 17.5v2.2"/><path d="M9.4 21.5h5.2"/><path d="M12 19.7h.01"/></svg></div><div class="empty-text">${t('connect_iphone').replace('\n','<br>')}</div></div>`;
   const d = slot.device;
   const show = v => (!v||v==='N/A'||v==='—') ? '' : v;
-  const icloudBadge = d.icloud ? `<span style="background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;font-size:9px;padding:1px 5px;border-radius:3px;font-family:var(--mono);font-weight:600;margin-left:4px">🔒 iCloud</span>` : '';
   const imeiRow = `<div class="imei-row"><span class="imei-label">IMEI</span><span class="imei-value">${d.imei}</span></div>`;
   const deviceInfo = `<div class="device-info">
-    <div class="device-model">${d.model}${icloudBadge}</div>
+    <div class="device-model">${d.model}</div>
     <div class="device-sub" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px">
       ${show(d.a_number)?`<span style="color:var(--pink-dark);font-weight:600">${d.a_number}</span>`:''}
       ${show(d.storage)?`<span>${d.storage}</span>`:''}
       ${show(d.color)?`<span>${d.color}</span>`:''}
       ${show(d.region)?`<span style="color:#6b7280">${d.region}</span>`:''}
-      <span title="Spolehlivě jen přes online dotaz (Apple servery)" style="font-family:var(--mono);font-size:10px;padding:1px 6px;border-radius:3px;font-weight:600;border:1px solid ${d.icloud?'#fca5a5':'#d4d4d8'};color:${d.icloud?'#dc2626':'#9ca3af'};background:#fff;margin-left:4px">iCloud ${d.icloud?'ON':'?'}</span>
     </div>
     <div class="device-sub" style="margin-top:2px">
       ${show(d.ios)?`<span>iOS <strong style="color:var(--text)">${d.ios}</strong></span>`:''}
@@ -1549,7 +1561,8 @@ function renderDatabase() {
 
   tbody.innerHTML = database.map((r,i) => {
     const bc = battClass(r.battery);
-    return `<tr>
+    const recon = r._recon && (Date.now() - r._recon) < 3600000;
+    return `<tr${recon ? ' style="background:#fdf2f8"' : ''}>
       <td class="td-mono" style="color:var(--text-dim)">${i+1}</td>
       <td class="td-model">${r.model}</td>
       <td class="td-imei">${r.imei}</td>
@@ -2572,10 +2585,12 @@ async function openComponentSerialsModal(id) {
     m = document.createElement('div');
     m.id = 'comp-serials-modal';
     m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10000;display:flex;align-items:center;justify-content:center;padding:20px';
+    // Kliknuti mimo okno report zavre a vrati k prehledu testovani.
+    m.addEventListener('click', e => { if (e.target === m) m.style.display = 'none'; });
     document.body.appendChild(m);
   }
   m.style.display = 'flex';
-  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:720px;width:100%;max-height:88vh;overflow:auto;border-radius:16px;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
+  m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:720px;width:100%;max-height:88vh;overflow:auto;border-radius:0;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
       <div>
         <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Hardwarový report</div>
@@ -2754,6 +2769,7 @@ async function handleDeviceConnected(udid, info) {
   }
 
   const device = _mkDevice(udid, info);
+  markReconnected(device.imei);
   showToast(`${t('toast_detected')} ${device.model} (${device.a_number}) · IMEI: ${device.imei}`);
   connectDevice(emptySlot.id, device);
 }

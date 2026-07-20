@@ -272,7 +272,24 @@ def main():
     threading.Thread(target=apply_window_icon, daemon=True).start()
 
     try:
-        webview.start()
+        # Databaze naskenovanych telefonu zije v localStorage. Vychozi
+        # private_mode=True v pywebview uloziste po zavreni okna ZAHODI,
+        # proto persistentni slozka v LOCALAPPDATA (prezije i presun EXE).
+        _storage = os.path.join(
+            os.environ.get('LOCALAPPDATA') or _base_dir(),
+            'iSupply Scan', 'webview_data')
+        try:
+            os.makedirs(_storage, exist_ok=True)
+        except Exception:
+            _storage = None
+        try:
+            if _storage:
+                webview.start(private_mode=False, storage_path=_storage)
+            else:
+                webview.start(private_mode=False)
+        except TypeError:
+            # starsi pywebview tyto parametry nezna
+            webview.start()
     except Exception as exc:
         print(f"[launcher] okno se nepodarilo otevrit: {exc}")
         message_box(

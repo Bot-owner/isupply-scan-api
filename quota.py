@@ -44,9 +44,9 @@ CREDIT_VALIDITY_MONTHS = 12
 # Jednorázové balíčky: velikost -> (Stripe Price ID, cena v centech)
 CREDIT_PACKS = {
     10:  (os.environ.get("STRIPE_PRICE_CREDITS_10", ""), 100),   # ⚠️ testovací, neveřejný
-    100: (os.environ.get("STRIPE_PRICE_CREDITS_100", ""), 2900),
-    200: (os.environ.get("STRIPE_PRICE_CREDITS_200", ""), 5600),
-    500: (os.environ.get("STRIPE_PRICE_CREDITS_500", ""), 13800),
+    100: (os.environ.get("STRIPE_PRICE_CREDITS_100", ""), 3800),
+    200: (os.environ.get("STRIPE_PRICE_CREDITS_200", ""), 7300),
+    500: (os.environ.get("STRIPE_PRICE_CREDITS_500", ""), 17900),
 }
 
 # Co se nabízí zákazníkovi při vyčerpání kvóty. Desítka za euro tam nepatří.
