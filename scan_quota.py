@@ -154,10 +154,29 @@ def licence_status():
         return {"error": "server_unreachable", "detail": str(exc)}
 
 
-def has_feature(feature):
-    """Rychla kontrola, jestli tarif ma danou funkci (napr. 'excel_io')."""
+_features_cache = {"t": 0.0, "list": None}
+_FEATURES_CACHE_SEC = 300
+
+
+def features(force=False):
+    """Seznam funkci povolenych tarifem. Drzi se 5 minut v pameti,
+    aby se licencni server nevolal pri kazdem dotazu."""
+    now = time.time()
+    if not force and _features_cache["list"] is not None \
+            and now - _features_cache["t"] < _FEATURES_CACHE_SEC:
+        return _features_cache["list"]
     st = licence_status()
-    return feature in (st.get("features") or [])
+    if st.get("error"):
+        # Server nedostupny: drzime posledni znamy stav, jinak nic nepovolime.
+        return _features_cache["list"] or []
+    lst = list(st.get("features") or [])
+    _features_cache.update(t=now, list=lst)
+    return lst
+
+
+def has_feature(feature, force=False):
+    """Rychla kontrola, jestli tarif ma danou funkci (napr. 'excel_io')."""
+    return feature in features(force=force)
 
 
 # ─────────────────────────────────────────────────────────────────────

@@ -2346,6 +2346,15 @@ async def _panic_logs_collect(udid):
 
 @app.route('/api/panic-logs/<udid>', methods=['GET'])
 def api_panic_logs(udid):
+    # Plna analyza panic logu je soucasti tarifu Business a vyssiho.
+    # O tom, co tarif obsahuje, rozhoduje licencni server (pole "features").
+    if not scan_quota.has_feature('panic_full'):
+        return jsonify({
+            'ok': False, 'udid': udid, 'panics': [],
+            'feature_locked': True, 'feature': 'panic_full',
+            'message': 'Analyza panic logu je dostupna od tarifu Business.',
+            'upgrade_url': f'{LICENSE_API}/#pricing',
+        }), 200
     try:
         result = _run_async_isolated(_panic_logs_collect(udid), timeout=90)
         return jsonify(result), 200

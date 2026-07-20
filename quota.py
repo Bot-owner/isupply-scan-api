@@ -44,9 +44,9 @@ CREDIT_VALIDITY_MONTHS = 12
 # Jednorázové balíčky: velikost -> (Stripe Price ID, cena v centech)
 CREDIT_PACKS = {
     10:  (os.environ.get("STRIPE_PRICE_CREDITS_10", ""), 100),   # ⚠️ testovací, neveřejný
-    100: (os.environ.get("STRIPE_PRICE_CREDITS_100", ""), 2300),
-    200: (os.environ.get("STRIPE_PRICE_CREDITS_200", ""), 4500),
-    500: (os.environ.get("STRIPE_PRICE_CREDITS_500", ""), 11000),
+    100: (os.environ.get("STRIPE_PRICE_CREDITS_100", ""), 2900),
+    200: (os.environ.get("STRIPE_PRICE_CREDITS_200", ""), 5600),
+    500: (os.environ.get("STRIPE_PRICE_CREDITS_500", ""), 13800),
 }
 
 # Co se nabízí zákazníkovi při vyčerpání kvóty. Desítka za euro tam nepatří.
@@ -60,16 +60,16 @@ TEST_EMAILS = {e.strip().lower()
 # ── Funkce podle tarifu ──────────────────────────────────────────────
 # Basic nemá Excel import/export — odemyká se od Pro výš.
 TIER_FEATURES = {
-    "test":       {"diagnostics", "label_print", "excel_io", "priority_support", "api"},
+    "test":       {"diagnostics", "label_print", "excel_io", "priority_support", "api", "panic_full"},
     "trial":      {"diagnostics", "label_print"},
     "basic":      {"diagnostics", "label_print"},
     "pro":        {"diagnostics", "label_print", "excel_io"},
-    "business":   {"diagnostics", "label_print", "excel_io", "priority_support"},
-    "enterprise": {"diagnostics", "label_print", "excel_io", "priority_support", "api"},
+    "business":   {"diagnostics", "label_print", "excel_io", "priority_support", "panic_full"},
+    "enterprise": {"diagnostics", "label_print", "excel_io", "priority_support", "api", "panic_full"},
 }
 
 # Kam poslat uživatele, když na funkci nemá nárok
-FEATURE_MIN_TIER = {"excel_io": "pro", "api": "enterprise"}
+FEATURE_MIN_TIER = {"excel_io": "pro", "api": "enterprise", "panic_full": "business"}
 
 
 def features_for(tier):

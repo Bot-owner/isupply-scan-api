@@ -2503,7 +2503,6 @@ function renderComponentCard(key, c) {
         <div>Tovární: <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
         <div>Aktuální: <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
       </div>
-      ${c.status === 'POSSIBLE_FAULT' && c.note ? `<div style="margin-top:6px;font-size:10.5px;color:#b45309;line-height:1.4">${esc(c.note)}</div>` : ''}
       ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
     </div>`;
   }
