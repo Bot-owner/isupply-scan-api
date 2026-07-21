@@ -2515,6 +2515,16 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     prox_variant = _prox_variant_for(device_product_type)
     pv_value, pv_meta = _v29_source_find(
         source_map, prox_variant["sources"], prox_variant["keys"])
+    if not pv_value:
+        # ZALOHA: OVERENO 2026-07-21 forenznim dumpem na SE 2022 - v uzlu
+        # "product" (IODeviceTree) je klic "rosaline-serial-num", jehoz hodnota
+        # FNG221103JUHMRC56 se znak po znaku shoduje s tim, co 3uTools ukazuje
+        # jako "Distance Sensor". "Rosaline" je Apple kodove jmeno pro tenhle
+        # senzor. Pouziva se jen kdyz primy zdroj (JasperSNUM / prox uzel) nic
+        # nevrati - u generaci, kde primy zdroj funguje, se nic nemeni.
+        pv_value, pv_meta = _product_text(
+            source_map.get("product") or {},
+            ("rosaline-serial-num", "rosaline-serial-number"))
     if pv_value and device_serial and pv_value.upper() == device_serial.upper():
         errors[f"{_PROX_SLOT_KEY}:rejected"] = (
             f"Rejected device SerialNumber false-positive from {pv_meta.get('source')}: "
