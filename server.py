@@ -768,23 +768,51 @@ def get_device_info(udid):
                     continue
 
         # ── Barva ─────────────────────────────────────────────────
-        # OVERENO 2026-07-21 na dvou kusech: DeviceEnclosureColor v all_values
-        # na iOS 18.6 / 26.x VUBEC NENI a DeviceColor vraci '1' jak u cerveneho
-        # SE 2022 (iPhone14,6), tak u ruzoveho iPhonu 15 (iPhone15,4). Z toho
-        # klice se barva urcit NEDA - drivejsi prevodni tabulka 1..5 hlasila
-        # obema "Space Gray". Jediny per-kus udaj, ktery barvu nese, je
-        # ModelNumber (Apple part number). Tabulka je v model_colors.json a
-        # doplnuje se z fyzicky overenych kusu. Kdyz kod v tabulce neni,
-        # vratime 'N/A' - radeji zadna barva nez vymyslena.
+        # OVERENO 2026-07-21 forenznim dumpem na dvou kusech SE 2022:
+        #   DeviceEnclosureColor / DeviceHousingColor = barva TELA
+        #       (PRODUCT)RED  MMX73 -> 6      Midnight  MMX53 -> 1
+        #   DeviceColor / DeviceCoverGlassColor = barva PREDNIHO SKLA
+        #       u obou 1 (obe maji cerne celo)
+        # Odpovida tomu, co 3uTools pise jako "Front Black, Rear (PRODUCT)RED".
+        # DULEZITE: tyhle klice NEJSOU v all_values - vyda je jen primy dotaz
+        # ld.get_value(key=...). Vyznam kodu se lisi podle generace, proto je
+        # tabulka v model_colors.json klicovana ProductType.
         _model_number = str(vals.get('ModelNumber') or '').strip().upper()
-        color = _color_for_model_number(_model_number)
-        _dev = str(vals.get('DeviceColor') or '')
+        _pt_color = str(vals.get('ProductType') or '').strip()
+
+        async def _color_key(key):
+            try:
+                r = ld.get_value(key=key)
+                if inspect.isawaitable(r):
+                    r = await r
+                return None if r is None else str(r).strip()
+            except Exception:
+                return None
+
+        _encl = await _color_key('DeviceEnclosureColor')
+        if not _encl:
+            _encl = await _color_key('DeviceHousingColor')
+        _front = await _color_key('DeviceCoverGlassColor')
+        if not _front:
+            _front = str(vals.get('DeviceColor') or '') or None
+
+        # 1) kod tela primo z telefonu
+        color = _color_for_enclosure(_pt_color, _encl)
+        _src = 'enclosure'
+        # 2) zaloha: rucne overena tabulka part numberu
+        if not color:
+            color = _color_for_model_number(_model_number)
+            _src = 'model_number'
         if not color:
             color = 'N/A'
-            if _model_number:
-                _remember_unknown_color(_model_number,
-                                        str(vals.get('ProductType') or ''))
-        print(f"  Barva: ModelNumber={_model_number!r} DeviceColor={_dev!r} -> {color}")
+            _src = 'neznama'
+            if _encl:
+                _remember_unknown_enclosure(_pt_color, _encl, _model_number)
+            elif _model_number:
+                _remember_unknown_color(_model_number, _pt_color)
+
+        print(f"  Barva: enclosure={_encl!r} front={_front!r} "
+              f"ModelNumber={_model_number!r} -> {color} ({_src})")
 
         # ── Baterie – kondice z com.apple.mobile.battery ──────────
         battery_pct = vals.get('BatteryCurrentCapacity', 0) or 0
