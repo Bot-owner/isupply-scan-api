@@ -1748,25 +1748,64 @@ def api_factory_check(udid):
 
 
 
-async def _read_ioreg(diag, label, target, errors):
+# Chyby, ktere znamenaji "relace s telefonem umrela", ne "uzel neexistuje".
+# Bez rozliseni se pad spojeni tvari jako chybejici komponenta - presne to
+# delalo z funkcni SE 2022 report 0/3 (vsechny IORegistry uzly "unavailable",
+# zatimco lockdown hodnoty prosly).
+_CONN_ERR_MARKS = (
+    "ConnectionResetError", "ConnectionTerminatedError", "ConnectionAbortedError",
+    "ConnectionFailedError", "BrokenPipeError", "MuxException",
+    "Connection lost", "StreamClosed",
+)
+
+
+def _is_conn_error(text):
+    t = str(text or "")
+    return any(m in t for m in _CONN_ERR_MARKS)
+
+
+async def _read_ioreg(diag, label, target, errors, reopen=None):
     """Cte IOKit uzel. Zkousi POTVRZENOU formu name= (V14 overil name='AppleCLCD'),
-    pak fallback na plane+ioclass. Vraci prvni neprazdny vysledek."""
+    pak fallback na plane+ioclass. Vraci prvni neprazdny vysledek.
+
+    `diag` muze byt bud primo DiagnosticsService, nebo dict {"diag": ...} -
+    pak se pri padu spojeni relace obnovi pres `reopen()` a cteni se zopakuje.
+    Obnovena relace zustava v dictu i pro dalsi uzly, takze jeden vypadek
+    neshodi cely zbytek skenu."""
     import inspect
     attempts = [
         {"name": target},
         {"plane": "IOService", "ioclass": target},
         {"plane": "IOService", "name": target},
     ]
+    holder = diag if isinstance(diag, dict) else None
     last_err = None
-    for kw in attempts:
+
+    for attempt_round in range(2):
+        svc = holder.get("diag") if holder else diag
+        if svc is None:
+            break
+        for kw in attempts:
+            try:
+                result = svc.ioregistry(**kw)
+                if inspect.isawaitable(result):
+                    result = await result
+                if result:
+                    errors.pop(label, None)
+                    return result
+            except Exception as exc:
+                last_err = f"{type(exc).__name__}: {exc}"
+        # Uzel neexistuje -> nema smysl obnovovat. Umrela relace -> jeden pokus.
+        if attempt_round or not holder or not reopen or not _is_conn_error(last_err):
+            break
+        print(f"  [ioreg] relace spadla ({last_err}) - obnovuji a zkousim znovu: {target}")
         try:
-            result = diag.ioregistry(**kw)
-            if inspect.isawaitable(result):
-                result = await result
-            if result:
-                return result
+            if not await reopen():
+                break
         except Exception as exc:
-            last_err = f"{type(exc).__name__}: {exc}"
+            errors[f"{label}:reconnect"] = f"{type(exc).__name__}: {exc}"
+            break
+
     if last_err:
         errors[label] = last_err
     return {}
@@ -1778,6 +1817,30 @@ async def _read_hw_sources(udid):
     import inspect
     errors = {}
     ld, diag = await _open_diag(udid)
+    # Relace v dictu, aby sla vymenit za behu, kdyz spadne.
+    _svc = {"ld": ld, "diag": diag}
+
+    async def _reopen():
+        """Obnova relace po padu spojeni. Stara se zavre (kdyz jeste jde),
+        pak se otevre nova. Vraci True pri uspechu."""
+        try:
+            old = _svc.get("diag")
+            if old is not None:
+                cr = old.close()
+                if inspect.isawaitable(cr):
+                    await cr
+        except Exception:
+            pass
+        for wait_s in (0.4, 1.2):
+            await asyncio.sleep(wait_s)
+            try:
+                new_ld, new_diag = await _open_diag(udid)
+                _svc["ld"], _svc["diag"] = new_ld, new_diag
+                print("  [ioreg] relace obnovena")
+                return True
+            except Exception as exc:
+                errors["reconnect"] = f"{type(exc).__name__}: {exc}"
+        return False
 
     values = {}
     try:
@@ -1798,7 +1861,7 @@ async def _read_hw_sources(udid):
         # property lookup najde spravnou hodnotu bez ohledu na generaci.
         collected = []
         for target in targets:
-            obj = await _read_ioreg(diag, f"{label}:{target}", target, errors)
+            obj = await _read_ioreg(_svc, f"{label}:{target}", target, errors, _reopen)
             if obj:
                 collected.append(obj)
         return collected
@@ -1820,17 +1883,24 @@ async def _read_hw_sources(udid):
                                          "AppleBiometricSensor", "AppleMesa"))
 
     io_service = {}
-    try:
-        io_service = diag.ioregistry(plane="IOService")
-        if inspect.isawaitable(io_service):
-            io_service = await io_service
-        if not isinstance(io_service, (dict, list, tuple)):
+    for _io_round in range(2):
+        try:
+            io_service = _svc["diag"].ioregistry(plane="IOService")
+            if inspect.isawaitable(io_service):
+                io_service = await io_service
+            if not isinstance(io_service, (dict, list, tuple)):
+                io_service = {}
+            errors.pop("IOService", None)
+            break
+        except Exception as exc:
+            err = f"{type(exc).__name__}: {exc}"
+            errors["IOService"] = err
             io_service = {}
-    except Exception as exc:
-        errors["IOService"] = f"{type(exc).__name__}: {exc}"
+            if _io_round or not _is_conn_error(err) or not await _reopen():
+                break
 
     try:
-        cr = diag.close()
+        cr = _svc["diag"].close()
         if inspect.isawaitable(cr):
             await cr
     except Exception:
@@ -2053,6 +2123,23 @@ def _has_touch_id(product_type):
     return bool(major is not None and major <= 9)
 
 
+def _has_telephoto(product_type):
+    """Teleobjektiv maji jen Pro / Pro Max modely a stare "Plus" (7 Plus, 8 Plus).
+    Rozhoduje citelny nazev z APPLE_MODELS, ne cislo generace - iPhone10,2 je
+    8 Plus (tele ANO), ale iPhone10,1 je 8 (tele NE).
+    Jednooke / dvouoke bez tele: SE vsech generaci, 8, XR, 11, 12, 13, 14, 15,
+    16, 16e, 17 Air. U tech se teleobjektiv NETESTUJE - jinak hlasi falesnou
+    zavadu na dilu, ktery telefon fyzicky nema.
+    Nezname ProductType -> netestovat (chybejici hodnota je mensi vada nez
+    vymysleny nalez); staci pak doplnit model do APPLE_MODELS."""
+    name = str((resolve_model(product_type) or ("", ""))[0] or "")
+    if re.search(r"\bPro\b|\bMax\b", name):
+        return True
+    if re.search(r"iPhone\s*[78]\s*Plus", name):
+        return True
+    return False
+
+
 def _component_applicable(comp_key, product_type):
     if not product_type:
         return True
@@ -2062,6 +2149,8 @@ def _component_applicable(comp_key, product_type):
         return not touch
     if comp_key == "touch_id":
         return touch
+    if comp_key == "tele_camera":
+        return _has_telephoto(product_type)
     return True
 
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
