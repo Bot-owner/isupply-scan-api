@@ -2341,6 +2341,19 @@ def _has_telephoto(product_type):
     return False
 
 
+def _has_ultrawide(product_type):
+    """Ultrasirokou kameru ma iPhone 11 a novejsi. NEMA ji zadny SE (vsechny
+    generace), 8, X, XS ani XR. iPhone12,8 je SE 2020 - major cislo 12 sedi
+    s rodinou 11, ale ultrasirokou nema, proto se SE vylucuje podle nazvu.
+    Overeno: iPhone 15 (iPhone15,4) ji ma - 3uTools cte
+    "Ultra-Wide Module DNM342344VS20Y75Z"."""
+    name = str((resolve_model(product_type) or ("", ""))[0] or "")
+    if re.search(r"\bSE\b", name):
+        return False
+    major = _iphone_major(product_type)
+    return bool(major is not None and major >= 12)
+
+
 def _component_applicable(comp_key, product_type):
     if not product_type:
         return True
@@ -2352,6 +2365,8 @@ def _component_applicable(comp_key, product_type):
         return touch
     if comp_key == "tele_camera":
         return _has_telephoto(product_type)
+    if comp_key == "ultrawide_camera":
+        return _has_ultrawide(product_type)
     return True
 
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
@@ -6746,6 +6761,7 @@ _HW_LKEY = {
     "Proximity / display flex": "proximity_flex",
     "Touch ID (Mesa)": "touch_id",
     "Senzor okolního světla": "ambient_light_sensor",
+    "Ultraširokoúhlá kamera": "ultrawide_camera",
 }
 
 
@@ -6853,6 +6869,10 @@ async def _hardware_report_collect(udid, fresh=False):
         "rear_camera": from_comp("rear_camera", "Zadní kamera"),
         "front_camera": from_comp("front_camera", "Přední kamera"),
     }
+    # Ultrasiroka kamera: iPhone 11 a novejsi, mimo rady SE.
+    if _has_ultrawide(_pt):
+        cameras["ultrawide_camera"] = from_comp("ultrawide_camera",
+                                                "Ultraširokoúhlá kamera")
     # Teleobjektiv jen u modelu, ktere ho fyzicky maji. U jednookych telefonu
     # (SE, 8, XR, 11-16 non-Pro) se do reportu vubec nedostane - prazdna karta
     # s "mozna zavada" na neexistujicim dilu je horsi nez zadna karta.
