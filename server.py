@@ -6634,8 +6634,12 @@ async def _hardware_report_collect(udid):
     cameras = {
         "rear_camera": from_comp("rear_camera", "Zadní kamera"),
         "front_camera": from_comp("front_camera", "Přední kamera"),
-        "tele_camera": from_comp("tele_camera", "Teleobjektiv"),
     }
+    # Teleobjektiv jen u modelu, ktere ho fyzicky maji. U jednookych telefonu
+    # (SE, 8, XR, 11-16 non-Pro) se do reportu vubec nedostane - prazdna karta
+    # s "mozna zavada" na neexistujicim dilu je horsi nez zadna karta.
+    if _has_telephoto(_pt):
+        cameras["tele_camera"] = from_comp("tele_camera", "Teleobjektiv")
 
     # ── KOMPONENTY (fyzická sériová čísla dílů) – z potvrzeného readeru ──
     components = {
