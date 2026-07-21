@@ -1790,11 +1790,9 @@ function _faceIdPresent(components) {
   // vylucne Touch ID senzorem. Server u nich posila applicable=false.
   const ti = components['touch_id'];
   if (ti && ti.applicable) {
-    // Uzel Mesa zatim NENI overeny na fyzickem kusu. Dokud SN nedokazeme
-    // spolehlive precist, nehlasime zavadu - vratime null (= neurceno).
-    // Az bude uzel potvrzeny, zmen null na false, aby chybejici SN znamenalo
-    // "mozna zavada" stejne jako u ostatnich komponent.
-    return ti.available ? true : null;
+    // Zdroj potvrzeny (AppleSandDollar/SerialNumber), takze chybejici SN uz
+    // znamena skutecnou zavadu / vymenu, ne slepotu ctecky.
+    return !!ti.available;
   }
   const irNA = components['front_ir_camera'] && components['front_ir_camera'].applicable === false;
   const dpNA = components['true_depth_projector'] && components['true_depth_projector'].applicable === false;

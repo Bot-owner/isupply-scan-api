@@ -1744,11 +1744,13 @@ async def _read_hw_sources(udid):
     als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
     vibrator = await read_all("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
     nand = await read_all("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
-    # TOUCH ID (Mesa). Uzly zatim NEJSOU overene na fyzickem kusu - ctou se jako
-    # kandidati a dokud se netrefime, komponenta zustane "unavailable".
-    # Presny uzel se potvrdi pres /api/serial-trace/<udid>?value=<SN z JCID>.
-    touchid = await read_all("touchid", ("AppleMesa", "AppleMesaSEPDriver", "Mesa",
-                                         "AppleBiometricSensor", "AppleBiometricServices"))
+    # TOUCH ID. POTVRZENO na iPhone SE 2022 (iPhone14,6 / iOS 18.6.2):
+    #   uzel AppleSandDollar -> klic "SerialNumber" (IONameMatched "biosensor,mesa")
+    #   Hodnota je 16 BAJTU a cte se jako HEX, ne jako text:
+    #   hex 0219603da2613b31d698fdb5010200cd == 3uTools "TouchID Serial Number".
+    #   AppleMesaSEPDriver SN nema (MesaCalBlobSource=FDR), AppleMesaShim taky ne.
+    touchid = await read_all("touchid", ("AppleSandDollar", "AppleMesaShim",
+                                         "AppleBiometricSensor", "AppleMesa"))
 
     io_service = {}
     try:
@@ -1772,6 +1774,38 @@ async def _read_hw_sources(udid):
             "als": als, "vibrator": vibrator, "nand": nand,
             "touchid": touchid,
             "io_service": io_service, "errors": errors}
+
+
+def _touchid_find(source):
+    """Touch ID SN je binarni (16 B). pymobiledevice3 ho serializuje jako
+    {"_type": "bytes", "ascii": ..., "hex": ..., "length": 16} - textove hledani
+    ho proto nikdy nenajde. Bereme VYHRADNE klic SerialNumber z uzlu Mesa a
+    vracime HEX velkymi pismeny, presne jak ho ukazuje 3uTools.
+    Overeno: AppleSandDollar/SerialNumber na iPhone SE 2022."""
+    found = []
+
+    def walk(obj, path="$", depth=0):
+        if depth > 40:
+            return
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                p = f"{path}.{k}"
+                if _v29_norm_key(k) == "serialnumber":
+                    hexval = None
+                    if isinstance(v, dict) and v.get("_type") == "bytes":
+                        hexval = str(v.get("hex") or "")
+                    elif isinstance(v, (bytes, bytearray, memoryview)):
+                        hexval = bytes(v).hex()
+                    if hexval and len(hexval) >= 16 and set(hexval.lower()) <= set("0123456789abcdef"):
+                        found.append((hexval.upper(), {"path": p, "key": str(k),
+                                                       "encoding": "hex"}))
+                walk(v, p, depth + 1)
+        elif isinstance(obj, (list, tuple)):
+            for i, c in enumerate(obj):
+                walk(c, f"{path}[{i}]", depth + 1)
+
+    walk(source)
+    return found[0] if found else (None, None)
 
 
 def _v29_norm_key(key):
@@ -2050,12 +2084,10 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
              "VibratorNumber", "TapticEngineSerialNumber", "HapticSerialNumber",
              "RosalineSerialNumber")),
         "touch_id": (
-            # NEOVERENO na fyzickem kusu - kandidatni uzly i klice. Generic
-            # "SerialNumber" je zamerne az posledni a hodnota shodna s device SN
-            # se zahazuje (viz kontrola nize), aby se nehlasil device serial.
-            ("touchid", "IOService"),
-            ("MesaSerialNumber", "TouchIDSerialNumber", "BiometricSerialNumber",
-             "ModuleSerialNumber", "ModuleSerial", "SerialNumber")),
+            # Ma vlastni finder (_touchid_find) - hodnota je binarni a musi se
+            # cist jako hex. Zdroj/klic potvrzeny: AppleSandDollar/SerialNumber.
+            ("touchid",),
+            ("SerialNumber",)),
         "nand": (
             # Best-effort: NAND uzly (AppleANS2NVMeController apod.) na mnoha
             # generacich/iOS verzich nevraci pojmenovany vlastni objekt (fallback
@@ -2070,7 +2102,11 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     device_product_type = str(values.get("ProductType") or "")
 
     for key, (allowed_sources, exact_keys) in specs.items():
-        if key == "screen":
+        if key == "touch_id":
+            value, meta = _touchid_find(source_map.get("touchid") or {})
+            if meta:
+                meta["source"] = "touchid"
+        elif key == "screen":
             # Displej ma vlastni finder (Panel_ID je moc dlouhy na _v29_serial_like).
             value, meta = None, None
             for sname in allowed_sources:
@@ -3799,14 +3835,30 @@ async def _serial_trace_collect(udid, needle):
                     if isinstance(v, (dict, list)):
                         walk(v, p)
                     else:
+                        # Kandidatni reprezentace hodnoty. Binarni data (NSData)
+                        # se musi porovnavat i HEXEM - napr. serial Touch ID je
+                        # 32 hex znaku = 16 syrovych bajtu a jako ASCII text se
+                        # nikdy netrefi. Bez teto vetve byl trace na binarni
+                        # hodnoty slepy.
+                        cands = []
                         try:
-                            sval = v.decode("ascii", "ignore") if isinstance(v, bytes) else str(v)
+                            if isinstance(v, (bytes, bytearray, memoryview)):
+                                raw = bytes(v)
+                                cands.append((raw.hex().upper(), "hex"))
+                                txt = raw.decode("ascii", "ignore").strip("\x00").strip()
+                                if txt:
+                                    cands.append((txt, "ascii"))
+                            else:
+                                cands.append((str(v), "str"))
                         except Exception:
                             continue
-                        if needle_up and needle_up in sval.upper():
-                            hits.append({"path": path, "key": str(k),
-                                         "value": sval,
-                                         "type": type(v).__name__})
+                        for sval, how in cands:
+                            if needle_up and needle_up in sval.upper():
+                                hits.append({"path": path, "key": str(k),
+                                             "value": sval,
+                                             "encoding": how,
+                                             "type": type(v).__name__})
+                                break
             elif isinstance(node, list):
                 for i, v in enumerate(node):
                     walk(v, f"{path}[{i}]")
