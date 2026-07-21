@@ -573,6 +573,15 @@ _COLORS_CACHE = {"mtime": None, "map": {}}
 _colors_lock = threading.Lock()
 
 
+def _load_colors_file():
+    """Cely obsah model_colors.json (vcetne sekce enclosure_colors)."""
+    try:
+        with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 def _load_model_colors():
     """Nacte model_colors.json. Pri zmene souboru se cache obnovi sama."""
     try:
@@ -608,6 +617,53 @@ def _color_for_model_number(model_number):
     if len(code) > 5 and code[:5] in mapping:
         return mapping[code[:5]]
     return None
+
+
+def _color_for_enclosure(product_type, code):
+    """Kod barvy tela z telefonu (DeviceEnclosureColor) -> nazev barvy.
+    Vyznam kodu se lisi podle generace, proto je tabulka klicovana
+    ProductType. Neznamou kombinaci nikdy nehadame."""
+    pt = str(product_type or "").strip()
+    code = str(code or "").strip()
+    if not pt or not code:
+        return None
+    data = _load_colors_file()
+    table = (data.get("enclosure_colors") or {}).get(pt) or {}
+    val = table.get(code)
+    if isinstance(val, dict):
+        val = val.get("color")
+    return val or None
+
+
+def _remember_unknown_enclosure(product_type, code, model_number=""):
+    """Zapise neznamou kombinaci ProductType+kod do model_colors.json ->
+    "unknown_enclosure". Staci pak doplnit barvu podle fyzickeho kusu."""
+    pt = str(product_type or "").strip()
+    code = str(code or "").strip()
+    if not pt or not code:
+        return
+    with _colors_lock:
+        try:
+            data = {}
+            if os.path.exists(COLORS_FILE):
+                with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            known = (data.get("enclosure_colors") or {}).get(pt) or {}
+            if code in known:
+                return
+            unknown = data.setdefault("unknown_enclosure", {})
+            slot = unknown.setdefault(pt, {})
+            if code in slot:
+                return
+            slot[code] = {"color": "", "model_number": model_number,
+                          "poznamka": "doplnit barvu tela podle fyzickeho kusu"}
+            tmp = COLORS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, COLORS_FILE)
+            print(f"  [barva] novy kod tela {pt}/{code} zapsan do model_colors.json")
+        except Exception as exc:
+            print(f"  [barva] zapis neznameho kodu tela selhal: {exc}")
 
 
 def _remember_unknown_color(model_number, product_type=""):
@@ -1765,6 +1821,81 @@ def _is_conn_error(text):
     return any(m in t for m in _CONN_ERR_MARKS)
 
 
+def _product_text(source, keys):
+    """Vytahne textovou hodnotu z uzlu "product" v IODeviceTree.
+    Hodnoty jsou ulozene jako C-retezce v bytes (zakoncene \\x00), pripadne
+    serializovane do {"_type": "bytes", "hex": ...}. Vraci (hodnota, meta)
+    s dolozitelnou cestou a klicem, nebo (None, None)."""
+    def decode(v):
+        raw = None
+        if isinstance(v, dict) and v.get("_type") == "bytes":
+            try:
+                raw = bytes.fromhex(str(v.get("hex") or ""))
+            except Exception:
+                raw = None
+        elif isinstance(v, (bytes, bytearray, memoryview)):
+            raw = bytes(v)
+        elif isinstance(v, str):
+            return v.strip().strip("\x00") or None
+        if raw is None:
+            return None
+        txt = raw.decode("ascii", "ignore").strip().strip("\x00").strip()
+        return txt or None
+
+    def scan(obj, path="$", depth=0):
+        if depth > 12:
+            return None, None
+        if isinstance(obj, dict):
+            for k in keys:
+                if k in obj:
+                    val = decode(obj[k])
+                    if val:
+                        return val, {"source": "product:IODeviceTree",
+                                     "path": f"{path}.{k}", "key": k}
+            for k, v in obj.items():
+                if isinstance(v, (dict, list, tuple)):
+                    r = scan(v, f"{path}.{k}", depth + 1)
+                    if r[0]:
+                        return r
+        elif isinstance(obj, (list, tuple)):
+            for i, v in enumerate(obj):
+                r = scan(v, f"{path}[{i}]", depth + 1)
+                if r[0]:
+                    return r
+        return None, None
+
+    return scan(source)
+
+
+def _find_nodes_in_tree(tree, target):
+    """Najde v jiz nactenem IOService stromu vsechny uzly, jejichz name nebo
+    className odpovida `target`. Vraci uzly bez potomku.
+
+    PROC: iOS na dotaz na NEEXISTUJICI uzel neodpovi "nenalezeno", ale ukonci
+    celou relaci (ConnectionTerminatedError). Pri ~20 chybejicich uzlech to byl
+    stejny pocet reconnectu = 10-15 s na kazdy sken. Cely strom prijde jednim
+    dotazem, takze hledani v nem je zdarma a telefonu se uz nemusime ptat.
+    """
+    found = []
+
+    def walk(node, depth=0):
+        if depth > 60 or len(found) > 40:
+            return
+        if isinstance(node, dict):
+            if target in (node.get("name"), node.get("className")):
+                found.append({k: v for k, v in node.items() if k != "children"})
+            kids = node.get("children")
+            if isinstance(kids, (list, tuple)):
+                for ch in kids:
+                    walk(ch, depth + 1)
+        elif isinstance(node, (list, tuple)):
+            for ch in node:
+                walk(ch, depth + 1)
+
+    walk(tree)
+    return found
+
+
 async def _read_ioreg(diag, label, target, errors, reopen=None):
     """Cte IOKit uzel. Zkousi POTVRZENOU formu name= (V14 overil name='AppleCLCD'),
     pak fallback na plane+ioclass. Vraci prvni neprazdny vysledek.
@@ -1905,27 +2036,21 @@ async def _read_hw_sources(udid):
         # property lookup najde spravnou hodnotu bez ohledu na generaci.
         collected = []
         for target in targets:
+            # 1) lokalne ve stromu - zdarma a bez rizika pro relaci
+            local = _find_nodes_in_tree(io_service, target) if io_service else []
+            if local:
+                collected.extend(local)
+                continue
+            # 2) uzel ve stromu neni -> uz se telefonu NEPTAME, dotaz na
+            #    neexistujici uzel shodi relaci. Ptame se jen kdyz strom chybi.
+            if io_service:
+                continue
             obj = await _read_ioreg(_svc, f"{label}:{target}", target, errors, _reopen)
             if obj:
                 collected.append(obj)
         return collected
 
-    camera = await read_all("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
-    pearl = await read_all("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
-    clcd = await read_all("display", ("AppleCLCD", "AppleCLCD2", "AppleDCP", "AppleMobileCLCD", "AppleM2ScalerCSCDriver"))
-    battery = await read_all("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
-    proximity = await read_all("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
-    als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
-    vibrator = await read_all("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
-    nand = await read_all("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
-    # TOUCH ID. POTVRZENO na iPhone SE 2022 (iPhone14,6 / iOS 18.6.2):
-    #   uzel AppleSandDollar -> klic "SerialNumber" (IONameMatched "biosensor,mesa")
-    #   Hodnota je 16 BAJTU a cte se jako HEX, ne jako text:
-    #   hex 0219603da2613b31d698fdb5010200cd == 3uTools "TouchID Serial Number".
-    #   AppleMesaSEPDriver SN nema (MesaCalBlobSource=FDR), AppleMesaShim taky ne.
-    touchid = await read_all("touchid", ("AppleSandDollar", "AppleMesaShim",
-                                         "AppleBiometricSensor", "AppleMesa"))
-
+    # Cely IOService strom JEDNIM dotazem - uzly se pak hledaji lokalne.
     io_service = {}
     for _io_round in range(2):
         try:
@@ -1943,6 +2068,34 @@ async def _read_hw_sources(udid):
             if _io_round or not _is_conn_error(err) or not await _reopen():
                 break
 
+    camera = await read_all("camera", ("AppleH10CamIn", "AppleH13CamIn", "AppleH16CamIn", "AppleCameraInterface"))
+    pearl = await read_all("pearl", ("AppleH10PearlCam", "ApplePearlCam", "PearlCam", "AppleH10Pearl"))
+    clcd = await read_all("display", ("AppleCLCD", "AppleCLCD2", "AppleDCP", "AppleMobileCLCD", "AppleM2ScalerCSCDriver"))
+    battery = await read_all("battery", ("AppleSmartBattery", "AppleARMPMUCharger"))
+    proximity = await read_all("proximity", ("AppleProxHIDEventDriver", "prox", "AppleProxDriver", "AppleProximitySensor"))
+    als = await read_all("ambient_light", ("als", "AppleALSDriver", "AppleAmbientLightSensor", "AppleHIDALSService"))
+    vibrator = await read_all("vibrator", ("AppleHapticsSupportCallan", "AppleHapticsSupportLEAP", "AppleTapticEngine", "AppleHaptics", "Actuator"))
+    nand = await read_all("nand", ("AppleANS2NVMeController", "AppleNANDConfigAccess", "AppleANS2Controller", "AppleEmbeddedNVMeController"))
+    # TOUCH ID. POTVRZENO na iPhone SE 2022 (iPhone14,6 / iOS 18.6.2):
+    #   uzel AppleSandDollar -> klic "SerialNumber" (IONameMatched "biosensor,mesa")
+    #   Hodnota je 16 BAJTU a cte se jako HEX, ne jako text:
+    #   hex 0219603da2613b31d698fdb5010200cd == 3uTools "TouchID Serial Number".
+    #   AppleMesaSEPDriver SN nema (MesaCalBlobSource=FDR), AppleMesaShim taky ne.
+    touchid = await read_all("touchid", ("AppleSandDollar", "AppleMesaShim",
+                                         "AppleBiometricSensor", "AppleMesa"))
+
+    # UZEL "product" (IODeviceTree). OVERENO 2026-07-21 na iPhone SE 2022
+    # (iPhone14,6 / iOS 17.6.1) forenznim dumpem V63 - hodnoty sedi znak po
+    # znaku s tim, co ukazuje 3uTools:
+    #   ambient-light-sensor-serial-num = 23-0028B35B   (3uTools "Ambient Light")
+    #   rosaline-serial-num             = FNG221103JUHMRC56 ("Distance Sensor")
+    #   coverglass-serial-number        = FXT14910B9B13JD9M+... ("Cover Board")
+    #   raw-panel-serial-number         = F7C2443C1AP1D2FA8+... ("Screen Serial")
+    # POZOR: v dumpu cele roviny IODeviceTree je uzel PRAZDNY (jen 6 klicu) -
+    # vlastnosti vydá pouze cileny dotaz name="product". Uzel existuje na kazde
+    # generaci, takze relaci neshodi.
+    product = await _read_ioreg(_svc, "product", "product", errors, _reopen)
+
     try:
         cr = _svc["diag"].close()
         if inspect.isawaitable(cr):
@@ -1954,6 +2107,7 @@ async def _read_hw_sources(udid):
             "clcd": clcd, "battery": battery, "proximity": proximity,
             "als": als, "vibrator": vibrator, "nand": nand,
             "touchid": touchid,
+            "product": product,
             "io_service": io_service, "errors": errors}
 
 
@@ -2218,6 +2372,7 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
         "vibrator": sources.get("vibrator", {}),
         "nand": sources.get("nand", {}),
         "touchid": sources.get("touchid", {}),
+        "product": sources.get("product", {}),
         "IOService": sources.get("io_service", {}),
         # Lockdown je zpristupnen VYHRADNE pro mainboard (exact klic MLBSerialNumber).
         # Nikdy se z nej nehleda generic SerialNumber (to je device SN) - zadny
@@ -2304,7 +2459,13 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     device_product_type = str(values.get("ProductType") or "")
 
     for key, (allowed_sources, exact_keys) in specs.items():
-        if key == "touch_id":
+        if key == "ambient_light_sensor":
+            # OVERENO: ALS neni v IOService (tam jsme ho hledali marne), ale
+            # v IODeviceTree/product jako "ambient-light-sensor-serial-num".
+            value, meta = _product_text(
+                source_map.get("product") or {},
+                ("ambient-light-sensor-serial-num", "ambient-light-sensor-serial-number"))
+        elif key == "touch_id":
             value, meta = _touchid_find(source_map.get("touchid") or {})
             if meta:
                 meta["source"] = "touchid"
@@ -6581,6 +6742,7 @@ _HW_LKEY = {
     "Distance senzor": "distance_sensor",
     "Proximity / display flex": "proximity_flex",
     "Touch ID (Mesa)": "touch_id",
+    "Senzor okolního světla": "ambient_light_sensor",
 }
 
 
@@ -6699,6 +6861,8 @@ async def _hardware_report_collect(udid, fresh=False):
         "screen": from_comp("screen", "Displej"),
         "battery": from_comp("battery", "Baterie"),
         "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
+        "ambient_light_sensor": from_comp("ambient_light_sensor",
+                                          "Senzor okolního světla"),
     }
 
     # ── BIOMETRIE ──

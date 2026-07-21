@@ -3,8 +3,9 @@
     "popis": "Mapovani Apple part number (ModelNumber z lockdownu) -> barva tela.",
     "proc": "DeviceEnclosureColor na iOS 17.4+ neexistuje a DeviceColor vraci u ruznych modelu i barev stejnou hodnotu ('1'), takze se z nej barva urcit NEDA. ModelNumber je jediny per-kus udaj, ktery barvu nese. Prevodni tabulku Apple nezverejnuje - buduje se z fyzicky overenych kusu.",
     "jak_doplnit": "Kazdy novy kus: vezmi ModelNumber, ktery appka vypise, a pridej radek s barvou, kterou telefon SKUTECNE ma. Nikdy nehadej podle jineho modelu.",
-    "nazvy": "Anglicke Apple nazvy. Preklad do CZ resi UI, ne tenhle soubor.",
-    "poznamka": "ModelNumber muze mit v lockdownu podobu 'MMX73' i 'MMX73LL/A' - hleda se podle prvnich 5 znaku."
+    "nazvy": "Anglicke Apple nazvy. Preklad do CZ resi UI, ne tenhle soubor. Externe prevzata data (nikoli fyzicky overena) patri do sekce \"colors_external\" - ta se prohledava az po \"colors\".",
+    "poznamka": "ModelNumber muze mit v lockdownu podobu 'MMX73' i 'MMX73LL/A' - hleda se podle prvnich 5 znaku.",
+    "zdroj_barvy": "PRIMARNI: DeviceEnclosureColor (pripadne DeviceHousingColor) z lockdownu - cte se pres ld.get_value(key=...), v all_values NENI. Je to kod barvy TELA a jeho vyznam se lisi podle generace, proto je tabulka nize klicovana ProductType. DeviceColor / DeviceCoverGlassColor je barva PREDNIHO SKLA, ne tela. ZALOHA: tabulka 'colors' podle ModelNumber (part number)."
   },
   "colors": {
     "MMX73": {
@@ -18,6 +19,24 @@
       "product_type": "iPhone15,4",
       "model": "iPhone 15",
       "overeno": "2026-07-21, fyzicky kus, iSupply"
+    },
+    "MTP03": {
+      "color": "Black",
+      "product_type": "iPhone15,4",
+      "model": "iPhone 15",
+      "overeno": "2026-07-21, fyzicky kus, iSupply"
+    }
+  },
+  "enclosure_colors": {
+    "iPhone14,6": {
+      "1": {
+        "color": "Midnight",
+        "overeno": "2026-07-21, MMX53, fyzicky kus"
+      },
+      "6": {
+        "color": "(PRODUCT)RED",
+        "overeno": "2026-07-21, MMX73, fyzicky kus"
+      }
     }
   }
 }
