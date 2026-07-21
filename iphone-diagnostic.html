@@ -2267,6 +2267,433 @@ async function activateDevice(id) {
 // ne sériová čísla) / displej / úložiště. Appka NEURČUJE originál/vyměněno -
 // jen zobrazuje aktuální stav. Karty komponent jsou ale připravené na budoucí
 // factory_value/current_value/match/status (viz renderComponentCard).
+const HW_I18N = {
+  "en": {
+    "modem_fw": "Modem firmware (baseband)",
+    "baseband_status": "Baseband status",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Modem working (firmware readable)",
+    "serial": "Serial number",
+    "display_serial": "Display serial number",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Model",
+    "model_number_a": "Model number (A)",
+    "ios": "iOS",
+    "build": "Build",
+    "battery_health": "Health (%)",
+    "battery_cycles": "Cycle count",
+    "design_capacity": "Design capacity (mAh)",
+    "nominal_capacity": "Current capacity (mAh)",
+    "is_charging": "Charging",
+    "fully_charged": "Fully charged",
+    "external_connected": "Power connected",
+    "temperature": "Temperature",
+    "voltage": "Voltage",
+    "bluetooth_mac": "Bluetooth address (MAC)",
+    "ethernet_mac": "Ethernet address (MAC)",
+    "wifi_mac": "Wi-Fi address (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Logic board",
+    "screen": "Display",
+    "battery": "Battery",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Rear camera",
+    "front_camera": "Front camera",
+    "tele_camera": "Telephoto",
+    "front_ir_camera": "IR camera",
+    "true_depth_projector": "Dot projector (Lattice)",
+    "distance_sensor": "Distance sensor",
+    "proximity_flex": "Proximity / display flex",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Device identification",
+    "sec_cameras": "Cameras",
+    "sec_components": "Components (part serial numbers)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Mobile data",
+    "sec_battery": "Battery",
+    "sec_connectivity": "Connectivity and baseband",
+    "sec_display": "Display",
+    "hw_title": "Hardware report",
+    "hw_loading": "Loading…",
+    "hw_failed": "Could not load:",
+    "hw_read": "Values read:",
+    "hw_disclaimer": "The app <b>has no access to Apple's factory database</b>, so it <b>does not decide</b> whether a part is original or replaced — it only shows what the phone currently reports. Wi-Fi/Bluetooth are <b>MAC addresses</b> and IMEI is a device identifier — these are not part serial numbers.",
+    "note_not_applicable": "This generation does not have this component",
+    "badge_match": "✓ Match",
+    "badge_mismatch": "✕ Possibly replaced",
+    "badge_fault": "⚠ Possible fault",
+    "badge_nofactory": "No factory reference",
+    "badge_unreadable": "Cannot read",
+    "badge_unavailable": "Unavailable",
+    "val_factory": "Factory:",
+    "val_current": "Current:",
+    "val_unavailable": "unavailable",
+    "val_fault": "Possible fault",
+    "functional": "✓ Functional"
+  },
+  "cs": {
+    "modem_fw": "Firmware modemu (baseband)",
+    "baseband_status": "Stav basebandu",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Modem funkční (firmware čitelný)",
+    "serial": "Sériové číslo",
+    "display_serial": "Sériové číslo displeje",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Model",
+    "model_number_a": "Model number (A)",
+    "ios": "iOS",
+    "build": "Build",
+    "battery_health": "Kondice (%)",
+    "battery_cycles": "Počet cyklů",
+    "design_capacity": "Návrhová kapacita (mAh)",
+    "nominal_capacity": "Aktuální kapacita (mAh)",
+    "is_charging": "Nabíjí se",
+    "fully_charged": "Plně nabito",
+    "external_connected": "Napájení připojeno",
+    "temperature": "Teplota",
+    "voltage": "Napětí",
+    "bluetooth_mac": "Bluetooth adresa (MAC)",
+    "ethernet_mac": "Ethernet adresa (MAC)",
+    "wifi_mac": "Wi-Fi adresa (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Základní deska",
+    "screen": "Displej",
+    "battery": "Baterie",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Zadní kamera",
+    "front_camera": "Přední kamera",
+    "tele_camera": "Teleobjektiv",
+    "front_ir_camera": "IR kamera",
+    "true_depth_projector": "Dot projektor (Lattice)",
+    "distance_sensor": "Distance senzor",
+    "proximity_flex": "Proximity / display flex",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Identifikace zařízení",
+    "sec_cameras": "Kamery",
+    "sec_components": "Komponenty (sériová čísla dílů)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Mobilní data",
+    "sec_battery": "Baterie",
+    "sec_connectivity": "Konektivita a baseband",
+    "sec_display": "Displej",
+    "hw_title": "Hardwarový report",
+    "hw_loading": "Načítám…",
+    "hw_failed": "Nepodařilo se načíst:",
+    "hw_read": "Přečteno hodnot:",
+    "hw_disclaimer": "Appka <b>nemá přístup k tovární databázi Apple</b>, proto <b>neurčuje</b>, jestli je díl originál nebo vyměněný — zobrazuje jen to, co telefon aktuálně hlásí. Wi-Fi/Bluetooth jsou <b>MAC adresy</b>, IMEI je identifikátor zařízení — nejsou to sériová čísla dílů.",
+    "note_not_applicable": "Tato generace tuto komponentu nemá",
+    "badge_match": "✓ Shodné",
+    "badge_mismatch": "✕ Možná vyměněno",
+    "badge_fault": "⚠ Možná závada",
+    "badge_nofactory": "Bez tovární reference",
+    "badge_unreadable": "Nelze přečíst",
+    "badge_unavailable": "Nedostupné",
+    "val_factory": "Tovární:",
+    "val_current": "Aktuální:",
+    "val_unavailable": "nedostupné",
+    "val_fault": "Možná závada",
+    "functional": "✓ Funkční"
+  },
+  "pl": {
+    "modem_fw": "Firmware modemu (baseband)",
+    "baseband_status": "Status baseband",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Modem sprawny (firmware czytelny)",
+    "serial": "Numer seryjny",
+    "display_serial": "Numer seryjny wyświetlacza",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Model",
+    "model_number_a": "Numer modelu (A)",
+    "ios": "iOS",
+    "build": "Build",
+    "battery_health": "Kondycja (%)",
+    "battery_cycles": "Liczba cykli",
+    "design_capacity": "Pojemność projektowa (mAh)",
+    "nominal_capacity": "Pojemność aktualna (mAh)",
+    "is_charging": "Ładowanie",
+    "fully_charged": "W pełni naładowana",
+    "external_connected": "Zasilanie podłączone",
+    "temperature": "Temperatura",
+    "voltage": "Napięcie",
+    "bluetooth_mac": "Adres Bluetooth (MAC)",
+    "ethernet_mac": "Adres Ethernet (MAC)",
+    "wifi_mac": "Adres Wi-Fi (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Płyta główna",
+    "screen": "Wyświetlacz",
+    "battery": "Bateria",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Aparat tylny",
+    "front_camera": "Aparat przedni",
+    "tele_camera": "Teleobiektyw",
+    "front_ir_camera": "Kamera IR",
+    "true_depth_projector": "Projektor punktowy (Lattice)",
+    "distance_sensor": "Czujnik odległości",
+    "proximity_flex": "Proximity / flex wyświetlacza",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Identyfikacja urządzenia",
+    "sec_cameras": "Aparaty",
+    "sec_components": "Komponenty (numery seryjne części)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Dane mobilne",
+    "sec_battery": "Bateria",
+    "sec_connectivity": "Łączność i baseband",
+    "sec_display": "Wyświetlacz",
+    "hw_title": "Raport sprzętowy",
+    "hw_loading": "Wczytywanie…",
+    "hw_failed": "Nie udało się wczytać:",
+    "hw_read": "Odczytane wartości:",
+    "hw_disclaimer": "Aplikacja <b>nie ma dostępu do fabrycznej bazy Apple</b>, więc <b>nie orzeka</b>, czy część jest oryginalna czy wymieniona — pokazuje tylko to, co telefon aktualnie zgłasza. Wi-Fi/Bluetooth to <b>adresy MAC</b>, a IMEI to identyfikator urządzenia — to nie są numery seryjne części.",
+    "note_not_applicable": "Ta generacja nie ma tego komponentu",
+    "badge_match": "✓ Zgodne",
+    "badge_mismatch": "✕ Możliwa wymiana",
+    "badge_fault": "⚠ Możliwa usterka",
+    "badge_nofactory": "Brak referencji fabrycznej",
+    "badge_unreadable": "Nie można odczytać",
+    "badge_unavailable": "Niedostępne",
+    "val_factory": "Fabryczny:",
+    "val_current": "Aktualny:",
+    "val_unavailable": "niedostępne",
+    "val_fault": "Możliwa usterka",
+    "functional": "✓ Sprawny"
+  },
+  "ru": {
+    "modem_fw": "Прошивка модема (baseband)",
+    "baseband_status": "Состояние baseband",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Модем работает (прошивка читается)",
+    "serial": "Серийный номер",
+    "display_serial": "Серийный номер дисплея",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Модель",
+    "model_number_a": "Номер модели (A)",
+    "ios": "iOS",
+    "build": "Сборка",
+    "battery_health": "Состояние (%)",
+    "battery_cycles": "Число циклов",
+    "design_capacity": "Проектная ёмкость (мА·ч)",
+    "nominal_capacity": "Текущая ёмкость (мА·ч)",
+    "is_charging": "Заряжается",
+    "fully_charged": "Полностью заряжена",
+    "external_connected": "Питание подключено",
+    "temperature": "Температура",
+    "voltage": "Напряжение",
+    "bluetooth_mac": "Адрес Bluetooth (MAC)",
+    "ethernet_mac": "Адрес Ethernet (MAC)",
+    "wifi_mac": "Адрес Wi-Fi (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Материнская плата",
+    "screen": "Дисплей",
+    "battery": "Аккумулятор",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Основная камера",
+    "front_camera": "Фронтальная камера",
+    "tele_camera": "Телеобъектив",
+    "front_ir_camera": "ИК-камера",
+    "true_depth_projector": "Точечный проектор (Lattice)",
+    "distance_sensor": "Датчик расстояния",
+    "proximity_flex": "Датчик приближения / шлейф дисплея",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Идентификация устройства",
+    "sec_cameras": "Камеры",
+    "sec_components": "Компоненты (серийные номера деталей)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Мобильные данные",
+    "sec_battery": "Аккумулятор",
+    "sec_connectivity": "Связь и baseband",
+    "sec_display": "Дисплей",
+    "hw_title": "Аппаратный отчёт",
+    "hw_loading": "Загрузка…",
+    "hw_failed": "Не удалось загрузить:",
+    "hw_read": "Прочитано значений:",
+    "hw_disclaimer": "Приложение <b>не имеет доступа к заводской базе Apple</b>, поэтому <b>не определяет</b>, оригинальная деталь или заменённая — оно показывает только то, что сообщает телефон. Wi-Fi/Bluetooth — это <b>MAC-адреса</b>, IMEI — идентификатор устройства; это не серийные номера деталей.",
+    "note_not_applicable": "В этом поколении такого компонента нет",
+    "badge_match": "✓ Совпадает",
+    "badge_mismatch": "✕ Возможно заменено",
+    "badge_fault": "⚠ Возможна неисправность",
+    "badge_nofactory": "Нет заводского эталона",
+    "badge_unreadable": "Не читается",
+    "badge_unavailable": "Недоступно",
+    "val_factory": "Заводской:",
+    "val_current": "Текущий:",
+    "val_unavailable": "недоступно",
+    "val_fault": "Возможна неисправность",
+    "functional": "✓ Исправно"
+  },
+  "it": {
+    "modem_fw": "Firmware del modem (baseband)",
+    "baseband_status": "Stato del baseband",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Modem funzionante (firmware leggibile)",
+    "serial": "Numero di serie",
+    "display_serial": "Numero di serie del display",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Modello",
+    "model_number_a": "Numero modello (A)",
+    "ios": "iOS",
+    "build": "Build",
+    "battery_health": "Salute (%)",
+    "battery_cycles": "Numero di cicli",
+    "design_capacity": "Capacità nominale di progetto (mAh)",
+    "nominal_capacity": "Capacità attuale (mAh)",
+    "is_charging": "In carica",
+    "fully_charged": "Completamente carica",
+    "external_connected": "Alimentazione collegata",
+    "temperature": "Temperatura",
+    "voltage": "Tensione",
+    "bluetooth_mac": "Indirizzo Bluetooth (MAC)",
+    "ethernet_mac": "Indirizzo Ethernet (MAC)",
+    "wifi_mac": "Indirizzo Wi-Fi (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Scheda madre",
+    "screen": "Display",
+    "battery": "Batteria",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Fotocamera posteriore",
+    "front_camera": "Fotocamera frontale",
+    "tele_camera": "Teleobiettivo",
+    "front_ir_camera": "Fotocamera IR",
+    "true_depth_projector": "Proiettore di punti (Lattice)",
+    "distance_sensor": "Sensore di distanza",
+    "proximity_flex": "Prossimità / flex del display",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Identificazione dispositivo",
+    "sec_cameras": "Fotocamere",
+    "sec_components": "Componenti (numeri di serie delle parti)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Dati mobili",
+    "sec_battery": "Batteria",
+    "sec_connectivity": "Connettività e baseband",
+    "sec_display": "Display",
+    "hw_title": "Report hardware",
+    "hw_loading": "Caricamento…",
+    "hw_failed": "Impossibile caricare:",
+    "hw_read": "Valori letti:",
+    "hw_disclaimer": "L'app <b>non ha accesso al database di fabbrica Apple</b>, quindi <b>non stabilisce</b> se un componente è originale o sostituito: mostra solo ciò che il telefono riporta al momento. Wi-Fi/Bluetooth sono <b>indirizzi MAC</b> e l'IMEI è un identificativo del dispositivo: non sono numeri di serie dei componenti.",
+    "note_not_applicable": "Questa generazione non ha questo componente",
+    "badge_match": "✓ Corrisponde",
+    "badge_mismatch": "✕ Forse sostituito",
+    "badge_fault": "⚠ Possibile guasto",
+    "badge_nofactory": "Nessun riferimento di fabbrica",
+    "badge_unreadable": "Non leggibile",
+    "badge_unavailable": "Non disponibile",
+    "val_factory": "Di fabbrica:",
+    "val_current": "Attuale:",
+    "val_unavailable": "non disponibile",
+    "val_fault": "Possibile guasto",
+    "functional": "✓ Funzionante"
+  },
+  "fr": {
+    "modem_fw": "Firmware du modem (baseband)",
+    "baseband_status": "État du baseband",
+    "baseband_chipid": "Baseband chip ID",
+    "iccid": "SIM (ICCID)",
+    "modem_ok": "Modem fonctionnel (firmware lisible)",
+    "serial": "Numéro de série",
+    "display_serial": "Numéro de série de l'écran",
+    "imei": "IMEI",
+    "imei2": "IMEI2",
+    "meid": "MEID",
+    "product_type": "ProductType",
+    "model": "Modèle",
+    "model_number_a": "Numéro de modèle (A)",
+    "ios": "iOS",
+    "build": "Build",
+    "battery_health": "État (%)",
+    "battery_cycles": "Nombre de cycles",
+    "design_capacity": "Capacité d'origine (mAh)",
+    "nominal_capacity": "Capacité actuelle (mAh)",
+    "is_charging": "En charge",
+    "fully_charged": "Complètement chargée",
+    "external_connected": "Alimentation connectée",
+    "temperature": "Température",
+    "voltage": "Tension",
+    "bluetooth_mac": "Adresse Bluetooth (MAC)",
+    "ethernet_mac": "Adresse Ethernet (MAC)",
+    "wifi_mac": "Adresse Wi-Fi (MAC)",
+    "wifi_sn": "Wi-Fi SN",
+    "panel_id": "Panel ID",
+    "mainboard": "Carte mère",
+    "screen": "Écran",
+    "battery": "Batterie",
+    "taptic_engine": "Taptic Engine",
+    "rear_camera": "Caméra arrière",
+    "front_camera": "Caméra avant",
+    "tele_camera": "Téléobjectif",
+    "front_ir_camera": "Caméra IR",
+    "true_depth_projector": "Projecteur de points (Lattice)",
+    "distance_sensor": "Capteur de distance",
+    "proximity_flex": "Proximité / nappe d'écran",
+    "touch_id": "Touch ID (Mesa)",
+    "sec_device": "Identification de l'appareil",
+    "sec_cameras": "Caméras",
+    "sec_components": "Composants (numéros de série des pièces)",
+    "sec_face_id": "Face ID",
+    "sec_touch_id": "Touch ID",
+    "sec_mobile_data": "Données mobiles",
+    "sec_battery": "Batterie",
+    "sec_connectivity": "Connectivité et baseband",
+    "sec_display": "Écran",
+    "hw_title": "Rapport matériel",
+    "hw_loading": "Chargement…",
+    "hw_failed": "Impossible de charger :",
+    "hw_read": "Valeurs lues :",
+    "hw_disclaimer": "L'application <b>n'a pas accès à la base de données d'usine d'Apple</b>, elle <b>ne détermine donc pas</b> si une pièce est d'origine ou remplacée : elle affiche uniquement ce que le téléphone rapporte. Wi-Fi/Bluetooth sont des <b>adresses MAC</b> et l'IMEI est un identifiant d'appareil : ce ne sont pas des numéros de série de pièces.",
+    "note_not_applicable": "Cette génération ne possède pas ce composant",
+    "badge_match": "✓ Correspond",
+    "badge_mismatch": "✕ Peut-être remplacé",
+    "badge_fault": "⚠ Défaut possible",
+    "badge_nofactory": "Aucune référence d'usine",
+    "badge_unreadable": "Illisible",
+    "badge_unavailable": "Indisponible",
+    "val_factory": "D'usine :",
+    "val_current": "Actuel :",
+    "val_unavailable": "indisponible",
+    "val_fault": "Défaut possible",
+    "functional": "✓ Fonctionnel"
+  }
+};
+
+// Preklad popisku reportu. Server posila stabilni klic (lkey); kdyz ho UI nezna,
+// pouzije se cesky popisek ze serveru, aby nikdy nezustalo prazdno.
+function ht(key, fallback) {
+  const d = HW_I18N[currentLang] || HW_I18N['en'];
+  return (d && d[key]) || (HW_I18N['en'] && HW_I18N['en'][key]) || fallback || key;
+}
+function fieldLabel(f) {
+  return ht(f && f.lkey, (f && f.label) || '');
+}
+
 const COMPONENT_ICONS = {
   rear_camera:'<svg class="ti"><use href="#i-camrear"/></svg>', front_camera:'<svg class="ti"><use href="#i-camfront"/></svg>',
   tele_camera:'<svg class="ti"><use href="#i-tele"/></svg>', front_ir_camera:'<svg class="ti"><use href="#i-ir"/></svg>',
@@ -2278,15 +2705,14 @@ const COMPONENT_ICONS = {
   touch_id:'<svg class="ti"><use href="#i-touchid"/></svg>',
 };
 const HW_SECTIONS = [
-  {key:'device',       icon:'<svg class="ti"><use href="#i-id"/></svg>', label:'Identifikace zařízení', kind:'rows'},
-  {key:'cameras',      icon:'<svg class="ti"><use href="#i-camrear"/></svg>', label:'Kamery', kind:'cards'},
-  {key:'components',   icon:'<svg class="ti"><use href="#i-board"/></svg>', label:'Komponenty (sériová čísla dílů)', kind:'cards'},
-  {key:'face_id',      icon:'<svg class="ti"><use href="#i-face"/></svg>', label:'Face ID', kind:'cards'},
-  {key:'mobile_data',  icon:'<svg class="ti"><use href="#i-wifi"/></svg>', label:'Mobilní data', kind:'cards'},
-  {key:'battery',      icon:'<svg class="ti"><use href="#i-battery"/></svg>', label:'Baterie', kind:'rows'},
-  {key:'connectivity', icon:'<svg class="ti"><use href="#i-signal"/></svg>', label:'Konektivita a baseband', kind:'rows'},
-  {key:'display',      icon:'<svg class="ti"><use href="#i-display"/></svg>', label:'Displej', kind:'rows'},
-  {key:'storage',      icon:'<svg class="ti"><use href="#i-storage"/></svg>', label:'Úložiště / hardware', kind:'rows'},
+  {key:'device',       icon:'<svg class="ti"><use href="#i-id"/></svg>', lkey:'sec_device', kind:'rows'},
+  {key:'cameras',      icon:'<svg class="ti"><use href="#i-camrear"/></svg>', lkey:'sec_cameras', kind:'cards'},
+  {key:'components',   icon:'<svg class="ti"><use href="#i-board"/></svg>', lkey:'sec_components', kind:'cards'},
+  {key:'face_id',      icon:'<svg class="ti"><use href="#i-face"/></svg>', lkey:'sec_face_id', kind:'cards'},
+  {key:'mobile_data',  icon:'<svg class="ti"><use href="#i-wifi"/></svg>', lkey:'sec_mobile_data', kind:'cards'},
+  {key:'battery',      icon:'<svg class="ti"><use href="#i-battery"/></svg>', lkey:'sec_battery', kind:'rows'},
+  {key:'connectivity', icon:'<svg class="ti"><use href="#i-signal"/></svg>', lkey:'sec_connectivity', kind:'rows'},
+  {key:'display',      icon:'<svg class="ti"><use href="#i-display"/></svg>', lkey:'sec_display', kind:'rows'},
 ];
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -2300,6 +2726,335 @@ const HW_SECTIONS = [
      · nefunguje jedna kamera     → chyba je v modulu, flexu nebo konektoru
      · vypadl baseband/IMEI/WiFi  → rozlepené vrstvy desky nebo řídicí čip
    ═══════════════════════════════════════════════════════════════════ */
+
+const FAULT_I18N = {
+  "en": {
+    "lbl_probable": "Probable cause",
+    "lbl_possible": "Possible cause",
+    "fh_board": "Most likely a logic board fault.",
+    "fd_board": "Several camera modules on different sides of the device have failed at once. The common cause is usually a control circuit or a delaminated trace on the logic board rather than the modules themselves.",
+    "fc_board_1": "logic board fault",
+    "fc_board_2": "damaged module",
+    "fc_board_3": "broken flex cable",
+    "fh_front_cam": "Most likely a faulty module, flex cable or connector.",
+    "fd_front_cam": "The other cameras respond correctly, so the fault is probably limited to this module.",
+    "fc_front_1": "faulty connector or flex cable",
+    "fc_front_2": "damaged module, often after liquid ingress",
+    "fc_front_3": "logic board fault (less likely)",
+    "fh_rear_cam": "Most likely a faulty camera module.",
+    "fd_rear_cam": "Only one side of the device failed, which points to the module rather than a common cause on the board.",
+    "fn_tele": "The telephoto shares a module with the rear camera. It usually shows up as zoom failing in a certain mode rather than the whole camera dying.",
+    "fn_rear": "A rear camera fault can take out the whole camera module including the telephoto.",
+    "fc_rear_1": "faulty camera module",
+    "fc_rear_2": "liquid damage",
+    "fc_rear_3": "faulty connector or flex cable",
+    "fc_rear_4": "logic board fault (less likely)",
+    "fh_ir_multi": "Increased likelihood of a logic board fault.",
+    "fd_ir_multi": "Several camera modules are down at once. The IR camera does have its own control circuit, so the board is a less common cause here than with ordinary cameras, but the combination of failures points to it.",
+    "fh_ir": "Most likely a damaged module or flex cable.",
+    "fd_ir": "The IR camera has its own control circuit, so a logic board fault is less common than with ordinary cameras.",
+    "fc_ir_1": "damaged module",
+    "fc_ir_2": "liquid ingress",
+    "fc_ir_3": "broken flex cable",
+    "fc_ir_4": "faulty IR camera control circuit",
+    "fh_dot": "Very likely the dot projector itself is damaged.",
+    "fd_dot": "This part is the most sensitive component of Face ID. In more than 99 % of cases the fault is inside the module, not on the board. It is often damaged even by light oxidation or a drop.",
+    "fc_dot_1": "oxidation after contact with water",
+    "fc_dot_2": "minor liquid ingress",
+    "fc_dot_3": "damage after a drop",
+    "fc_dot_4": "module misaligned (rare, under 1 %)",
+    "fh_sensor": "Most likely oxidation or a damaged flex cable.",
+    "fd_sensor": "The sensor sits next to the earpiece, where moisture gets in most easily. Cracks in the earpiece flex are the second most common cause.",
+    "fc_sensor_1": "oxidation",
+    "fc_sensor_2": "liquid ingress",
+    "fc_sensor_3": "cracked earpiece flex",
+    "fc_sensor_4": "damage to the module itself",
+    "fh_batt": "The problem need not be in the battery itself.",
+    "fd_batt": "A missing battery identification is caused just as often by the communication path on the board as by the cell itself.",
+    "fc_batt_1": "faulty battery BMS",
+    "fc_batt_2": "faulty BSI circuit on the logic board",
+    "fc_batt_3": "poor battery connector contact",
+    "fh_bb": "Most often delaminated logic board layers or a faulty {chip}.",
+    "fd_bb": "Cracked interconnects between the upper and lower part of the board are the most common fault, especially on donor boards. Without a working baseband, mobile data will not work.",
+    "fc_bb_1": "delaminated logic board layers",
+    "fc_bb_2": "cracked interposer connections between boards",
+    "fc_bb_3": "faulty {chip}",
+    "chip_generic": "the relevant control chip"
+  },
+  "cs": {
+    "lbl_probable": "Pravděpodobná příčina",
+    "lbl_possible": "Možná příčina",
+    "fh_board": "S vysokou pravděpodobností jde o závadu základní desky.",
+    "fd_board": "Současně je nefunkčních více kamerových modulů na různých stranách zařízení. Společnou příčinou bývá řídicí obvod nebo rozlepený propoj na základní desce, ne samotné moduly.",
+    "fc_board_1": "závada na základní desce",
+    "fc_board_2": "poškozený modul",
+    "fc_board_3": "přerušený flex",
+    "fh_front_cam": "Nejpravděpodobněji vadný modul, flex nebo konektor.",
+    "fd_front_cam": "Ostatní kamery odpovídají, takže závada je nejspíš omezená na tento modul.",
+    "fc_front_1": "vadný konektor nebo flex kabel",
+    "fc_front_2": "poškozený modul, často po vytopení",
+    "fc_front_3": "závada na základní desce (méně pravděpodobná)",
+    "fh_rear_cam": "Nejpravděpodobněji vadný kamerový modul.",
+    "fd_rear_cam": "Selhala jen jedna strana zařízení, což ukazuje spíš na modul než na společnou příčinu na desce.",
+    "fn_tele": "Teleobjektiv sdílí modul se zadní kamerou. Projeví se obvykle nefunkčním zoomem v určitém režimu, ne výpadkem celého fotoaparátu.",
+    "fn_rear": "Zadní kamera může vyřadit celý kamerový modul včetně teleobjektivu.",
+    "fc_rear_1": "vadný kamerový modul",
+    "fc_rear_2": "poškození po vytopení",
+    "fc_rear_3": "vadný konektor nebo flex",
+    "fc_rear_4": "závada základní desky (méně pravděpodobná)",
+    "fh_ir_multi": "Zvýšená pravděpodobnost závady základní desky.",
+    "fd_ir_multi": "Nefunguje víc kamerových modulů naráz. IR kamera má sice vlastní řídicí obvod, takže deska je u ní méně častou příčinou než u běžných kamer, ale kombinace výpadků na ni ukazuje.",
+    "fh_ir": "Nejpravděpodobněji poškozený modul nebo flex.",
+    "fd_ir": "IR kamera má vlastní řídicí obvod, proto je závada základní desky méně častá než u běžných kamer.",
+    "fc_ir_1": "poškozený modul",
+    "fc_ir_2": "vytopení",
+    "fc_ir_3": "přerušený flex",
+    "fc_ir_4": "vadný řídicí obvod IR kamery",
+    "fh_dot": "S velmi vysokou pravděpodobností je poškozen přímo Dot projektor.",
+    "fd_dot": "Tento díl je nejcitlivější částí Face ID. Ve více než 99 % případů je závada uvnitř modulu, ne na desce. Bývá poškozen i po lehké oxidaci nebo pádu.",
+    "fc_dot_1": "oxidace po kontaktu s vodou",
+    "fc_dot_2": "lehké vytopení",
+    "fc_dot_3": "poškození po pádu",
+    "fc_dot_4": "nesprávná poloha modulu (vzácné, do 1 %)",
+    "fh_sensor": "Nejpravděpodobněji oxidace nebo poškozený flex.",
+    "fd_sensor": "Senzor je umístěný u sluchátka, kam se vlhkost dostane nejsnáz. Praskliny na flexu sluchátka jsou druhou nejčastější příčinou.",
+    "fc_sensor_1": "oxidace",
+    "fc_sensor_2": "vytopení",
+    "fc_sensor_3": "prasklý flex sluchátka",
+    "fc_sensor_4": "poškození samotného modulu",
+    "fh_batt": "Problém nemusí být v samotné baterii.",
+    "fd_batt": "Chybějící identifikace baterie stejně často způsobuje komunikační cesta na desce jako článek samotný.",
+    "fc_batt_1": "vadné BMS baterie",
+    "fc_batt_2": "vadný BSI obvod na základní desce",
+    "fc_batt_3": "špatný kontakt konektoru baterie",
+    "fh_bb": "Nejčastěji rozlepené vrstvy základní desky nebo vadný {chip}.",
+    "fd_bb": "Popraskané propoje mezi horní a spodní částí desky jsou nejčastější závadou zejména u donor desek. Bez funkčního basebandu nebudou fungovat mobilní data.",
+    "fc_bb_1": "rozlepené vrstvy základní desky",
+    "fc_bb_2": "popraskané interposer propoje mezi deskami",
+    "fc_bb_3": "vadný {chip}",
+    "chip_generic": "příslušný řídicí čip"
+  },
+  "pl": {
+    "lbl_probable": "Prawdopodobna przyczyna",
+    "lbl_possible": "Możliwa przyczyna",
+    "fh_board": "Z dużym prawdopodobieństwem to usterka płyty głównej.",
+    "fd_board": "Jednocześnie nie działa kilka modułów aparatu po różnych stronach urządzenia. Wspólną przyczyną bywa układ sterujący lub rozwarstwione połączenie na płycie głównej, a nie same moduły.",
+    "fc_board_1": "usterka płyty głównej",
+    "fc_board_2": "uszkodzony moduł",
+    "fc_board_3": "przerwana taśma flex",
+    "fh_front_cam": "Najprawdopodobniej wadliwy moduł, taśma flex lub złącze.",
+    "fd_front_cam": "Pozostałe aparaty odpowiadają, więc usterka jest raczej ograniczona do tego modułu.",
+    "fc_front_1": "wadliwe złącze lub taśma flex",
+    "fc_front_2": "uszkodzony moduł, często po zalaniu",
+    "fc_front_3": "usterka płyty głównej (mniej prawdopodobna)",
+    "fh_rear_cam": "Najprawdopodobniej wadliwy moduł aparatu.",
+    "fd_rear_cam": "Zawiodła tylko jedna strona urządzenia, co wskazuje raczej na moduł niż na wspólną przyczynę na płycie.",
+    "fn_tele": "Teleobiektyw dzieli moduł z aparatem tylnym. Zwykle objawia się to niedziałającym zoomem w danym trybie, a nie awarią całego aparatu.",
+    "fn_rear": "Awaria aparatu tylnego może wyłączyć cały moduł aparatu wraz z teleobiektywem.",
+    "fc_rear_1": "wadliwy moduł aparatu",
+    "fc_rear_2": "uszkodzenie po zalaniu",
+    "fc_rear_3": "wadliwe złącze lub taśma flex",
+    "fc_rear_4": "usterka płyty głównej (mniej prawdopodobna)",
+    "fh_ir_multi": "Zwiększone prawdopodobieństwo usterki płyty głównej.",
+    "fd_ir_multi": "Nie działa kilka modułów aparatu naraz. Kamera IR ma wprawdzie własny układ sterujący, więc płyta jest tu rzadszą przyczyną niż przy zwykłych aparatach, ale kombinacja awarii na nią wskazuje.",
+    "fh_ir": "Najprawdopodobniej uszkodzony moduł lub taśma flex.",
+    "fd_ir": "Kamera IR ma własny układ sterujący, dlatego usterka płyty głównej jest rzadsza niż przy zwykłych aparatach.",
+    "fc_ir_1": "uszkodzony moduł",
+    "fc_ir_2": "zalanie",
+    "fc_ir_3": "przerwana taśma flex",
+    "fc_ir_4": "wadliwy układ sterujący kamery IR",
+    "fh_dot": "Z bardzo dużym prawdopodobieństwem uszkodzony jest sam projektor punktowy.",
+    "fd_dot": "Ta część jest najbardziej wrażliwym elementem Face ID. W ponad 99 % przypadków usterka jest wewnątrz modułu, nie na płycie. Bywa uszkodzona nawet po lekkiej korozji lub upadku.",
+    "fc_dot_1": "korozja po kontakcie z wodą",
+    "fc_dot_2": "lekkie zalanie",
+    "fc_dot_3": "uszkodzenie po upadku",
+    "fc_dot_4": "nieprawidłowe położenie modułu (rzadkie, poniżej 1 %)",
+    "fh_sensor": "Najprawdopodobniej korozja lub uszkodzona taśma flex.",
+    "fd_sensor": "Czujnik znajduje się przy głośniku rozmów, gdzie wilgoć dostaje się najłatwiej. Pęknięcia taśmy flex głośnika to druga najczęstsza przyczyna.",
+    "fc_sensor_1": "korozja",
+    "fc_sensor_2": "zalanie",
+    "fc_sensor_3": "pęknięta taśma flex głośnika",
+    "fc_sensor_4": "uszkodzenie samego modułu",
+    "fh_batt": "Problem nie musi tkwić w samej baterii.",
+    "fd_batt": "Brak identyfikacji baterii równie często powoduje ścieżka komunikacyjna na płycie, co samo ogniwo.",
+    "fc_batt_1": "wadliwy układ BMS baterii",
+    "fc_batt_2": "wadliwy układ BSI na płycie głównej",
+    "fc_batt_3": "zły kontakt złącza baterii",
+    "fh_bb": "Najczęściej rozwarstwione warstwy płyty głównej lub wadliwy {chip}.",
+    "fd_bb": "Pęknięte połączenia między górną a dolną częścią płyty to najczęstsza usterka, zwłaszcza w płytach dawcy. Bez działającego basebandu dane mobilne nie będą działać.",
+    "fc_bb_1": "rozwarstwione warstwy płyty głównej",
+    "fc_bb_2": "pęknięte połączenia interposer między płytami",
+    "fc_bb_3": "wadliwy {chip}",
+    "chip_generic": "odpowiedni układ sterujący"
+  },
+  "ru": {
+    "lbl_probable": "Вероятная причина",
+    "lbl_possible": "Возможная причина",
+    "fh_board": "С высокой вероятностью это неисправность материнской платы.",
+    "fd_board": "Одновременно не работают несколько камерных модулей с разных сторон устройства. Общей причиной обычно является управляющая схема или расслоившееся соединение на плате, а не сами модули.",
+    "fc_board_1": "неисправность платы",
+    "fc_board_2": "повреждённый модуль",
+    "fc_board_3": "обрыв шлейфа",
+    "fh_front_cam": "Скорее всего, неисправен модуль, шлейф или разъём.",
+    "fd_front_cam": "Остальные камеры отвечают, поэтому неисправность, скорее всего, ограничена этим модулем.",
+    "fc_front_1": "неисправный разъём или шлейф",
+    "fc_front_2": "повреждённый модуль, часто после попадания влаги",
+    "fc_front_3": "неисправность платы (менее вероятно)",
+    "fh_rear_cam": "Скорее всего, неисправен модуль камеры.",
+    "fd_rear_cam": "Отказала только одна сторона устройства, что указывает скорее на модуль, чем на общую причину на плате.",
+    "fn_tele": "Телеобъектив делит модуль с основной камерой. Обычно это проявляется неработающим зумом в определённом режиме, а не отказом всей камеры.",
+    "fn_rear": "Неисправность основной камеры может вывести из строя весь модуль, включая телеобъектив.",
+    "fc_rear_1": "неисправный модуль камеры",
+    "fc_rear_2": "повреждение от влаги",
+    "fc_rear_3": "неисправный разъём или шлейф",
+    "fc_rear_4": "неисправность платы (менее вероятно)",
+    "fh_ir_multi": "Повышенная вероятность неисправности платы.",
+    "fd_ir_multi": "Одновременно не работают несколько камерных модулей. У ИК-камеры есть собственная управляющая схема, поэтому плата здесь менее частая причина, чем у обычных камер, но сочетание отказов указывает на неё.",
+    "fh_ir": "Скорее всего, повреждён модуль или шлейф.",
+    "fd_ir": "У ИК-камеры собственная управляющая схема, поэтому неисправность платы здесь встречается реже, чем у обычных камер.",
+    "fc_ir_1": "повреждённый модуль",
+    "fc_ir_2": "попадание влаги",
+    "fc_ir_3": "обрыв шлейфа",
+    "fc_ir_4": "неисправная управляющая схема ИК-камеры",
+    "fh_dot": "С очень высокой вероятностью повреждён сам точечный проектор.",
+    "fd_dot": "Эта деталь — самый чувствительный элемент Face ID. Более чем в 99 % случаев неисправность внутри модуля, а не на плате. Он повреждается даже при лёгком окислении или падении.",
+    "fc_dot_1": "окисление после контакта с водой",
+    "fc_dot_2": "незначительное попадание влаги",
+    "fc_dot_3": "повреждение после падения",
+    "fc_dot_4": "неправильное положение модуля (редко, менее 1 %)",
+    "fh_sensor": "Скорее всего, окисление или повреждённый шлейф.",
+    "fd_sensor": "Датчик расположен у разговорного динамика, куда влага попадает легче всего. Трещины шлейфа динамика — вторая по частоте причина.",
+    "fc_sensor_1": "окисление",
+    "fc_sensor_2": "попадание влаги",
+    "fc_sensor_3": "треснувший шлейф динамика",
+    "fc_sensor_4": "повреждение самого модуля",
+    "fh_batt": "Проблема может быть не в самом аккумуляторе.",
+    "fd_batt": "Отсутствие идентификации аккумулятора столь же часто вызвано линией связи на плате, как и самой ячейкой.",
+    "fc_batt_1": "неисправный BMS аккумулятора",
+    "fc_batt_2": "неисправная цепь BSI на плате",
+    "fc_batt_3": "плохой контакт разъёма аккумулятора",
+    "fh_bb": "Чаще всего расслоение слоёв платы или неисправный {chip}.",
+    "fd_bb": "Треснувшие соединения между верхней и нижней частями платы — самая частая неисправность, особенно у донорских плат. Без рабочего baseband мобильные данные работать не будут.",
+    "fc_bb_1": "расслоение слоёв материнской платы",
+    "fc_bb_2": "треснувшие межплатные соединения interposer",
+    "fc_bb_3": "неисправный {chip}",
+    "chip_generic": "соответствующий управляющий чип"
+  },
+  "it": {
+    "lbl_probable": "Causa probabile",
+    "lbl_possible": "Causa possibile",
+    "fh_board": "Molto probabilmente si tratta di un guasto della scheda madre.",
+    "fd_board": "Contemporaneamente non funzionano più moduli fotocamera su lati diversi del dispositivo. La causa comune è di solito un circuito di controllo o una connessione delaminata sulla scheda madre, non i moduli stessi.",
+    "fc_board_1": "guasto della scheda madre",
+    "fc_board_2": "modulo danneggiato",
+    "fc_board_3": "cavo flex interrotto",
+    "fh_front_cam": "Molto probabilmente modulo, flex o connettore difettoso.",
+    "fd_front_cam": "Le altre fotocamere rispondono, quindi il guasto è probabilmente limitato a questo modulo.",
+    "fc_front_1": "connettore o cavo flex difettoso",
+    "fc_front_2": "modulo danneggiato, spesso dopo infiltrazione di liquidi",
+    "fc_front_3": "guasto della scheda madre (meno probabile)",
+    "fh_rear_cam": "Molto probabilmente modulo fotocamera difettoso.",
+    "fd_rear_cam": "Ha ceduto solo un lato del dispositivo, il che indica il modulo piuttosto che una causa comune sulla scheda.",
+    "fn_tele": "Il teleobiettivo condivide il modulo con la fotocamera posteriore. Di solito si manifesta con lo zoom non funzionante in una certa modalità, non con il guasto dell'intera fotocamera.",
+    "fn_rear": "Un guasto alla fotocamera posteriore può mettere fuori uso l'intero modulo, teleobiettivo compreso.",
+    "fc_rear_1": "modulo fotocamera difettoso",
+    "fc_rear_2": "danni da liquidi",
+    "fc_rear_3": "connettore o flex difettoso",
+    "fc_rear_4": "guasto della scheda madre (meno probabile)",
+    "fh_ir_multi": "Maggiore probabilità di un guasto alla scheda madre.",
+    "fd_ir_multi": "Non funzionano più moduli fotocamera contemporaneamente. La fotocamera IR ha un proprio circuito di controllo, quindi la scheda è una causa meno frequente rispetto alle fotocamere ordinarie, ma la combinazione dei guasti la indica.",
+    "fh_ir": "Molto probabilmente modulo o flex danneggiato.",
+    "fd_ir": "La fotocamera IR ha un proprio circuito di controllo, quindi un guasto della scheda madre è meno frequente rispetto alle fotocamere ordinarie.",
+    "fc_ir_1": "modulo danneggiato",
+    "fc_ir_2": "infiltrazione di liquidi",
+    "fc_ir_3": "flex interrotto",
+    "fc_ir_4": "circuito di controllo della fotocamera IR difettoso",
+    "fh_dot": "Con altissima probabilità è danneggiato il proiettore di punti stesso.",
+    "fd_dot": "Questo componente è la parte più delicata del Face ID. In oltre il 99 % dei casi il guasto è interno al modulo, non sulla scheda. Si danneggia anche dopo una lieve ossidazione o una caduta.",
+    "fc_dot_1": "ossidazione dopo il contatto con l'acqua",
+    "fc_dot_2": "lieve infiltrazione di liquidi",
+    "fc_dot_3": "danni dopo una caduta",
+    "fc_dot_4": "modulo mal posizionato (raro, sotto l'1 %)",
+    "fh_sensor": "Molto probabilmente ossidazione o flex danneggiato.",
+    "fd_sensor": "Il sensore si trova accanto all'auricolare, dove l'umidità entra più facilmente. Le crepe nel flex dell'auricolare sono la seconda causa più frequente.",
+    "fc_sensor_1": "ossidazione",
+    "fc_sensor_2": "infiltrazione di liquidi",
+    "fc_sensor_3": "flex dell'auricolare incrinato",
+    "fc_sensor_4": "danni al modulo stesso",
+    "fh_batt": "Il problema potrebbe non essere nella batteria stessa.",
+    "fd_batt": "La mancata identificazione della batteria è causata altrettanto spesso dal percorso di comunicazione sulla scheda quanto dalla cella stessa.",
+    "fc_batt_1": "BMS della batteria difettoso",
+    "fc_batt_2": "circuito BSI difettoso sulla scheda madre",
+    "fc_batt_3": "cattivo contatto del connettore della batteria",
+    "fh_bb": "Il più delle volte strati della scheda madre delaminati o {chip} difettoso.",
+    "fd_bb": "Le interconnessioni incrinate tra la parte superiore e inferiore della scheda sono il guasto più comune, soprattutto nelle schede donatrici. Senza un baseband funzionante i dati mobili non funzioneranno.",
+    "fc_bb_1": "strati della scheda madre delaminati",
+    "fc_bb_2": "connessioni interposer incrinate tra le schede",
+    "fc_bb_3": "{chip} difettoso",
+    "chip_generic": "il chip di controllo pertinente"
+  },
+  "fr": {
+    "lbl_probable": "Cause probable",
+    "lbl_possible": "Cause possible",
+    "fh_board": "Il s'agit très probablement d'un défaut de la carte mère.",
+    "fd_board": "Plusieurs modules caméra situés de part et d'autre de l'appareil sont défaillants en même temps. La cause commune est généralement un circuit de commande ou une liaison décollée sur la carte mère, et non les modules eux-mêmes.",
+    "fc_board_1": "défaut de la carte mère",
+    "fc_board_2": "module endommagé",
+    "fc_board_3": "nappe coupée",
+    "fh_front_cam": "Très probablement un module, une nappe ou un connecteur défectueux.",
+    "fd_front_cam": "Les autres caméras répondent, le défaut est donc probablement limité à ce module.",
+    "fc_front_1": "connecteur ou nappe défectueux",
+    "fc_front_2": "module endommagé, souvent après une infiltration de liquide",
+    "fc_front_3": "défaut de la carte mère (moins probable)",
+    "fh_rear_cam": "Très probablement un module caméra défectueux.",
+    "fd_rear_cam": "Un seul côté de l'appareil est en défaut, ce qui oriente vers le module plutôt que vers une cause commune sur la carte.",
+    "fn_tele": "Le téléobjectif partage le module avec la caméra arrière. Cela se traduit généralement par un zoom inopérant dans un mode donné, et non par la panne de toute la caméra.",
+    "fn_rear": "Une panne de la caméra arrière peut désactiver tout le module, téléobjectif compris.",
+    "fc_rear_1": "module caméra défectueux",
+    "fc_rear_2": "dégâts des liquides",
+    "fc_rear_3": "connecteur ou nappe défectueux",
+    "fc_rear_4": "défaut de la carte mère (moins probable)",
+    "fh_ir_multi": "Probabilité accrue d'un défaut de la carte mère.",
+    "fd_ir_multi": "Plusieurs modules caméra sont hors service en même temps. La caméra IR possède son propre circuit de commande, la carte est donc une cause moins fréquente ici, mais la combinaison des pannes la désigne.",
+    "fh_ir": "Très probablement un module ou une nappe endommagés.",
+    "fd_ir": "La caméra IR dispose de son propre circuit de commande ; un défaut de carte mère est donc moins fréquent qu'avec les caméras ordinaires.",
+    "fc_ir_1": "module endommagé",
+    "fc_ir_2": "infiltration de liquide",
+    "fc_ir_3": "nappe coupée",
+    "fc_ir_4": "circuit de commande de la caméra IR défectueux",
+    "fh_dot": "Le projecteur de points lui-même est très probablement endommagé.",
+    "fd_dot": "Cette pièce est l'élément le plus sensible de Face ID. Dans plus de 99 % des cas, le défaut se situe dans le module et non sur la carte. Elle est souvent endommagée même après une légère oxydation ou une chute.",
+    "fc_dot_1": "oxydation après contact avec l'eau",
+    "fc_dot_2": "légère infiltration de liquide",
+    "fc_dot_3": "dommage après une chute",
+    "fc_dot_4": "module mal positionné (rare, moins de 1 %)",
+    "fh_sensor": "Très probablement une oxydation ou une nappe endommagée.",
+    "fd_sensor": "Le capteur est situé près de l'écouteur, là où l'humidité pénètre le plus facilement. Les fissures de la nappe d'écouteur sont la deuxième cause la plus fréquente.",
+    "fc_sensor_1": "oxydation",
+    "fc_sensor_2": "infiltration de liquide",
+    "fc_sensor_3": "nappe d'écouteur fissurée",
+    "fc_sensor_4": "dommage du module lui-même",
+    "fh_batt": "Le problème n'est pas forcément dans la batterie elle-même.",
+    "fd_batt": "L'absence d'identification de la batterie est aussi souvent due au chemin de communication sur la carte qu'à la cellule elle-même.",
+    "fc_batt_1": "BMS de la batterie défectueux",
+    "fc_batt_2": "circuit BSI défectueux sur la carte mère",
+    "fc_batt_3": "mauvais contact du connecteur de batterie",
+    "fh_bb": "Le plus souvent, des couches décollées de la carte mère ou un {chip} défectueux.",
+    "fd_bb": "Les interconnexions fissurées entre les parties supérieure et inférieure de la carte sont le défaut le plus courant, surtout sur les cartes donneuses. Sans baseband fonctionnel, les données mobiles ne fonctionneront pas.",
+    "fc_bb_1": "couches décollées de la carte mère",
+    "fc_bb_2": "liaisons interposer fissurées entre les cartes",
+    "fc_bb_3": "{chip} défectueux",
+    "chip_generic": "la puce de commande concernée"
+  }
+};
+
+// Preklad textu odhadu zavady. Vraci text v aktualnim jazyce; {chip} se doplni.
+function ft(key, vars) {
+  const d = FAULT_I18N[currentLang] || FAULT_I18N['en'];
+  let s = (d && d[key]) || (FAULT_I18N['en'] && FAULT_I18N['en'][key]) || key;
+  if (vars) Object.keys(vars).forEach(k => { s = s.split('{' + k + '}').join(vars[k]); });
+  return s;
+}
 
 const FAULT_ENGINE = (function () {
 
@@ -2348,10 +3103,9 @@ const FAULT_ENGINE = (function () {
   /* ── Pravidla pro jednotlivé komponenty ────────────────────────── */
   function analyze(key, comp, ctx) {
     const boardHint = {
-      headline: 'S vysokou pravděpodobností jde o závadu základní desky.',
-      detail: 'Současně je nefunkčních více kamerových modulů na různých ' +
-              'stranách zařízení. Společnou příčinou bývá řídicí obvod nebo ' +
-              'rozlepený propoj na základní desce, ne samotné moduly.',
+      headline: ft('fh_board'),
+      detail: ft('fd_board'),
+      causes: [ft('fc_board_1'), ft('fc_board_2'), ft('fc_board_3')],
       level: 'high',
     };
 
@@ -2361,12 +3115,9 @@ const FAULT_ENGINE = (function () {
       case 'front_camera':
         if (ctx.multiSideFailure) return boardHint;
         return {
-          headline: 'Nejpravděpodobněji vadný modul, flex nebo konektor.',
-          detail: 'Ostatní kamery odpovídají, takže závada je nejspíš ' +
-                  'omezená na tento modul.',
-          causes: ['vadný konektor nebo flex kabel',
-                   'poškozený modul, často po vytopení',
-                   'závada na základní desce (méně pravděpodobná)'],
+          headline: ft('fh_front_cam'),
+          detail: ft('fd_front_cam'),
+          causes: [ft('fc_front_1'), ft('fc_front_2'), ft('fc_front_3')],
           level: 'medium',
         };
 
@@ -2374,18 +3125,11 @@ const FAULT_ENGINE = (function () {
       case 'rear_camera':
       case 'tele_camera': {
         if (ctx.multiSideFailure) return boardHint;
-        const note = key === 'tele_camera'
-          ? 'Teleobjektiv sdílí modul se zadní kamerou. Projeví se obvykle ' +
-            'nefunkčním zoomem v určitém režimu, ne výpadkem celého fotoaparátu.'
-          : 'Zadní kamera může vyřadit celý kamerový modul včetně teleobjektivu.';
+        const note = key === 'tele_camera' ? ft('fn_tele') : ft('fn_rear');
         return {
-          headline: 'Nejpravděpodobněji vadný kamerový modul.',
-          detail: 'Selhala jen jedna strana zařízení, což ukazuje spíš na modul ' +
-                  'než na společnou příčinu na desce. ' + note,
-          causes: ['vadný kamerový modul',
-                   'poškození po vytopení',
-                   'vadný konektor nebo flex',
-                   'závada základní desky (méně pravděpodobná)'],
+          headline: ft('fh_rear_cam'),
+          detail: ft('fd_rear_cam') + ' ' + note,
+          causes: [ft('fc_rear_1'), ft('fc_rear_2'), ft('fc_rear_3'), ft('fc_rear_4')],
           level: 'medium',
         };
       }
@@ -2393,33 +3137,24 @@ const FAULT_ENGINE = (function () {
       /* ── IR kamera ── */
       case 'front_ir_camera':
         if (ctx.multiSideFailure) return {
-          headline: 'Zvýšená pravděpodobnost závady základní desky.',
-          detail: 'Nefunguje víc kamerových modulů naráz. IR kamera má sice ' +
-                  'vlastní řídicí obvod, takže deska je u ní méně častou ' +
-                  'příčinou než u běžných kamer, ale kombinace výpadků na ni ukazuje.',
-          causes: ['závada na základní desce', 'poškozený modul', 'přerušený flex'],
+          headline: ft('fh_ir_multi'),
+          detail: ft('fd_ir_multi'),
+          causes: [ft('fc_board_1'), ft('fc_board_2'), ft('fc_board_3')],
           level: 'high',
         };
         return {
-          headline: 'Nejpravděpodobněji poškozený modul nebo flex.',
-          detail: 'IR kamera má vlastní řídicí obvod, proto je závada základní ' +
-                  'desky méně častá než u běžných kamer.',
-          causes: ['poškozený modul', 'vytopení', 'přerušený flex',
-                   'vadný řídicí obvod IR kamery'],
+          headline: ft('fh_ir'),
+          detail: ft('fd_ir'),
+          causes: [ft('fc_ir_1'), ft('fc_ir_2'), ft('fc_ir_3'), ft('fc_ir_4')],
           level: 'medium',
         };
 
       /* ── Dot projektor ── */
       case 'true_depth_projector':
         return {
-          headline: 'S velmi vysokou pravděpodobností je poškozen přímo Dot projektor.',
-          detail: 'Tento díl je nejcitlivější částí Face ID. Ve více než 99 % ' +
-                  'případů je závada uvnitř modulu, ne na desce. Bývá poškozen ' +
-                  'i po lehké oxidaci nebo pádu.',
-          causes: ['oxidace po kontaktu s vodou',
-                   'lehké vytopení',
-                   'poškození po pádu',
-                   'nesprávná poloha modulu (vzácné, do 1 %)'],
+          headline: ft('fh_dot'),
+          detail: ft('fd_dot'),
+          causes: [ft('fc_dot_1'), ft('fc_dot_2'), ft('fc_dot_3'), ft('fc_dot_4')],
           level: 'high',
         };
 
@@ -2427,23 +3162,18 @@ const FAULT_ENGINE = (function () {
       case 'ambient_light_sensor':
       case 'distance_sensor':
         return {
-          headline: 'Nejpravděpodobněji oxidace nebo poškozený flex.',
-          detail: 'Senzor je umístěný u sluchátka, kam se vlhkost dostane ' +
-                  'nejsnáz. Praskliny na flexu sluchátka jsou druhou nejčastější příčinou.',
-          causes: ['oxidace', 'vytopení', 'prasklý flex sluchátka',
-                   'poškození samotného modulu'],
+          headline: ft('fh_sensor'),
+          detail: ft('fd_sensor'),
+          causes: [ft('fc_sensor_1'), ft('fc_sensor_2'), ft('fc_sensor_3'), ft('fc_sensor_4')],
           level: 'medium',
         };
 
       /* ── Baterie ── */
       case 'battery':
         return {
-          headline: 'Problém nemusí být v samotné baterii.',
-          detail: 'Chybějící identifikace baterie stejně často způsobuje ' +
-                  'komunikační cesta na desce jako článek samotný.',
-          causes: ['vadné BMS baterie',
-                   'vadný BSI obvod na základní desce',
-                   'špatný kontakt konektoru baterie'],
+          headline: ft('fh_batt'),
+          detail: ft('fd_batt'),
+          causes: [ft('fc_batt_1'), ft('fc_batt_2'), ft('fc_batt_3')],
           level: 'medium',
         };
 
@@ -2461,15 +3191,11 @@ const FAULT_ENGINE = (function () {
           wifi_serial: 'Wi-Fi IC',
           wifi_mac: 'Wi-Fi IC',
           bluetooth_mac: 'Bluetooth IC',
-        }[key] || 'příslušný řídicí čip';
+        }[key] || ft('chip_generic');
         return {
-          headline: 'Nejčastěji rozlepené vrstvy základní desky nebo vadný ' + chip + '.',
-          detail: 'Popraskané propoje mezi horní a spodní částí desky jsou ' +
-                  'nejčastější závadou zejména u donor desek. Bez funkčního ' +
-                  'basebandu nebudou fungovat mobilní data.',
-          causes: ['rozlepené vrstvy základní desky',
-                   'popraskané interposer propoje mezi deskami',
-                   'vadný ' + chip],
+          headline: ft('fh_bb', {chip: chip}),
+          detail: ft('fd_bb'),
+          causes: [ft('fc_bb_1'), ft('fc_bb_2'), ft('fc_bb_3', {chip: chip})],
           level: 'high',
         };
       }
@@ -2498,7 +3224,7 @@ const FAULT_ENGINE = (function () {
       <div class="fault-hint" style="margin-top:9px;padding:9px 11px;border-radius:9px;
            border:1px solid ${tone.bd};background:${tone.bg};font-size:10.5px;line-height:1.5">
         <div style="font-weight:700;color:${tone.fg};margin-bottom:3px">
-          ${r.level === 'high' ? 'Pravděpodobná příčina' : 'Možná příčina'}
+          ${r.level === 'high' ? ft('lbl_probable') : ft('lbl_possible')}
         </div>
         <div style="color:#3a4457">${r.headline}</div>
         ${r.detail ? `<div style="color:#6b7280;margin-top:4px">${r.detail}</div>` : ''}
@@ -2518,12 +3244,12 @@ function renderComponentCard(key, c) {
   const hasVerification = c.status !== undefined && c.status !== null;
   if (hasVerification) {
     const cfg = {
-      MATCH:                    {badge:'✓ Shodné', bg:'#f0fdf4', bd:'#bbf7d0', fg:'#16a34a'},
-      MISMATCH:                 {badge:'✕ Možná vyměněno', bg:'#fef2f2', bd:'#fecaca', fg:'#dc2626'},
-      POSSIBLE_FAULT:           {badge:'⚠ Možná závada', bg:'#fffbeb', bd:'#fde68a', fg:'#b45309'},
-      FACTORY_VALUE_UNAVAILABLE:{badge:'Bez tovární reference', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
-      CURRENT_VALUE_UNAVAILABLE:{badge:'Nelze přečíst', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
-      UNAVAILABLE:               {badge:'Nedostupné', bg:'#f9f9f9', bd:'#e8e8e8', fg:'#9ca3af'},
+      MATCH:                    {badge:ht('badge_match'), bg:'#f0fdf4', bd:'#bbf7d0', fg:'#16a34a'},
+      MISMATCH:                 {badge:ht('badge_mismatch'), bg:'#fef2f2', bd:'#fecaca', fg:'#dc2626'},
+      POSSIBLE_FAULT:           {badge:ht('badge_fault'), bg:'#fffbeb', bd:'#fde68a', fg:'#b45309'},
+      FACTORY_VALUE_UNAVAILABLE:{badge:ht('badge_nofactory'), bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
+      CURRENT_VALUE_UNAVAILABLE:{badge:ht('badge_unreadable'), bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'},
+      UNAVAILABLE:               {badge:ht('badge_unavailable'), bg:'#f9f9f9', bd:'#e8e8e8', fg:'#9ca3af'},
     }[c.status] || {badge:c.status, bg:'#f9f9f9', bd:'#e8e8e8', fg:'#6b7280'};
     // Aktualni hodnota: zelena pri shode, oranzova pri neshode, jantarova pri
     // "mozna zavada" (chybi cele), jinak cerna.
@@ -2532,26 +3258,26 @@ function renderComponentCard(key, c) {
                    : c.status === 'POSSIBLE_FAULT' ? '#b45309'
                    : '#0a0a0a';
     const curWeight = (c.status === 'MATCH' || c.status === 'MISMATCH' || c.status === 'POSSIBLE_FAULT') ? '700' : '400';
-    const curText = c.status === 'POSSIBLE_FAULT' ? 'Možná závada' : (c.current_value ? esc(c.current_value) : '—');
+    const curText = c.status === 'POSSIBLE_FAULT' ? ht('val_fault') : (c.current_value ? esc(c.current_value) : '—');
     return `<div style="border:1.5px solid ${cfg.bd};background:${cfg.bg};border-radius:11px;padding:12px 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(c.label)}</span>
+        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(fieldLabel(c))}</span>
         <span style="font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
       </div>
       <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
-        <div>Tovární: <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
-        <div>Aktuální: <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
+        <div>${ht('val_factory')} <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
+        <div>${ht('val_current')} <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
       </div>
       ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
     </div>`;
   }
   return `<div style="border:1.5px solid ${c.available?'#e8e8e8':'#fde68a'};border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fffbeb'}">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(c.label)}</span>
-      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:20px;border:1px solid ${c.available?'#bbf7d0':'#fde68a'};color:${c.available?'#16a34a':'#b45309'};background:#fff">${c.available?'✓ Funkční':'⚠ Možná závada'}</span>
+      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(fieldLabel(c))}</span>
+      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:20px;border:1px solid ${c.available?'#bbf7d0':'#fde68a'};color:${c.available?'#16a34a':'#b45309'};background:#fff">${c.available?ht('functional'):ht('badge_fault')}</span>
     </div>
     <div style="font-family:var(--mono,monospace);font-size:12.5px;${c.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'};word-break:break-all">
-      ${c.available ? esc(c.value) : 'nedostupné'}
+      ${c.available ? esc(c.value) : ht('val_unavailable')}
     </div>
     ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
   </div>`;
@@ -2585,20 +3311,21 @@ function showFullValue(encLabel, encVal){
 
 function renderHwRow(f) {
   const LONG = 28;               // delší hodnoty se zkrátí a zpřístupní přes popup
+  const _flabel = fieldLabel(f);
   let valHtml;
   if (f.available) {
     const v = String(f.value);
     if (v.length > LONG) {
       const short = v.slice(0, 18) + '…';
-      valHtml = `<span style="cursor:pointer" title="Zobrazit celé číslo" onclick="showFullValue('${_enc(f.label)}','${_enc(v)}')"><span style="color:#0a0a0a;font-weight:600">${esc(short)}</span> <span style="color:#ec4899;font-weight:700">⤢</span></span>`;
+      valHtml = `<span style="cursor:pointer" title="Zobrazit celé číslo" onclick="showFullValue('${_enc(_flabel)}','${_enc(v)}')"><span style="color:#0a0a0a;font-weight:600">${esc(short)}</span> <span style="color:#ec4899;font-weight:700">⤢</span></span>`;
     } else {
       valHtml = `<span style="color:#0a0a0a;font-weight:600">${esc(v)}</span>`;
     }
   } else {
-    valHtml = `<span style="color:#c4c4c4">nedostupné</span>`;
+    valHtml = `<span style="color:#c4c4c4">${ht('val_unavailable')}</span>`;
   }
   return `<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 12px;font-size:12.5px;border-top:1px solid #f0f0f0">
-    <span style="color:#374151;white-space:nowrap">${esc(f.label)}</span>
+    <span style="color:#374151;white-space:nowrap">${esc(_flabel)}</span>
     <span style="font-family:var(--mono,monospace);font-size:12px;text-align:right;word-break:break-all">${valHtml}</span>
   </div>`;
 }
@@ -2619,17 +3346,15 @@ async function openComponentSerialsModal(id) {
   m.innerHTML = `<div style="background:#fff;color:#0a0a0a;max-width:720px;width:100%;max-height:88vh;overflow:auto;border-radius:0;padding:28px;font-family:var(--sans,sans-serif);box-shadow:0 20px 60px rgba(0,0,0,.35)">
     <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px">
       <div>
-        <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">Hardwarový report</div>
+        <div style="font-family:var(--mono,monospace);font-size:10.5px;font-weight:700;color:#ec4899;letter-spacing:.08em;text-transform:uppercase;margin-bottom:4px">${ht('hw_title')}</div>
         <div style="font-size:18px;font-weight:700">${esc(slot.device.model || 'iPhone')}</div>
       </div>
       <button onclick="document.getElementById('comp-serials-modal').style.display='none'" style="background:#f4f4f5;border:none;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer;color:#6b7280;line-height:1">×</button>
     </div>
     <div style="font-size:12px;color:#6b7280;line-height:1.6;margin:12px 0 18px;padding:10px 12px;background:#fdf2f8;border:1px solid #fbcfe8;border-radius:9px">
-      🔎 Appka <b>nemá přístup k tovární databázi Apple</b>, proto <b>neurčuje</b>, jestli je díl originál
-      nebo vyměněný — zobrazuje jen to, co telefon aktuálně hlásí. Wi-Fi/Bluetooth jsou <b>MAC adresy</b>,
-      IMEI je identifikátor zařízení — nejsou to sériová čísla dílů.
+      🔎 ${ht('hw_disclaimer')}
     </div>
-    <div id="comp-serials-body" style="text-align:center;padding:40px 0;color:#9ca3af;font-family:var(--mono,monospace);font-size:12px">Načítám…</div>
+    <div id="comp-serials-body" style="text-align:center;padding:40px 0;color:#9ca3af;font-family:var(--mono,monospace);font-size:12px">${ht('hw_loading')}</div>
   </div>`;
 
   try {
@@ -2637,7 +3362,7 @@ async function openComponentSerialsModal(id) {
     const body = document.getElementById('comp-serials-body');
     if (!body) return;
     if (!r || !r.ok || !r.sections) {
-      body.innerHTML = `<div style="color:#dc2626">Nepodařilo se načíst: ${esc((r && r.error) || 'neznámá chyba')}</div>`;
+      body.innerHTML = `<div style="color:#dc2626">${ht('hw_failed')} ${esc((r && r.error) || '—')}</div>`;
       return;
     }
     body.style.padding = '0'; body.style.textAlign = 'left';
@@ -2651,14 +3376,14 @@ async function openComponentSerialsModal(id) {
       })),
     });
 
-    const _bioTouch = r.sections.biometry_kind === 'touch_id';
+    const _bioTouch = r.biometry_kind === 'touch_id';
     body.innerHTML = HW_SECTIONS.map(sec => {
       const data = r.sections[sec.key];
       if (!data || !Object.keys(data).length) return '';
       // Jedna sekce, dva vyznamy: Touch ID telefony TrueDepth modul nemaji.
       if (sec.key === 'face_id') {
         sec = { ...sec,
-                label: _bioTouch ? 'Touch ID' : 'Face ID',
+                lkey: _bioTouch ? 'sec_touch_id' : 'sec_face_id',
                 icon: _bioTouch ? '<svg class="ti"><use href="#i-touchid"/></svg>' : sec.icon };
       }
       const entries = Object.entries(data);
@@ -2675,14 +3400,14 @@ async function openComponentSerialsModal(id) {
       }
       return `<div style="margin-bottom:20px">
         <div style="font-family:var(--mono,monospace);font-size:11px;font-weight:700;color:#0a0a0a;letter-spacing:.05em;text-transform:uppercase;margin-bottom:9px;display:flex;align-items:center;gap:8px">
-          <span>${sec.icon}</span>${sec.label}
+          <span>${sec.icon}</span>${ht(sec.lkey)}
           <span style="font-weight:400;color:#9ca3af">${availCount}/${entries.length}</span>
         </div>
         ${inner}
       </div>`;
     }).join('') +
       `<div style="font-family:var(--mono,monospace);font-size:10.5px;color:#9ca3af;margin-top:4px;text-align:center">
-        Přečteno hodnot: ${r.summary.fields_available} / ${r.summary.fields_total}
+        ${ht('hw_read')} ${r.summary.fields_available} / ${r.summary.fields_total}
       </div>`;
   } catch (e) {
     const body = document.getElementById('comp-serials-body');

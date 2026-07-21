@@ -2243,6 +2243,7 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
         if not applicable:
             item["read_state"] = "not_applicable"
             item["note"] = "Tato generace tuto komponentu nemá"
+            item["note_key"] = "note_not_applicable"
         elif value:
             item["read_state"] = "read"
         else:
@@ -6398,9 +6399,66 @@ def api_v27_syscfg_als_transform_scan(udid):
 # identita zarizeni / komponenty (serialy) / baterie (diagnostika) /
 # konektivita (ADRESY, ne serialy) / displej / uloziste.
 # Cte JEN to, co telefon realne vyda; chybejici pole ma available:false.
+# ─── I18N POPISKU REPORTU ────────────────────────────────────────────────────
+# Server posila STABILNI KLIC (lkey) vedle ceskeho popisku. Preklad resi UI
+# (HW_I18N v iphone-diagnostic.html), aby technik videl report ve svem jazyce.
+# Cesky "label" zustava jako fallback, kdyby klic v UI chybel.
+_HW_LKEY = {
+    "Firmware modemu (Baseband)": "modem_fw",
+    "Modem firmware (Baseband)": "modem_fw",
+    "Stav basebandu": "baseband_status",
+    "Baseband chip ID": "baseband_chipid",
+    "SIM (ICCID)": "iccid",
+    "Modem funkční (firmware čitelný)": "modem_ok",
+    "Sériové číslo": "serial",
+    "Sériové číslo displeje": "display_serial",
+    "IMEI": "imei",
+    "IMEI2": "imei2",
+    "MEID": "meid",
+    "ProductType": "product_type",
+    "Model": "model",
+    "Model number (A)": "model_number_a",
+    "iOS": "ios",
+    "Build": "build",
+    "Kondice (%)": "battery_health",
+    "Počet cyklů": "battery_cycles",
+    "Návrhová kapacita (mAh)": "design_capacity",
+    "Aktuální kapacita (mAh)": "nominal_capacity",
+    "Nabíjí se": "is_charging",
+    "Plně nabito": "fully_charged",
+    "Napájení připojeno": "external_connected",
+    "Teplota": "temperature",
+    "Napětí": "voltage",
+    "Bluetooth adresa (MAC)": "bluetooth_mac",
+    "Ethernet adresa (MAC)": "ethernet_mac",
+    "Wi-Fi adresa (MAC)": "wifi_mac",
+    "Wi-Fi SN": "wifi_sn",
+    "Panel ID": "panel_id",
+    "Základní deska": "mainboard",
+    "Displej": "screen",
+    "Baterie": "battery",
+    "Taptic Engine": "taptic_engine",
+    "Zadní kamera": "rear_camera",
+    "Přední kamera": "front_camera",
+    "Teleobjektiv": "tele_camera",
+    "IR kamera": "front_ir_camera",
+    "Dot projektor (Lattice)": "true_depth_projector",
+    "Distance senzor": "distance_sensor",
+    "Proximity / display flex": "proximity_flex",
+    "Touch ID (Mesa)": "touch_id",
+}
+
+
+def _lkey(label):
+    return _HW_LKEY.get(str(label or "").strip())
+
+
 def _hw_field(label, value, source=None):
     scalar = _component_serial_scalar(value) if value is not None else None
     out = {"label": label, "value": scalar, "available": bool(scalar)}
+    lk = _lkey(label)
+    if lk:
+        out["lkey"] = lk
     if source:
         out["source"] = source
     return out
@@ -6447,6 +6505,9 @@ async def _hardware_report_collect(udid):
     def from_comp(key, label):
         c = comp.get(key, {})
         out = {"label": label, "value": c.get("value"), "available": bool(c.get("value"))}
+        lk = _lkey(label)
+        if lk:
+            out["lkey"] = lk
         # zachovej pripadna budouci verifikacni pole (forward-kompatibilita)
         for k in ("factory_value", "current_value", "match", "status", "note"):
             if k in c:
