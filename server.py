@@ -1883,6 +1883,7 @@ def _find_nodes_in_tree(tree, target):
             return
         if isinstance(node, dict):
             if target in (node.get("name"), node.get("className")):
+                # Vracime jen indikaci existence - vlastnosti tu stejne nejsou.
                 found.append({k: v for k, v in node.items() if k != "children"})
             kids = node.get("children")
             if isinstance(kids, (list, tuple)):
@@ -2036,14 +2037,16 @@ async def _read_hw_sources(udid):
         # property lookup najde spravnou hodnotu bez ohledu na generaci.
         collected = []
         for target in targets:
-            # 1) lokalne ve stromu - zdarma a bez rizika pro relaci
-            local = _find_nodes_in_tree(io_service, target) if io_service else []
-            if local:
-                collected.extend(local)
-                continue
-            # 2) uzel ve stromu neni -> uz se telefonu NEPTAME, dotaz na
-            #    neexistujici uzel shodi relaci. Ptame se jen kdyz strom chybi.
-            if io_service:
+            # Strom slouzi VYHRADNE k rozhodnuti, jestli uzel na tehle generaci
+            # existuje. Vlastnosti (serialy) v nem NEJSOU - dump roviny nese jen
+            # className / name / state / regEntry / inheritance. Overeno na
+            # forenznim dumpu: AppleSandDollar ma ve stromu 5 klicu, kdezto
+            # cileny dotaz vrati vc. SerialNumber.
+            # Proc to takhle: dotaz na NEEXISTUJICI uzel iOS neodmitne, ale
+            # ukonci relaci (ConnectionTerminatedError) - pri ~20 chybejicich
+            # uzlech to bylo 20 reconnectu = 10-15 s na sken. Timhle se ptame
+            # jen na to, co tam realne je.
+            if io_service and not _find_nodes_in_tree(io_service, target):
                 continue
             obj = await _read_ioreg(_svc, f"{label}:{target}", target, errors, _reopen)
             if obj:
