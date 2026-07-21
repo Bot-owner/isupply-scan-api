@@ -123,6 +123,7 @@ LICENSE_KEY    = None   # nastaveno ze souboru licence.key
 SESSION_TOKEN  = None   # JWT token z Railway API
 TOKEN_FILE     = os.path.join(_get_base_dir(), '.token_cache')
 LICENSE_FILE   = os.path.join(_get_base_dir(), 'licence.key')
+COLORS_FILE    = os.path.join(_get_base_dir(), 'model_colors.json')
 
 import scan_quota  # odecitani skenu z kvoty (klientska cast)
 
@@ -564,6 +565,80 @@ def resolve_model(product_type, sales_model=None):
 
 # ─── USB DETEKCE – vlastní event loop v separátním vlákně ───────────────────
 
+# ─── BARVA ZARIZENI ──────────────────────────────────────────────────────────
+# Barva se NEHADA. Zdrojem je model_colors.json vedle aplikace, kde je mapovani
+# Apple part number (ModelNumber) -> barva, doplnovane z fyzicky overenych kusu.
+# Neznamy kod se zapise do sekce "unknown", aby bylo videt, co doplnit.
+_COLORS_CACHE = {"mtime": None, "map": {}}
+_colors_lock = threading.Lock()
+
+
+def _load_model_colors():
+    """Nacte model_colors.json. Pri zmene souboru se cache obnovi sama."""
+    try:
+        mtime = os.path.getmtime(COLORS_FILE)
+    except Exception:
+        return {}
+    if _COLORS_CACHE["mtime"] == mtime:
+        return _COLORS_CACHE["map"]
+    try:
+        with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        mapping = {}
+        for code, rec in (data.get("colors") or {}).items():
+            name = rec.get("color") if isinstance(rec, dict) else rec
+            if code and name:
+                mapping[str(code).strip().upper()] = str(name)
+        _COLORS_CACHE.update(mtime=mtime, map=mapping)
+        return mapping
+    except Exception as exc:
+        print(f"  [barva] model_colors.json se nepodarilo nacist: {exc}")
+        return _COLORS_CACHE["map"]
+
+
+def _color_for_model_number(model_number):
+    """ModelNumber -> barva, nebo None. Lockdown vraci 'MMX73' i 'MMX73LL/A',
+    proto se hleda i podle prvnich peti znaku."""
+    code = str(model_number or "").strip().upper()
+    if not code:
+        return None
+    mapping = _load_model_colors()
+    if code in mapping:
+        return mapping[code]
+    if len(code) > 5 and code[:5] in mapping:
+        return mapping[code[:5]]
+    return None
+
+
+def _remember_unknown_color(model_number, product_type=""):
+    """Zapise nezname kody do model_colors.json -> sekce "unknown", at je
+    videt, co doplnit. Nikdy nic nehada a nepretisuje overene zaznamy."""
+    code = str(model_number or "").strip().upper()
+    if not code:
+        return
+    with _colors_lock:
+        try:
+            if os.path.exists(COLORS_FILE):
+                with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            else:
+                data = {"colors": {}}
+            if code in (data.get("colors") or {}):
+                return
+            unknown = data.setdefault("unknown", {})
+            if code in unknown:
+                return
+            unknown[code] = {"color": "", "product_type": product_type,
+                             "poznamka": "doplnit barvu podle fyzickeho kusu"}
+            tmp = COLORS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, COLORS_FILE)
+            print(f"  [barva] novy neznamy kod {code} ({product_type}) zapsan do model_colors.json")
+        except Exception as exc:
+            print(f"  [barva] zapis neznameho kodu selhal: {exc}")
+
+
 def get_device_info(udid):
     """
     Získá info o zařízení. Běží v samostatném vlákně s vlastním event loop.
@@ -637,31 +712,23 @@ def get_device_info(udid):
                     continue
 
         # ── Barva ─────────────────────────────────────────────────
-        # DeviceEnclosureColor = skutečná barva těla; DeviceColor bývá jen přední sklo.
-        COLOR_MAP_NUM = {
-            '1': 'Space Gray', '2': 'Silver', '3': 'Gold',
-            '4': 'Space Black', '5': 'Rose Gold',
-        }
-        COLOR_MAP_HEX = {
-            '#1d1d1f': 'Black', '#f5f5f0': 'White', '#faf6f2': 'White',
-            '#e8e0d5': 'Starlight', '#3d3c3d': 'Space Gray',
-            '#f2f2f2': 'Silver', '#aec8e0': 'Blue', '#6e7a6e': 'Alpine Green',
-            '#354e49': 'Deep Purple', '#f9e5c8': 'Yellow', '#e8d1c4': 'Pink',
-            '#2c2c2e': 'Midnight', '#5b6a78': 'Blue Titanium',
-            '#4e4b46': 'Black Titanium', '#d4c5b0': 'Natural Titanium',
-            '#e8e3d8': 'White Titanium', '#c6c8ca': 'Silver', '#e8e1d5': 'Gold',
-        }
-        def _map_color(raw):
-            raw = str(raw or '').strip()
-            if raw.startswith('#'):
-                return COLOR_MAP_HEX.get(raw.lower())
-            if raw.isdigit():
-                return COLOR_MAP_NUM.get(raw)
-            return raw or None
-        _enc = str(vals.get('DeviceEnclosureColor') or '')
+        # OVERENO 2026-07-21 na dvou kusech: DeviceEnclosureColor v all_values
+        # na iOS 18.6 / 26.x VUBEC NENI a DeviceColor vraci '1' jak u cerveneho
+        # SE 2022 (iPhone14,6), tak u ruzoveho iPhonu 15 (iPhone15,4). Z toho
+        # klice se barva urcit NEDA - drivejsi prevodni tabulka 1..5 hlasila
+        # obema "Space Gray". Jediny per-kus udaj, ktery barvu nese, je
+        # ModelNumber (Apple part number). Tabulka je v model_colors.json a
+        # doplnuje se z fyzicky overenych kusu. Kdyz kod v tabulce neni,
+        # vratime 'N/A' - radeji zadna barva nez vymyslena.
+        _model_number = str(vals.get('ModelNumber') or '').strip().upper()
+        color = _color_for_model_number(_model_number)
         _dev = str(vals.get('DeviceColor') or '')
-        color = _map_color(_enc) or _map_color(_dev) or _enc or _dev or 'N/A'
-        print(f"  Barva: DeviceEnclosureColor={_enc!r} DeviceColor={_dev!r} -> {color}")
+        if not color:
+            color = 'N/A'
+            if _model_number:
+                _remember_unknown_color(_model_number,
+                                        str(vals.get('ProductType') or ''))
+        print(f"  Barva: ModelNumber={_model_number!r} DeviceColor={_dev!r} -> {color}")
 
         # ── Baterie – kondice z com.apple.mobile.battery ──────────
         battery_pct = vals.get('BatteryCurrentCapacity', 0) or 0
@@ -6511,7 +6578,6 @@ async def _hardware_report_collect(udid):
         "device": device, "cameras": cameras, "face_id": face_id, "mobile_data": mobile_data,
         "components": components, "battery": battery_diag,
         "connectivity": connectivity, "display": display,
-        "biometry_kind": ("touch_id" if _touch_id_device else "face_id"),
     }
     total = sum(len(s) for s in sections.values())
     available = sum(1 for s in sections.values() for f in s.values() if f.get("available"))
@@ -6519,6 +6585,9 @@ async def _hardware_report_collect(udid):
     return {
         "ok": True, "udid": udid,
         "sections": sections,
+        # Mimo "sections" zamerne: vsechno v sections musi byt slovnik poli,
+        # jinak souctove smycky vyse spadnou na .values().
+        "biometry_kind": ("touch_id" if _touch_id_device else "face_id"),
         "summary": {"fields_total": total, "fields_available": available},
         "errors": errors,
     }
