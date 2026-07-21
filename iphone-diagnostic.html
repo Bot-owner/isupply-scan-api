@@ -1769,7 +1769,8 @@ function connectDevice(id, device) {
 function disconnectDevice(id) {
   const slot = slots[id];
   if (slot.device) usedDevices = usedDevices.filter(i=>i!==slot.device.imei);
-  Object.assign(slot, {state:'empty', device:null, tests:[], progress:0, grade:null, testedAt:null});
+  Object.assign(slot, {state:'empty', device:null, tests:[], progress:0, grade:null,
+                       testedAt:null, _hwReport:null, _hwPending:false});
   render();
 }
 
@@ -1808,6 +1809,28 @@ async function fetchPanics(udid) {
     const r = await fetchJSON(`/api/panic-logs/${encodeURIComponent(udid)}`, {}, 90000);
     return (r && r.panics) ? r.panics : [];
   } catch (e) { return null; }
+}
+
+// Hardware report se stahuje na POZADI hned po dotestovani, aby technik
+// nemusel pri kliknuti cekat. Server ma navic cache syrovych zdroju, takze
+// tohle uz nesaha na telefon - jen slozi report z toho, co test precetl.
+async function prefetchHwReport(id) {
+  const slot = slots[id];
+  if (!slot || !slot.device || !slot.device.udid) return;
+  const udid = slot.device.udid;
+  if (slot._hwPending) return;
+  slot._hwPending = true;
+  try {
+    const r = await fetchJSON(`/api/hardware-report/${encodeURIComponent(udid)}`, {}, 90000);
+    // Ulozit jen kdyz je ve slotu porad TENTYZ telefon.
+    if (slot.device && slot.device.udid === udid && r && r.ok && r.sections) {
+      slot._hwReport = r;
+    }
+  } catch (e) {
+    // Nevadi - modal si data dotahne sam.
+  } finally {
+    slot._hwPending = false;
+  }
 }
 
 async function fetchComponentPresence(udid) {
@@ -1876,6 +1899,7 @@ function finishTesting(id) {
   addToDatabase(slot);
   render();
   showToast(`${t('toast_done')} ${slot.device.model}`);
+  prefetchHwReport(id);
   if (autoActivateEnabled && slot.device && slot.device.udid) {
     setTimeout(() => activateDevice(id), 600);
   }
@@ -3261,8 +3285,8 @@ function renderComponentCard(key, c) {
     const curText = c.status === 'POSSIBLE_FAULT' ? ht('val_fault') : (c.current_value ? esc(c.current_value) : '—');
     return `<div style="border:1.5px solid ${cfg.bd};background:${cfg.bg};border-radius:11px;padding:12px 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(fieldLabel(c))}</span>
-        <span style="font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
+        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto"><span style="flex:0 0 auto">${icon}</span><span style="min-width:0">${esc(fieldLabel(c))}</span></span>
+        <span style="flex:0 0 auto;white-space:nowrap;font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
       </div>
       <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
         <div>${ht('val_factory')} <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
@@ -3273,8 +3297,8 @@ function renderComponentCard(key, c) {
   }
   return `<div style="border:1.5px solid ${c.available?'#e8e8e8':'#fde68a'};border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fffbeb'}">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px"><span>${icon}</span>${esc(fieldLabel(c))}</span>
-      <span style="font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:20px;border:1px solid ${c.available?'#bbf7d0':'#fde68a'};color:${c.available?'#16a34a':'#b45309'};background:#fff">${c.available?ht('functional'):ht('badge_fault')}</span>
+      <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto"><span style="flex:0 0 auto">${icon}</span><span style="min-width:0">${esc(fieldLabel(c))}</span></span>
+      <span style="flex:0 0 auto;white-space:nowrap;font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:20px;border:1px solid ${c.available?'#bbf7d0':'#fde68a'};color:${c.available?'#16a34a':'#b45309'};background:#fff">${c.available?ht('functional'):ht('badge_fault')}</span>
     </div>
     <div style="font-family:var(--mono,monospace);font-size:12.5px;${c.available?'color:#0a0a0a;font-weight:600':'color:#c4c4c4'};word-break:break-all">
       ${c.available ? esc(c.value) : ht('val_unavailable')}
@@ -3358,7 +3382,10 @@ async function openComponentSerialsModal(id) {
   </div>`;
 
   try {
-    const r = await fetchJSON(`/api/hardware-report/${encodeURIComponent(slot.device.udid)}`, {}, 90000);
+    // Predehrana data z pozadi -> modal naskoci okamzite.
+    const r = slot._hwReport
+      || await fetchJSON(`/api/hardware-report/${encodeURIComponent(slot.device.udid)}`, {}, 90000);
+    if (r && r.ok && r.sections) slot._hwReport = r;
     const body = document.getElementById('comp-serials-body');
     if (!body) return;
     if (!r || !r.ok || !r.sections) {

@@ -945,6 +945,7 @@ def usb_monitor_thread():
                 for uid in known - current:
                     print(f"  📵 Odpojeno: {uid}")
                     device_info_cache_clear(uid)
+                    _hw_sources_drop(uid)   # po znovupripojeni cist cerstve
                     connected_devices.pop(uid, None)
                     usb_event_queue.put({'event': 'disconnected', 'udid': uid})
                     known.discard(uid)
@@ -1810,6 +1811,49 @@ async def _read_ioreg(diag, label, target, errors, reopen=None):
         errors[label] = last_err
     return {}
 
+# ─── CACHE SYROVYCH ZDROJU ───────────────────────────────────────────────────
+# Cteni z telefonu (30+ IORegistry uzlu + cely IOService strom) trva 10-15 s.
+# Behem testu ho dela /api/component-serials, a kdyz technik otevre hardware
+# report, delalo se CELE ZNOVU. Cache to spoji: report pouzije, co uz je
+# nactene. TTL je kratke, aby se po vymene dilu neukazovala stara data;
+# ?fresh=1 cache obejde uplne.
+_HW_SOURCES_CACHE = {}          # udid -> (timestamp, sources)
+_HW_SOURCES_TTL = 240           # sekund
+_HW_SOURCES_MAX = 12            # kolik zarizeni drzet (IOService strom je velky)
+_hw_sources_lock = threading.Lock()
+
+
+def _hw_sources_get(udid, max_age=_HW_SOURCES_TTL):
+    with _hw_sources_lock:
+        hit = _HW_SOURCES_CACHE.get(udid)
+    if not hit:
+        return None
+    ts, sources = hit
+    if (time.time() - ts) > max_age:
+        return None
+    return sources
+
+
+def _hw_sources_put(udid, sources):
+    if not sources:
+        return
+    with _hw_sources_lock:
+        _HW_SOURCES_CACHE[udid] = (time.time(), sources)
+        if len(_HW_SOURCES_CACHE) > _HW_SOURCES_MAX:
+            oldest = min(_HW_SOURCES_CACHE.items(), key=lambda kv: kv[1][0])[0]
+            _HW_SOURCES_CACHE.pop(oldest, None)
+
+
+def _hw_sources_drop(udid=None):
+    """Zahodi cache - vola se pri odpojeni zarizeni, at se po znovupripojeni
+    (typicky po vymene dilu) cte cerstve."""
+    with _hw_sources_lock:
+        if udid:
+            _HW_SOURCES_CACHE.pop(udid, None)
+        else:
+            _HW_SOURCES_CACHE.clear()
+
+
 async def _read_hw_sources(udid):
     """V28 cross-generation reader. Reads known nodes plus the complete IOService
     tree once, then lets the component normalizer search both exact Apple keys and
@@ -2156,6 +2200,8 @@ def _component_applicable(comp_key, product_type):
 async def _component_serials_collect(udid, sources=None, apply_baseline=True):
     if sources is None:
         sources = await _read_hw_sources(udid)
+        # Ulozit pro hardware report, at necte z telefonu znovu.
+        _hw_sources_put(udid, sources)
 
     values = sources.get("values", {})
     errors = dict(sources.get("errors", {}))
@@ -6572,10 +6618,17 @@ def _modem_firmware_fields(values):
         "modem_ok":         _hw_field("Modem funkční (firmware čitelný)", "Ano" if modem_ok else "Ne", "odvozeno"),
     }
 
-async def _hardware_report_collect(udid):
+async def _hardware_report_collect(udid, fresh=False):
     # AGREGÁTOR: precte syrove zdroje JEDNOU a znovupouzije potvrzeny component
     # reader. Nedu­plikuje IORegistry logiku - jen agreguje a sémanticky trídí.
-    sources = await _read_hw_sources(udid)
+    sources = None if fresh else _hw_sources_get(udid)
+    if sources is None:
+        sources = await _read_hw_sources(udid)
+        _hw_sources_put(udid, sources)
+        cached = False
+    else:
+        print(f"  [report] pouzita cache zdroju pro {udid}")
+        cached = True
     values = sources.get("values", {})
     battery = sources.get("battery", {})
     clcd = sources.get("clcd", {})
@@ -6738,6 +6791,7 @@ async def _hardware_report_collect(udid):
 
     return {
         "ok": True, "udid": udid,
+        "from_cache": cached,
         "sections": sections,
         # Mimo "sections" zamerne: vsechno v sections musi byt slovnik poli,
         # jinak souctove smycky vyse spadnou na .values().
@@ -6749,7 +6803,9 @@ async def _hardware_report_collect(udid):
 @app.route('/api/hardware-report/<udid>', methods=['GET'])
 def api_hardware_report(udid):
     try:
-        result = _run_async_isolated(_hardware_report_collect(udid), timeout=120)
+        fresh = request.args.get('fresh') in ('1', 'true', 'yes')
+        result = _run_async_isolated(_hardware_report_collect(udid, fresh=fresh),
+                                     timeout=120)
         return jsonify(result), 200
     except Exception as exc:
         return jsonify({'ok': False, 'udid': udid, 'error': f'{type(exc).__name__}: {exc}'}), 200
