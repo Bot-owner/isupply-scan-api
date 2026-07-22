@@ -123,7 +123,29 @@ LICENSE_KEY    = None   # nastaveno ze souboru licence.key
 SESSION_TOKEN  = None   # JWT token z Railway API
 TOKEN_FILE     = os.path.join(_get_base_dir(), '.token_cache')
 LICENSE_FILE   = os.path.join(_get_base_dir(), 'licence.key')
-COLORS_FILE    = os.path.join(_get_base_dir(), 'model_colors.json')
+def _find_colors_file():
+    """Najde model_colors.json. U EXE vraci _get_base_dir() slozku vedle .exe
+    (typicky dist\\), jenze soubor casto zustane v korenu projektu vedle
+    server.py - pak by se barvy nenacetly a nikde by to nebylo videt.
+    Proto se hleda na vic mistech; prvni existujici vyhrava. Kdyz neexistuje
+    nikde, vraci se cesta vedle aplikace (tam se pripadne zapisou nezname kody)."""
+    base = _get_base_dir()
+    candidates = [
+        os.path.join(base, 'model_colors.json'),
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), 'model_colors.json'),
+        os.path.join(os.path.dirname(base), 'model_colors.json'),   # dist\.. 
+        os.path.join(os.getcwd(), 'model_colors.json'),
+    ]
+    for path in candidates:
+        try:
+            if os.path.isfile(path):
+                return path
+        except Exception:
+            continue
+    return candidates[0]
+
+
+COLORS_FILE    = _find_colors_file()
 
 import scan_quota  # odecitani skenu z kvoty (klientska cast)
 
@@ -380,6 +402,18 @@ def init_db():
     conn.commit()
     conn.close()
     print(f"✓ Databáze: {DB_PATH}")
+    # At je pri startu hned videt, jestli se barvy vubec maji odkud cist.
+    try:
+        if os.path.isfile(COLORS_FILE):
+            _c = _load_colors_file()
+            _n1 = len(_c.get("colors") or {})
+            _n2 = sum(len(v) for v in (_c.get("enclosure_colors") or {}).values())
+            print(f"✓ Barvy: {COLORS_FILE} ({_n1} part numberu, {_n2} kodu tela)")
+        else:
+            print(f"⚠ Barvy: model_colors.json NENALEZEN (hledano vedle aplikace: {COLORS_FILE})")
+            print("  Barvy se nebudou zobrazovat. Zkopiruj soubor vedle .exe.")
+    except Exception as _exc:
+        print(f"⚠ Barvy: model_colors.json se nepodarilo nacist: {_exc}")
 
 
 # ─── COMPONENT BASELINE (tovarni reference = stav pri prvnim scanu) ───────────
