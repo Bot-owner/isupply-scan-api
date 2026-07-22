@@ -37,6 +37,123 @@
         "color": "(PRODUCT)RED",
         "overeno": "2026-07-21, MMX73, fyzicky kus"
       }
+    },
+    "iPhone17,1": {
+      "4": {
+        "color": "Desert Titanium",
+        "overeno": "2026-07-22, MYMC3, fyzicky kus"
+      }
     }
+  },
+  "color_options": {
+    "_info": "Nabidka barev, ze ktere technik vybira, kdyz appka narazi na novy kod. Neurcuje barvu - jen omezuje vyber na to, co Apple pro dany model prodaval.",
+    "iPhone14,6": [
+      "Midnight",
+      "Starlight",
+      "(PRODUCT)RED"
+    ],
+    "iPhone15,4": [
+      "Black",
+      "Blue",
+      "Green",
+      "Yellow",
+      "Pink"
+    ],
+    "iPhone15,5": [
+      "Black",
+      "Blue",
+      "Green",
+      "Yellow",
+      "Pink"
+    ],
+    "iPhone16,1": [
+      "Black Titanium",
+      "White Titanium",
+      "Blue Titanium",
+      "Natural Titanium"
+    ],
+    "iPhone16,2": [
+      "Black Titanium",
+      "White Titanium",
+      "Blue Titanium",
+      "Natural Titanium"
+    ],
+    "iPhone17,1": [
+      "Black Titanium",
+      "White Titanium",
+      "Natural Titanium",
+      "Desert Titanium"
+    ],
+    "iPhone17,2": [
+      "Black Titanium",
+      "White Titanium",
+      "Natural Titanium",
+      "Desert Titanium"
+    ],
+    "iPhone17,3": [
+      "Black",
+      "White",
+      "Pink",
+      "Teal",
+      "Ultramarine"
+    ],
+    "iPhone17,4": [
+      "Black",
+      "White",
+      "Pink",
+      "Teal",
+      "Ultramarine"
+    ],
+    "iPhone12,8": [
+      "Black",
+      "White",
+      "(PRODUCT)RED"
+    ],
+    "iPhone13,1": [
+      "Black",
+      "White",
+      "Blue",
+      "Green",
+      "Pink",
+      "Purple",
+      "(PRODUCT)RED"
+    ],
+    "iPhone13,2": [
+      "Black",
+      "White",
+      "Blue",
+      "Green",
+      "Pink",
+      "Purple",
+      "(PRODUCT)RED"
+    ],
+    "iPhone14,7": [
+      "Midnight",
+      "Starlight",
+      "Blue",
+      "Purple",
+      "Yellow",
+      "(PRODUCT)RED"
+    ],
+    "iPhone14,8": [
+      "Midnight",
+      "Starlight",
+      "Blue",
+      "Purple",
+      "Yellow",
+      "(PRODUCT)RED"
+    ],
+    "iPhone15,2": [
+      "Space Black",
+      "Silver",
+      "Gold",
+      "Deep Purple"
+    ],
+    "iPhone15,3": [
+      "Space Black",
+      "Silver",
+      "Gold",
+      "Deep Purple"
+    ]
   }
 }

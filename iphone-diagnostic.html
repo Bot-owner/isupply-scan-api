@@ -425,6 +425,7 @@
         Detect printer
       </button>
     </div>
+    <div id="label-style-switch" style="display:flex;gap:5px;margin-bottom:10px"></div>
     <div class="label-preview" id="label-preview-content"></div>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
       <label style="font-family:var(--mono);font-size:11px;color:var(--text-dim);white-space:nowrap">Stav pro e-shop:</label>
@@ -1496,7 +1497,14 @@ function renderBody(slot) {
     <div class="device-sub" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px">
       ${show(d.a_number)?`<span style="color:var(--pink-dark);font-weight:600">${d.a_number}</span>`:''}
       ${show(d.storage)?`<span>${d.storage}</span>`:''}
-      ${show(d.color)?`<span>${d.color}</span>`:''}
+      ${show(d.color)
+          ? `<span>${d.color}</span>`
+          : (d.color_code && (d.color_options||[]).length
+              ? `<button onclick="event.stopPropagation();openColorPicker(${slot.id})" title="Barvu tohohle modelu appka jeste nezna"
+                   style="font-family:var(--mono);font-size:10px;font-weight:600;color:var(--pink-dark);
+                          background:var(--pink-dim);border:1.5px dashed var(--pink);border-radius:5px;
+                          padding:1px 7px;cursor:pointer">+ barva</button>`
+              : '')}
       ${show(d.region)?`<span style="color:#6b7280">${d.region}</span>`:''}
     </div>
     <div class="device-sub" style="margin-top:2px">
@@ -1545,6 +1553,68 @@ function updateStats() {
   document.getElementById('stat-fail').textContent    = slots.filter(s=>s.state==='done-fail').length;
   document.getElementById('stat-testing').textContent = slots.filter(s=>s.state==='testing').length;
   document.getElementById('stat-db').textContent      = database.length;
+}
+
+// ═══ PŘIŘAZENÍ BARVY ═══
+// Telefon vydava jen CISLO barvy tela (DeviceEnclosureColor). Nazev barvy v nem
+// nikde neni - overeno kompletnim forenznim dumpem. Prirazeni proto jednou udela
+// technik, ktery kus drzi v ruce; od te chvile appka barvu u toho modelu zna.
+function openColorPicker(slotId) {
+  const slot = slots[slotId];
+  if (!slot || !slot.device) return;
+  const d = slot.device;
+  const opts = d.color_options || [];
+  if (!opts.length) return;
+
+  const wrap = document.createElement('div');
+  wrap.id = 'color-picker-modal';
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10001;display:flex;align-items:center;justify-content:center;padding:20px';
+  wrap.addEventListener('click', e => { if (e.target === wrap) wrap.remove(); });
+  wrap.innerHTML = `
+    <div style="background:#fff;border-radius:0;max-width:380px;width:100%;padding:22px 24px;font-family:var(--mono)">
+      <div style="font-size:15px;font-weight:800;margin-bottom:2px">${d.model}</div>
+      <div style="font-size:11px;color:#6b7280;margin-bottom:14px">
+        Kód barvy <strong>${d.color_code}</strong> · ${d.model_number || ''} — jakou barvu má tenhle kus?
+      </div>
+      <div id="color-picker-opts" style="display:flex;flex-direction:column;gap:6px;margin-bottom:14px">
+        ${opts.map(c => `<button onclick="saveColorChoice(${slotId}, this.dataset.c)" data-c="${c.replace(/"/g,'&quot;')}"
+            style="font-family:var(--mono);font-size:13px;text-align:left;padding:9px 12px;border:1.5px solid #e5e7eb;
+                   border-radius:7px;background:#fff;cursor:pointer">${c}</button>`).join('')}
+      </div>
+      <div style="font-size:10px;color:#9ca3af;line-height:1.5;margin-bottom:12px">
+        Uloží se do model_colors.json. Příště už tenhle model appka pozná sama.
+      </div>
+      <button onclick="document.getElementById('color-picker-modal').remove()"
+        style="font-family:var(--mono);font-size:12px;padding:7px 14px;border:1.5px solid #e5e7eb;border-radius:7px;background:#fff;cursor:pointer">Zrušit</button>
+    </div>`;
+  document.body.appendChild(wrap);
+}
+
+async function saveColorChoice(slotId, color) {
+  const slot = slots[slotId];
+  if (!slot || !slot.device) return;
+  const d = slot.device;
+  const box = document.getElementById('color-picker-modal');
+  const r = await fetchJSON('/api/color-code', 'POST', {
+    product_type: d.product_type || d.productType,
+    code: d.color_code,
+    color: color,
+    model_number: d.model_number || '',
+  });
+  if (box) box.remove();
+  if (r && r.ok) {
+    // Projev se hned ve vsech slotech se stejnym modelem.
+    slots.forEach(sl => {
+      if (sl.device && sl.device.color_code === d.color_code &&
+          (sl.device.product_type || sl.device.productType) === (d.product_type || d.productType)) {
+        sl.device.color = color;
+      }
+    });
+    render();
+    showToast(`✓ ${d.model}: ${color}`);
+  } else {
+    showToast('Uložení barvy selhalo: ' + ((r && r.error) || '—'), true);
+  }
 }
 
 // ═══ DATABÁZE VIEW ═══
@@ -1917,6 +1987,188 @@ function labelParts(slot) {
   }).join('');
 }
 
+
+// ─── ŠTÍTKY 62 mm: čtyři varianty, technik si vybere ────────────────────────
+// Spolecne pro vsechny: velky model, kolonka GRADE k rucnimu zapsani, kondice
+// baterie, verze iOS a stav komponent. Na stitku se NIKDY nepise "mozna
+// zavada" - jen fajfka nebo krizek. Odhad priciny patri do aplikace, ne
+// zakaznikovi do ruky.
+// Tisk je termalni: zadne svetle sede texty ani velke vyplne, jinak na pasce
+// nic neni videt.
+const LABEL_STYLES = [
+  { id: 'classic',   name: 'Klasický' },
+  { id: 'checklist', name: 'Checklist' },
+  { id: 'retail',    name: 'Prodejní' },
+  { id: 'wholesale', name: 'Velkoobchod' },
+];
+let currentLabelStyle = 'classic';
+try { currentLabelStyle = localStorage.getItem('isupply_label_style') || 'classic'; } catch (e) {}
+
+function setLabelStyle(id) {
+  currentLabelStyle = id;
+  try { localStorage.setItem('isupply_label_style', id); } catch (e) {}
+  if (printSlotId !== null && slots[printSlotId]) renderLabelPreview(slots[printSlotId], currentTapeSize);
+}
+
+// Seznam komponent pro stitek: nazev + prosel/neprosel. Bez odstinu "warn" -
+// cokoli, co neni cisty pass, je na stitku krizek.
+function labelComponentList(slot) {
+  const skip = new Set(['panic']);
+  return (slot.tests || [])
+    .filter(r => !skip.has(r.id))
+    .map(r => {
+      const name = r.id === 'touchid'
+        ? biometryLabel(slot.device && slot.device.model)
+        : (getTests().find(x => x.id === r.id)?.name || r.id);
+      return { name, ok: r.status === 'pass' };
+    });
+}
+
+function _labelCtx(slot) {
+  const d = slot.device;
+  const comps = labelComponentList(slot);
+  const bad = comps.filter(c => !c.ok);
+  return {
+    d, comps, bad,
+    now: new Date(slot.testedAt || Date.now()).toLocaleDateString('cs-CZ'),
+    batt: batteryCondition(d.battery_health || d.battery),
+    battPct: (d.battery_health || d.battery),
+    user: (loggedInUser && loggedInUser.username) || '—',
+    allOk: bad.length === 0,
+  };
+}
+
+// ── 1) CHECKLIST – kazda komponenta na vlastnim radku s fajfkou/krizkem ──
+function labelStyleChecklist(slot) {
+  const c = _labelCtx(slot), d = c.d;
+  const rows = c.comps.map(x => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:1.5px 0;border-bottom:1px dotted #bbb">
+      <span style="font-size:9px">${x.name}</span>
+      <span style="font-size:11px;font-weight:900;line-height:1">${x.ok ? '\u2713' : '\u2717'}</span>
+    </div>`).join('');
+  return `
+  <div style="font-family:'IBM Plex Mono',monospace;color:#000;width:100%">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:2px solid #000;padding-bottom:6px;margin-bottom:6px">
+      <div style="min-width:0">
+        <div style="font-size:18px;font-weight:900;letter-spacing:-.02em;line-height:1.05">${d.model}</div>
+        <div style="font-size:9px;margin-top:2px">${d.a_number || ''} · ${d.storage || ''} · ${d.color || ''}</div>
+      </div>
+      <div style="text-align:center;flex-shrink:0;margin-left:8px">
+        <div style="width:46px;height:46px;border:2.5px solid #000;border-radius:6px"></div>
+        <div style="font-size:7px;font-weight:700;letter-spacing:.1em;margin-top:2px">GRADE</div>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;margin-bottom:6px">
+      <div style="flex:1;border:1.5px solid #000;border-radius:4px;padding:3px 6px">
+        <div style="font-size:7px;letter-spacing:.1em">BATERIE</div>
+        <div style="font-size:13px;font-weight:900;line-height:1.1">${c.battPct ? c.battPct + '%' : '—'}${d.battery_cycles > 0 ? ` <span style="font-size:8px;font-weight:600">${d.battery_cycles}\u00d7</span>` : ''}</div>
+        <div style="font-size:7px">${c.batt}</div>
+      </div>
+      <div style="flex:1;border:1.5px solid #000;border-radius:4px;padding:3px 6px">
+        <div style="font-size:7px;letter-spacing:.1em">iOS</div>
+        <div style="font-size:13px;font-weight:900;line-height:1.1">${d.ios || '—'}</div>
+      </div>
+    </div>
+    <div style="font-size:7px;font-weight:700;letter-spacing:.1em;margin-bottom:2px">KONTROLA KOMPONENT</div>
+    <div style="margin-bottom:6px">${rows}</div>
+    <div style="border-top:1px dashed #666;padding-top:4px">
+      <div style="font-size:7px;letter-spacing:.1em">IMEI</div>
+      <div style="font-size:14px;font-weight:900;letter-spacing:.03em">${d.imei}</div>
+      ${d.serial && d.serial !== 'N/A' ? `<div style="font-size:8px">S/N: ${d.serial}</div>` : ''}
+    </div>
+    <div style="border-top:1px solid #000;margin-top:4px;padding-top:3px;display:flex;justify-content:space-between;font-size:7px">
+      <span>${c.now}</span><span>${c.user}</span><span>iSupply Scan</span>
+    </div>
+  </div>`;
+}
+
+// ── 2) PRODEJNI – pro vitrinu, velky model a grade, minimum textu ──
+function labelStyleRetail(slot) {
+  const c = _labelCtx(slot), d = c.d;
+  return `
+  <div style="font-family:'IBM Plex Mono',monospace;color:#000;width:100%;text-align:center">
+    <div style="font-size:8px;font-weight:700;letter-spacing:.22em;border-bottom:1px solid #000;padding-bottom:4px;margin-bottom:7px">iSupply SCAN · OVĚŘENO</div>
+    <div style="font-size:22px;font-weight:900;letter-spacing:-.03em;line-height:1.05">${d.model}</div>
+    <div style="font-size:11px;font-weight:700;margin-top:2px">${d.storage || ''}${d.color && d.color !== 'N/A' ? ' · ' + d.color : ''}</div>
+    <div style="display:flex;align-items:stretch;gap:6px;margin:8px 0">
+      <div style="flex:1;border:2px solid #000;border-radius:6px;padding:5px 4px">
+        <div style="font-size:7px;font-weight:700;letter-spacing:.1em">BATERIE</div>
+        <div style="font-size:19px;font-weight:900;line-height:1.1">${c.battPct ? c.battPct + '%' : '—'}</div>
+        <div style="font-size:7px">${c.batt}</div>
+      </div>
+      <div style="flex:0 0 62px;border:2.5px solid #000;border-radius:6px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;padding-bottom:3px">
+        <div style="height:34px"></div>
+        <div style="font-size:7px;font-weight:700;letter-spacing:.1em">GRADE</div>
+      </div>
+      <div style="flex:1;border:2px solid #000;border-radius:6px;padding:5px 4px">
+        <div style="font-size:7px;font-weight:700;letter-spacing:.1em">iOS</div>
+        <div style="font-size:19px;font-weight:900;line-height:1.1">${(d.ios || '—').split('.')[0]}</div>
+        <div style="font-size:7px">${d.ios || ''}</div>
+      </div>
+    </div>
+    <div style="border:2px solid #000;border-radius:5px;padding:5px 7px;margin-bottom:7px">
+      ${c.allOk
+        ? `<div style="font-size:12px;font-weight:900">\u2713 VŠECHNY KOMPONENTY V POŘÁDKU</div>`
+        : `<div style="font-size:9px;font-weight:900;margin-bottom:2px">\u2717 ZÁVADA</div>
+           <div style="font-size:9px;font-weight:700;line-height:1.35">${c.bad.map(x => x.name).join(' · ')}</div>`}
+    </div>
+    <div style="font-size:7px;letter-spacing:.1em">IMEI</div>
+    <div style="font-size:13px;font-weight:900;letter-spacing:.03em">${d.imei}</div>
+    <div style="border-top:1px solid #000;margin-top:5px;padding-top:3px;display:flex;justify-content:space-between;font-size:7px">
+      <span>${c.now}</span><span>${c.user}</span>
+    </div>
+  </div>`;
+}
+
+// ── 3) VELKOOBCHOD – husty, dve kolonky komponent, vse na jednom stitku ──
+function labelStyleWholesale(slot) {
+  const c = _labelCtx(slot), d = c.d;
+  const cells = c.comps.map(x => `
+    <div style="display:flex;align-items:center;gap:3px;font-size:8px;line-height:1.5">
+      <span style="font-weight:900">${x.ok ? '\u2713' : '\u2717'}</span><span>${x.name}</span>
+    </div>`).join('');
+  return `
+  <div style="font-family:'IBM Plex Mono',monospace;color:#000;width:100%">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px">
+      <div style="min-width:0">
+        <div style="font-size:17px;font-weight:900;letter-spacing:-.02em;line-height:1.05">${d.model}</div>
+        <div style="font-size:8px;margin-top:1px">${d.a_number || ''} · ${d.storage || ''} · ${d.color || ''}</div>
+      </div>
+      <div style="text-align:center;flex-shrink:0;margin-left:6px">
+        <div style="width:40px;height:40px;border:2.5px solid #000;border-radius:5px"></div>
+        <div style="font-size:6.5px;font-weight:700;letter-spacing:.1em;margin-top:1px">GRADE</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:3px;margin-bottom:5px">
+      <div style="border:1.5px solid #000;border-radius:4px;padding:3px 5px">
+        <div style="font-size:6.5px;letter-spacing:.08em">BATERIE</div>
+        <div style="font-size:12px;font-weight:900;line-height:1.1">${c.battPct ? c.battPct + '%' : '—'}</div>
+      </div>
+      <div style="border:1.5px solid #000;border-radius:4px;padding:3px 5px">
+        <div style="font-size:6.5px;letter-spacing:.08em">CYKLY</div>
+        <div style="font-size:12px;font-weight:900;line-height:1.1">${d.battery_cycles > 0 ? d.battery_cycles : '—'}</div>
+      </div>
+      <div style="border:1.5px solid #000;border-radius:4px;padding:3px 5px">
+        <div style="font-size:6.5px;letter-spacing:.08em">iOS</div>
+        <div style="font-size:12px;font-weight:900;line-height:1.1">${d.ios || '—'}</div>
+      </div>
+    </div>
+    <div style="border-top:1.5px solid #000;border-bottom:1.5px solid #000;padding:4px 0;margin-bottom:5px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 8px">${cells}</div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:6px">
+      <div style="min-width:0">
+        <div style="font-size:6.5px;letter-spacing:.1em">IMEI</div>
+        <div style="font-size:13px;font-weight:900;letter-spacing:.03em">${d.imei}</div>
+        ${d.serial && d.serial !== 'N/A' ? `<div style="font-size:7.5px">S/N: ${d.serial}</div>` : ''}
+      </div>
+      <div style="text-align:right;flex-shrink:0;font-size:6.5px;line-height:1.5">
+        <div>${c.now}</div><div>${c.user}</div><div style="font-weight:700">iSupply Scan</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function buildLabelHTML(slot, tapeSize='62') {
   const d = slot.device;
   const now = new Date(slot.testedAt||Date.now()).toLocaleDateString('cs-CZ');
@@ -2025,6 +2277,11 @@ function buildLabelHTML(slot, tapeSize='62') {
       </div>
     </div>`;
   }
+
+  // 62 mm: technik si vybira mezi variantami (viz LABEL_STYLES).
+  if (currentLabelStyle === 'checklist') return labelStyleChecklist(slot);
+  if (currentLabelStyle === 'retail')    return labelStyleRetail(slot);
+  if (currentLabelStyle === 'wholesale') return labelStyleWholesale(slot);
 
   return `
   <div style="font-family:'IBM Plex Mono',monospace;color:#000;width:100%">
@@ -2359,7 +2616,9 @@ const HW_I18N = {
     "val_current": "Current:",
     "val_unavailable": "unavailable",
     "val_fault": "Possible fault",
-    "functional": "✓ Functional"
+    "functional": "✓ Functional",
+    "ambient_light_sensor": "Ambient light sensor",
+    "ultrawide_camera": "Ultra-wide camera"
   },
   "cs": {
     "modem_fw": "Firmware modemu (baseband)",
@@ -2428,7 +2687,9 @@ const HW_I18N = {
     "val_current": "Aktuální:",
     "val_unavailable": "nedostupné",
     "val_fault": "Možná závada",
-    "functional": "✓ Funkční"
+    "functional": "✓ Funkční",
+    "ambient_light_sensor": "Senzor okolního světla",
+    "ultrawide_camera": "Ultraširokoúhlá kamera"
   },
   "pl": {
     "modem_fw": "Firmware modemu (baseband)",
@@ -2497,7 +2758,9 @@ const HW_I18N = {
     "val_current": "Aktualny:",
     "val_unavailable": "niedostępne",
     "val_fault": "Możliwa usterka",
-    "functional": "✓ Sprawny"
+    "functional": "✓ Sprawny",
+    "ambient_light_sensor": "Czujnik światła otoczenia",
+    "ultrawide_camera": "Aparat ultraszerokokątny"
   },
   "ru": {
     "modem_fw": "Прошивка модема (baseband)",
@@ -2566,7 +2829,9 @@ const HW_I18N = {
     "val_current": "Текущий:",
     "val_unavailable": "недоступно",
     "val_fault": "Возможна неисправность",
-    "functional": "✓ Исправно"
+    "functional": "✓ Исправно",
+    "ambient_light_sensor": "Датчик освещённости",
+    "ultrawide_camera": "Сверхширокоугольная камера"
   },
   "it": {
     "modem_fw": "Firmware del modem (baseband)",
@@ -2635,7 +2900,9 @@ const HW_I18N = {
     "val_current": "Attuale:",
     "val_unavailable": "non disponibile",
     "val_fault": "Possibile guasto",
-    "functional": "✓ Funzionante"
+    "functional": "✓ Funzionante",
+    "ambient_light_sensor": "Sensore di luce ambientale",
+    "ultrawide_camera": "Fotocamera ultra-grandangolare"
   },
   "fr": {
     "modem_fw": "Firmware du modem (baseband)",
@@ -2704,7 +2971,9 @@ const HW_I18N = {
     "val_current": "Actuel :",
     "val_unavailable": "indisponible",
     "val_fault": "Défaut possible",
-    "functional": "✓ Fonctionnel"
+    "functional": "✓ Fonctionnel",
+    "ambient_light_sensor": "Capteur de luminosité ambiante",
+    "ultrawide_camera": "Caméra ultra grand-angle"
   }
 };
 
@@ -3460,6 +3729,24 @@ function openPrintModal(id) {
 
 function renderLabelPreview(slot, tapeSize) {
   document.getElementById('label-preview-content').innerHTML = buildLabelHTML(slot, tapeSize);
+  renderLabelStyleSwitch();
+}
+
+// Prepinac variant stitku. Ma smysl jen u 62mm pasky - ostatni sirky maji
+// vlastni pevny layout, protoze se na ne vic informaci nevejde.
+function renderLabelStyleSwitch() {
+  const box = document.getElementById('label-style-switch');
+  if (!box) return;
+  if (currentTapeSize !== '62') { box.innerHTML = ''; return; }
+  box.innerHTML = LABEL_STYLES.map(st => {
+    const on = st.id === currentLabelStyle;
+    return `<button onclick="setLabelStyle('${st.id}')" style="
+      flex:1;font-family:var(--mono);font-size:11px;font-weight:${on ? 700 : 500};
+      padding:6px 4px;border-radius:6px;cursor:pointer;
+      border:1.5px solid ${on ? 'var(--pink)' : 'var(--border)'};
+      background:${on ? 'var(--pink-dim)' : 'var(--surface,#fff)'};
+      color:${on ? 'var(--pink-dark)' : 'var(--text-dim)'}">${st.name}</button>`;
+  }).join('');
 }
 function closePrintModal() {
   document.getElementById('print-modal').classList.add('hidden');
@@ -3524,6 +3811,9 @@ function _mkDevice(udid, info) {
     build: info.build || '—', imei: info.imei || '—', serial: info.serial || '—',
     battery: info.battery || 0, battery_health: info.battery_health || 0,
     battery_cycles: info.battery_cycles || 0, icloud: info.icloud_lock || false,
+    // Pro prirazeni barvy: kod z telefonu + nabidka moznosti pro dany model.
+    product_type: info.product_type || '', color_code: info.color_code || null,
+    color_options: info.color_options || [], model_number: info.model_number || '',
     changed: [], udid,
   };
 }

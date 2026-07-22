@@ -669,6 +669,54 @@ def _color_for_enclosure(product_type, code):
     return val or None
 
 
+def _color_options_for(product_type):
+    """Nabidka barev, ze ktere technik vybira. Neurcuje barvu - jen omezuje
+    vyber na to, co Apple pro dany model prodaval."""
+    pt = str(product_type or "").strip()
+    if not pt:
+        return []
+    opts = (_load_colors_file().get("color_options") or {}).get(pt)
+    return list(opts) if isinstance(opts, list) else []
+
+
+def save_enclosure_color(product_type, code, color, model_number=""):
+    """Ulozi prirazeni kod -> barva do model_colors.json a uklidi zaznam
+    ze sekce unknown_enclosure. Vola se z UI, kdyz technik barvu vybere."""
+    pt = str(product_type or "").strip()
+    code = str(code or "").strip()
+    color = str(color or "").strip()
+    if not pt or not code or not color:
+        return False, "chybi product_type, kod nebo barva"
+    with _colors_lock:
+        try:
+            data = {}
+            if os.path.exists(COLORS_FILE):
+                with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            table = data.setdefault("enclosure_colors", {}).setdefault(pt, {})
+            table[code] = {
+                "color": color,
+                "overeno": f"{datetime.date.today().isoformat()}, "
+                           f"{model_number or '?'}, zadal technik",
+            }
+            unknown = data.get("unknown_enclosure") or {}
+            if pt in unknown:
+                unknown[pt].pop(code, None)
+                if not unknown[pt]:
+                    unknown.pop(pt, None)
+                if not unknown:
+                    data.pop("unknown_enclosure", None)
+            tmp = COLORS_FILE + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, COLORS_FILE)
+            _COLORS_CACHE["mtime"] = None      # vynutit znovunacteni
+            print(f"  [barva] {pt}/{code} = {color} ulozeno")
+            return True, None
+        except Exception as exc:
+            return False, f"{type(exc).__name__}: {exc}"
+
+
 def _remember_unknown_enclosure(product_type, code, model_number=""):
     """Zapise neznamou kombinaci ProductType+kod do model_colors.json ->
     "unknown_enclosure". Staci pak doplnit barvu podle fyzickeho kusu."""
@@ -847,6 +895,11 @@ def get_device_info(udid):
 
         print(f"  Barva: enclosure={_encl!r} front={_front!r} "
               f"ModelNumber={_model_number!r} -> {color} ({_src})")
+        # Kdyz barvu neznáme, posleme UI kod + nabidku, aby ji technik priradil
+        # jednim kliknutim. Prirazeni musi udelat clovek - telefon vydava jen
+        # cislo, nazev barvy v nem nikde neni (overeno forenznim dumpem V63).
+        _color_code = _encl or None
+        _color_options = _color_options_for(_pt_color) if color == 'N/A' else []
 
         # ── Baterie – kondice z com.apple.mobile.battery ──────────
         battery_pct = vals.get('BatteryCurrentCapacity', 0) or 0
@@ -958,6 +1011,10 @@ def get_device_info(udid):
             # iCloud / Find My (Activation Lock): FMiP účet existuje = ON.
             # (missing/False = OFF – ověřeno na odemčeném kuse; ON ověřit na zamčeném)
             'icloud_lock':    bool(vals.get('FMiPAccountExists') or vals.get('FMiPActivationLockIsActivatable')),
+            # Pro UI: kdyz barvu neznáme, kod + nabidka k jednomu kliknuti.
+            'color_code':     _color_code,
+            'color_options':  _color_options,
+            'model_number':   _model_number,
         }
         print(f"  ✓ VÝSLEDEK: model={result['model']} | storage={result['storage']} | color={result['color']} | battery={result['battery']} | health={result['battery_health']}")
         return result
@@ -2880,6 +2937,25 @@ async def _panic_logs_collect(udid):
     except Exception as e:
         errors['crash_reports'] = f'{type(e).__name__}: {e}'
     return {'ok': True, 'udid': udid, 'count': len(panics), 'panics': panics, 'errors': errors}
+
+@app.route('/api/color-code', methods=['POST'])
+def api_color_code():
+    """Prirazeni kodu barvy tela k nazvu. Telefon vydava jen cislo, nazev
+    barvy v nem nikde neni - prirazeni proto dela technik u kusu, ktery vidi.
+    Jednou za model+barvu; pak uz to appka zná."""
+    data = request.get_json(silent=True) or {}
+    ok, err = save_enclosure_color(
+        data.get('product_type'), data.get('code'),
+        data.get('color'), data.get('model_number') or '')
+    if not ok:
+        return jsonify({'ok': False, 'error': err}), 400
+    # Cache informaci o zarizeni musi pryc, jinak by slot drzel stare "N/A".
+    try:
+        device_info_cache_clear()
+    except Exception:
+        pass
+    return jsonify({'ok': True, 'color': data.get('color')})
+
 
 @app.route('/api/panic-logs/<udid>', methods=['GET'])
 def api_panic_logs(udid):
