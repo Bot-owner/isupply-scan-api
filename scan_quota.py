@@ -158,9 +158,26 @@ _features_cache = {"t": 0.0, "list": None}
 _FEATURES_CACHE_SEC = 300
 
 
+# Funkce z PODEPSANEHO tokenu. Nastavuje je server.py po overeni podpisu.
+# Tohle je jediny zdroj, kteremu se da verit: odpoved z /api/licence/status
+# muze podvrhnout kdokoli, kdo si pres hosts presmeruje domenu na svuj server,
+# ale podepsany token vyrobit neumi.
+_signed_features = None
+
+
+def set_signed_features(feature_list):
+    """Vola server.py po uspesnem overeni licencniho tokenu."""
+    global _signed_features
+    _signed_features = list(feature_list or [])
+    _features_cache.update(t=time.time(), list=_signed_features)
+
+
 def features(force=False):
-    """Seznam funkci povolenych tarifem. Drzi se 5 minut v pameti,
-    aby se licencni server nevolal pri kazdem dotazu."""
+    """Seznam funkci povolenych tarifem.
+    Priorita: podepsany token > odpoved serveru (jen kdyz token funkce nenese,
+    napr. u starsi verze licencniho serveru) > posledni znamy stav."""
+    if _signed_features is not None:
+        return _signed_features
     now = time.time()
     if not force and _features_cache["list"] is not None \
             and now - _features_cache["t"] < _FEATURES_CACHE_SEC:

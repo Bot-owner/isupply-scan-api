@@ -134,19 +134,50 @@ def log_action(license_key, action, detail='', hwid='', ip=''):
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-def make_token(license_key: str, plan: str, valid_until: str) -> str:
+# ─── PODPIS TOKENU ───────────────────────────────────────────────────────────
+# HS256 se sdilenym tajemstvim NEJDE bezpecne overit na klientovi: aby aplikace
+# podpis overila, musela by tajemstvi obsahovat - a kdo ho z EXE vytahne, umi si
+# vyrobit token s libovolnym tarifem. Proto RS256: server podepisuje PRIVATNIM
+# klicem, aplikace overuje VEREJNYM. Verejny klic muze byt v aplikaci klidne
+# viditelny, podepsat s nim nic nejde.
+# ENV: LICENCE_PRIVATE_KEY (cely PEM vcetne -----BEGIN/END-----).
+# Kdyz klic neni nastaveny, spadne se zpet na HS256, aby stavajici provoz
+# nespadl - v logu je pak varovani.
+LICENCE_PRIVATE_KEY = os.environ.get('LICENCE_PRIVATE_KEY', '').replace('\\n', '\n').strip()
+_TOKEN_ALG = 'RS256' if LICENCE_PRIVATE_KEY else 'HS256'
+if not LICENCE_PRIVATE_KEY:
+    print('[licence] VAROVANI: LICENCE_PRIVATE_KEY neni nastaveny, '
+          'tokeny se podepisuji HS256 a klient je NEUMI overit.', flush=True)
+
+
+def make_token(license_key: str, plan: str, valid_until: str,
+               features=None, hwid: str = '') -> str:
     payload = {
         'license_key': license_key,
         'plan':        plan,
         'valid_until': str(valid_until),
+        # Funkce tarifu jdou primo v PODEPSANEM tokenu. Klient se uz nemusi
+        # ptat serveru zvlast - podvrzeny server by mohl odpovedet cokoli,
+        # ale token nepodepise.
+        'features':    sorted(features or []),
+        'hwid':        hwid or '',
         'exp':         datetime.datetime.utcnow() + datetime.timedelta(hours=TOKEN_HOURS),
         'iat':         datetime.datetime.utcnow(),
     }
-    return jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+    key = LICENCE_PRIVATE_KEY or SECRET_KEY
+    return jwt.encode(payload, key, algorithm=_TOKEN_ALG)
 
 
 def verify_token(token: str) -> dict | None:
     try:
+        if LICENCE_PRIVATE_KEY:
+            from cryptography.hazmat.primitives import serialization
+            priv = serialization.load_pem_private_key(
+                LICENCE_PRIVATE_KEY.encode(), password=None)
+            pub = priv.public_key().public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo)
+            return jwt.decode(token, pub, algorithms=['RS256'])
         return jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
     except Exception:
         return None
@@ -259,7 +290,14 @@ def validate_license():
         log_action(key, 'NEW_ACTIVATION', host, hwid=hwid_hash, ip=ip)
 
     # Vygeneruj token
-    token = make_token(key, lic['plan'], lic['valid_until'])
+    # Funkce tarifu se podepisuji spolu s tokenem, aby je nesel podvrhnout.
+    try:
+        from quota import TIER_FEATURES
+        _feats = sorted(TIER_FEATURES.get((lic['plan'] or '').lower(), set()))
+    except Exception:
+        _feats = []
+    token = make_token(key, lic['plan'], lic['valid_until'],
+                       features=_feats, hwid=hwid_hash)
 
     log_action(key, 'VALIDATED', host, hwid=hwid_hash, ip=ip)
 

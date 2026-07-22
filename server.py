@@ -210,21 +210,72 @@ def validate_license_online(license_key: str) -> dict:
         return {'ok': False, 'error': f'Cannot reach licence server: {e}'}
 
 
+# ─── VEREJNY KLIC LICENCNIHO SERVERU ────────────────────────────────────────
+# Timhle klicem se OVERUJE podpis licencniho tokenu. Musi byt zabudovany primo
+# tady v kodu - kdyby se cetl ze souboru vedle aplikace, staci ho podvrhnout.
+# Verejny klic muze byt viditelny, podepsat s nim nejde nic.
+#
+# JAK HO SEM DOSTAT: vygeneruj par klicu (navod v README), obsah
+# licence_public.pem vloz sem mezi uvozovky VCETNE radku BEGIN/END.
+# Dokud je prazdny, aplikace podpis overit NEUMI a chova se jako driv.
+LICENCE_PUBLIC_KEY = """
+"""
+
+
 def validate_token_offline(token: str) -> dict:
-    """Ověří cached JWT token offline (platný 24h)."""
+    """Overi cached licencni token.
+
+    DULEZITE: drive se token jen dekodoval a kontrolovala se expirace, PODPIS
+    NIKOLI. Kdokoli si tak mohl v base64 slozit vlastni token s libovolnym
+    tarifem a expiraci za deset let, vlozit ho do .token_cache a aplikace ho
+    prijala. Stejnym zpusobem stacilo pres hosts presmerovat licencni server
+    na vlastni, ktery odpovi "povoleno".
+    Ted se overuje PODPIS verejnym klicem vyse - takovy token umi vyrobit jen
+    ten, kdo ma privatni klic, tedy licencni server.
+    """
     try:
         import base64, json as json_lib
         parts = token.split('.')
         if len(parts) != 3:
-            return {'ok': False}
-        payload_b64 = parts[1] + '=='
-        payload = json_lib.loads(base64.urlsafe_b64decode(payload_b64))
+            return {'ok': False, 'error': 'Malformed token'}
+
+        pub = (LICENCE_PUBLIC_KEY or '').strip()
+        if pub:
+            try:
+                import jwt as _jwt
+                payload = _jwt.decode(token, pub, algorithms=['RS256'])
+            except Exception as exc:
+                # Neplatny podpis = pokus o podvrzeni nebo vymeneny klic.
+                # Cache zahodit, at se aplikace donuti overit online.
+                print(f"  ⚠ Licencni token ma NEPLATNY PODPIS: {exc}")
+                return {'ok': False, 'error': 'Invalid token signature'}
+        else:
+            # Verejny klic jeste neni nastaveny - stary rezim bez overeni
+            # podpisu. Hlasime to nahlas, at to nezustane prehlednute.
+            print("  ⚠ LICENCE_PUBLIC_KEY neni nastaveny - podpis tokenu se NEOVERUJE.")
+            payload_b64 = parts[1] + '=='
+            payload = json_lib.loads(base64.urlsafe_b64decode(payload_b64))
+
         exp = payload.get('exp', 0)
-        if exp > datetime.datetime.utcnow().timestamp():
-            return {'ok': True, **payload}
-        return {'ok': False, 'error': 'Token expired'}
-    except Exception:
-        return {'ok': False}
+        if not exp or exp <= datetime.datetime.utcnow().timestamp():
+            return {'ok': False, 'error': 'Token expired'}
+
+        # Token je vazany na konkretni pocitac - zkopirovany .token_cache
+        # na jinem stroji neprojde.
+        tok_hwid = str(payload.get('hwid') or '')
+        if pub and tok_hwid:
+            try:
+                # Server uklada hwid zahashovany (sha256 z klientskeho hwid),
+                # takze porovnavame stejnou podobu.
+                local = hashlib.sha256(get_hwid().encode()).hexdigest()
+                if tok_hwid not in (local, get_hwid()):
+                    return {'ok': False, 'error': 'Token belongs to another machine'}
+            except Exception:
+                pass
+
+        return {'ok': True, **payload}
+    except Exception as exc:
+        return {'ok': False, 'error': f'{type(exc).__name__}: {exc}'}
 
 
 def clear_token_cache():
@@ -263,6 +314,15 @@ def check_license() -> tuple[bool, str]:
 
     if result.get('ok'):
         SESSION_TOKEN = result.get('token', '')
+        # Token overit i pri online prihlaseni - kdyby odpovidal podvrzeny
+        # server (napr. presmerovanim domeny pres hosts), podpis nesedi.
+        _tok = validate_token_offline(SESSION_TOKEN) if SESSION_TOKEN else {'ok': False}
+        if LICENCE_PUBLIC_KEY.strip() and not _tok.get('ok'):
+            clear_token_cache()
+            print(f"  ✗ Odpoved licencniho serveru ma neplatny podpis: {_tok.get('error')}")
+            return False, "❌ Licenční server odpověděl neplatně podepsaným tokenem."
+        if _tok.get('features') is not None:
+            scan_quota.set_signed_features(_tok.get('features'))
         save_token_cache(SESSION_TOKEN)
         plan     = result.get('plan', '?')
         company  = result.get('company', '')
@@ -292,6 +352,8 @@ def check_license() -> tuple[bool, str]:
         offline = validate_token_offline(cached)
         if offline.get('ok'):
             SESSION_TOKEN = cached
+            if offline.get('features') is not None:
+                scan_quota.set_signed_features(offline.get('features'))
             exp = datetime.datetime.fromtimestamp(offline.get('exp', 0))
             print(f"  ✓ Offline token platný do {exp}")
             return True, f"⚠ Offline režim · skenování bude nedostupné"
@@ -6980,7 +7042,8 @@ async def _hardware_report_collect(udid, fresh=False):
         if lk:
             out["lkey"] = lk
         # zachovej pripadna budouci verifikacni pole (forward-kompatibilita)
-        for k in ("factory_value", "current_value", "match", "status", "note"):
+        for k in ("factory_value", "current_value", "match", "status", "note",
+                  "baseline_captured"):
             if k in c:
                 out[k] = c[k]
         return out
@@ -7503,13 +7566,33 @@ def api_reset_password():
 
 # ─── ACTIVATION API ──────────────────────────────────────────────────────────
 
+@app.route('/api/feature/<name>', methods=['GET'])
+def api_feature_check(name):
+    """Autorizace jednotlive funkce proti PODEPSANEMU tokenu.
+    UI se pta pred spustenim zamykatelne funkce (napr. exportu do Excelu).
+    Klientske skryvani tlacitka je jen pohodli - tohle je to, co rozhoduje."""
+    try:
+        allowed = scan_quota.has_feature(name)
+    except Exception:
+        allowed = False
+    return jsonify({'ok': True, 'feature': name, 'allowed': bool(allowed)})
+
+
 @app.route('/api/licence-status', methods=['GET'])
 def api_licence_status():
     """Vrátí jestli je licence už aktivována na tomto PC."""
     key = load_license_key()
+    try:
+        feats = scan_quota.features()
+    except Exception:
+        feats = []
     return jsonify({
         'activated': key is not None,
-        'key_preview': key[:12] + '...' if key else None
+        'key_preview': key[:12] + '...' if key else None,
+        # Funkce pochazi z PODEPSANEHO tokenu (viz validate_token_offline).
+        # UI podle nich skryva zamcene funkce; skutecne vynuceni ale musi
+        # zustat na serveru, klientske skryvani je jen pohodli.
+        'features': feats,
     })
 
 

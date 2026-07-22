@@ -1816,13 +1816,28 @@ function doExport() {
   showToast(t('exp_done').replace('{n}',database.length).replace('{c}',cols.length).replace('{f}',fname));
 }
 
-function exportDatabaseToExcel() {
+// Zamykatelne funkce se pred spustenim ptaji SERVERU. Skryte tlacitko by
+// stacilo obejit upravou tohohle souboru - rozhoduje az odpoved /api/feature.
+async function requireFeature(name, hintCz) {
+  try {
+    const r = await fetchJSON(`/api/feature/${encodeURIComponent(name)}`);
+    if (r && r.ok && r.allowed) return true;
+  } catch (e) { /* server nedostupny -> nepovolovat */ }
+  showToast(hintCz || 'Tuhle funkci tvůj tarif neobsahuje.', true);
+  return false;
+}
+
+async function exportDatabaseToExcel() {
+  if (!await requireFeature('excel_io',
+      'Export do Excelu je od tarifu Pro výš.')) return;
   openExportModal();
 }
 
-function exportSlotToExcel(id) {
+async function exportSlotToExcel(id) {
   const slot = slots[id];
   if (!slot.device) return;
+  if (!await requireFeature('excel_io',
+      'Export do Excelu je od tarifu Pro výš.')) return;
   addToDatabase(slot);
   openExportModal();
 }
@@ -1947,7 +1962,12 @@ async function startTesting(id) {
       const isChanged = (slot.device.changed||[]).includes(tdef.id);
       let status;
       if (isChanged) status = 'fail';
-      else if (tdef.id==='battery' && slot.device.battery<80) status = 'warn';
+      // POZOR: slot.device.battery je STAV NABITI, ne kondice. Drive se podle
+      // nej rozhodovalo o varovani, takze telefon s 44 % nabiti hlasil zavadu,
+      // i kdyz mel kondici 99 %. Rozhoduje battery_health; nabiti az jako
+      // fallback, kdyz se kondice necetla.
+      else if (tdef.id==='battery' &&
+               (slot.device.battery_health || slot.device.battery) < 80) status = 'warn';
       else if (snMap && (tdef.id in snMap) && snMap[tdef.id]===false) status = 'warn'; // SN chybí -> možná závada
       else if (tdef.id==='panic') status = (slot.device._panics && slot.device._panics.length) ? 'fail' : 'pass';
       else status = 'pass';
@@ -2612,7 +2632,7 @@ const HW_I18N = {
     "badge_nofactory": "No factory reference",
     "badge_unreadable": "Cannot read",
     "badge_unavailable": "Unavailable",
-    "val_factory": "Factory:",
+    "val_factory": "Original:",
     "val_current": "Current:",
     "val_unavailable": "unavailable",
     "val_fault": "Possible fault",
@@ -2683,7 +2703,7 @@ const HW_I18N = {
     "badge_nofactory": "Bez tovární reference",
     "badge_unreadable": "Nelze přečíst",
     "badge_unavailable": "Nedostupné",
-    "val_factory": "Tovární:",
+    "val_factory": "Původní:",
     "val_current": "Aktuální:",
     "val_unavailable": "nedostupné",
     "val_fault": "Možná závada",
@@ -2754,7 +2774,7 @@ const HW_I18N = {
     "badge_nofactory": "Brak referencji fabrycznej",
     "badge_unreadable": "Nie można odczytać",
     "badge_unavailable": "Niedostępne",
-    "val_factory": "Fabryczny:",
+    "val_factory": "Pierwotny:",
     "val_current": "Aktualny:",
     "val_unavailable": "niedostępne",
     "val_fault": "Możliwa usterka",
@@ -2825,7 +2845,7 @@ const HW_I18N = {
     "badge_nofactory": "Нет заводского эталона",
     "badge_unreadable": "Не читается",
     "badge_unavailable": "Недоступно",
-    "val_factory": "Заводской:",
+    "val_factory": "Исходный:",
     "val_current": "Текущий:",
     "val_unavailable": "недоступно",
     "val_fault": "Возможна неисправность",
@@ -2896,7 +2916,7 @@ const HW_I18N = {
     "badge_nofactory": "Nessun riferimento di fabbrica",
     "badge_unreadable": "Non leggibile",
     "badge_unavailable": "Non disponibile",
-    "val_factory": "Di fabbrica:",
+    "val_factory": "Originale:",
     "val_current": "Attuale:",
     "val_unavailable": "non disponibile",
     "val_fault": "Possibile guasto",
@@ -2967,7 +2987,7 @@ const HW_I18N = {
     "badge_nofactory": "Aucune référence d'usine",
     "badge_unreadable": "Illisible",
     "badge_unavailable": "Indisponible",
-    "val_factory": "D'usine :",
+    "val_factory": "Initial :",
     "val_current": "Actuel :",
     "val_unavailable": "indisponible",
     "val_fault": "Défaut possible",
@@ -3558,8 +3578,12 @@ function renderComponentCard(key, c) {
         <span style="flex:0 0 auto;white-space:nowrap;font-family:var(--mono,monospace);font-size:10px;font-weight:700;color:${cfg.fg};background:#fff;padding:2px 8px;border-radius:20px;border:1px solid ${cfg.bd}">${cfg.badge}</span>
       </div>
       <div style="font-family:var(--mono,monospace);font-size:11px;color:#6b7280;display:flex;flex-direction:column;gap:2px">
-        <div>${ht('val_factory')} <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
-        <div>${ht('val_current')} <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>
+        ${c.baseline_captured
+          ? /* Prvni sken tohohle kusu: referenci prave zakladame, takze
+               "puvodni" a "aktualni" je totez cislo. Vypisujeme ho jednou. */
+            `<div><span style="color:#0a0a0a;font-weight:600">${c.current_value ? esc(c.current_value) : (c.value ? esc(c.value) : '—')}</span></div>`
+          : `<div>${ht('val_factory')} <span style="color:#0a0a0a">${c.factory_value ? esc(c.factory_value) : '—'}</span></div>
+             <div>${ht('val_current')} <span style="color:${curColor};font-weight:${curWeight}">${curText}</span></div>`}
       </div>
       ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
     </div>`;
