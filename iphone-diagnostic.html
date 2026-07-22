@@ -60,12 +60,37 @@
   .user-pill{font-family:var(--mono);font-size:11px;color:var(--text-dim)}
   .user-pill strong{color:var(--pink-dark)}
 
-  /* NAV BUTTONS */
-  .nav-btn{font-family:var(--mono);font-size:12px;font-weight:600;padding:7px 16px;border-radius:8px;cursor:pointer;border:1.5px solid var(--border);background:var(--surface2);color:var(--text-dim);transition:all .2s;white-space:nowrap}
-  .nav-btn:hover{color:var(--text);border-color:var(--border-bright)}
-  .nav-btn.active{background:var(--text);color:#fff;border-color:var(--text)}
+  /* NAV BUTTONS
+     Jedna vyska pro vsechna tlacitka v hlavicce (34 px), ikona 15 px v
+     currentColor - emoji vypadalo na kazdem Windows jinak a v tisku i
+     screenshotech pusobilo levne. Stisk ma vlastni stav, focus viditelny
+     obrys kvuli ovladani klavesnici. */
+  .nav-btn,.btn-header{
+    height:34px;display:inline-flex;align-items:center;gap:7px;
+    font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.01em;
+    padding:0 14px;border-radius:9px;cursor:pointer;white-space:nowrap;
+    border:1.5px solid var(--border);background:var(--surface2);color:var(--text-dim);
+    transition:background .16s,border-color .16s,color .16s,box-shadow .16s,transform .08s;
+  }
+  .nav-btn .ti,.btn-header .ti{width:15px;height:15px;margin:0;vertical-align:0;opacity:.9}
+  .nav-btn:hover,.btn-header:hover{color:var(--text);border-color:var(--border-bright);background:var(--surface)}
+  .nav-btn:active,.btn-header:active{transform:translateY(1px)}
+  .nav-btn:focus-visible,.btn-header:focus-visible{outline:2px solid var(--pink-dark);outline-offset:2px}
+  .nav-btn.active{background:var(--text);color:#fff;border-color:var(--text);box-shadow:var(--shadow-sm)}
+  .nav-btn.active .ti{opacity:1}
+  .nav-btn.active:hover{background:#1c2740;color:#fff;border-color:#1c2740}
   .nav-btn.db-btn.active{background:var(--pink-dark);border-color:var(--pink-dark);color:#fff}
+  .nav-btn.db-btn.active:hover{background:#db2777;border-color:#db2777;color:#fff}
   .nav-btn.sw-btn.active{background:#0ea5e9;border-color:#0ea5e9;color:#fff}
+  /* Akcentni tlacitko (aktivace) - jedina barevna vec v hlavicce */
+  .btn-header.accent{color:var(--pink-dark);border-color:var(--pink-border);background:var(--surface)}
+  .btn-header.accent:hover{color:#fff;background:var(--pink-dark);border-color:var(--pink-dark)}
+  .btn-header.logout{color:var(--text-dim)}
+  .btn-header.logout:hover{color:var(--red);border-color:var(--red);background:var(--red-dim,#fef2f2)}
+  @media (prefers-reduced-motion:reduce){
+    .nav-btn,.btn-header{transition:none}
+    .nav-btn:active,.btn-header:active{transform:none}
+  }
 
   /* SOFTWARE TOOL VIEW */
   .sw-view{display:flex;flex-direction:column;height:100%;padding:16px;gap:16px;overflow-y:auto}
@@ -103,11 +128,8 @@
   .sw-status{font-family:var(--mono);font-size:12px;color:var(--text-dim);padding:8px 0}
   .sw-model-select{font-family:var(--mono);font-size:12px;padding:7px 12px;border:1.5px solid var(--border);border-radius:8px;background:var(--surface2);color:var(--text);cursor:pointer}
   .sw-recovery-banner{background:#fef3c7;border:1.5px solid #f59e0b;border-radius:10px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-family:var(--mono);font-size:12px;color:#92400e}
-  .btn-header{font-family:var(--mono);font-size:11px;color:var(--text-mid);background:var(--surface);border:1px solid var(--border);padding:6px 13px;border-radius:8px;cursor:pointer;transition:all .18s;white-space:nowrap;box-shadow:var(--shadow-sm)}
-  .btn-header:hover{border-color:var(--border-bright);box-shadow:var(--shadow-md);transform:translateY(-1px)}
   .btn-header.excel{border-color:rgba(22,163,74,.3);color:var(--green)}
   .btn-header.excel:hover{background:var(--green-dim);border-color:var(--green)}
-  .btn-header.logout:hover{color:var(--red);border-color:var(--red)}
 
   /* MAIN VIEWS */
   main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
@@ -297,6 +319,11 @@
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
 <defs>
 <g id="_st" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></g>
+<symbol id="i-scope" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6.2"/><path d="M15.2 15.2 20 20"/><path d="M8.2 10.5h4.6M10.5 8.2v4.6"/></g></symbol>
+<symbol id="i-db" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.8" rx="7" ry="2.8"/><path d="M5 5.8v12.4c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8V5.8"/><path d="M5 12c0 1.55 3.13 2.8 7 2.8s7-1.25 7-2.8"/></g></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13.2 2.8 5.4 13.4h5.6l-.9 7.8 7.9-10.7h-5.7z"/></g></symbol>
+<symbol id="i-help" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2-2.4 3.6"/><path d="M12 17.1v.05"/></g></symbol>
+<symbol id="i-exit" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4.6H6.4A1.6 1.6 0 0 0 4.8 6.2v11.6a1.6 1.6 0 0 0 1.6 1.6h8.1"/><path d="M15.6 15.4 19.2 12l-3.6-3.4"/><path d="M19.2 12H9.4"/></g></symbol>
 <symbol id="i-board" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M10 10.5h4M10 13.5h4"/><path d="M9.5 7V4.2M14.5 7V4.2M9.5 19.8V17M14.5 19.8V17M7 9.5H4.2M7 14.5H4.2M19.8 9.5H17M19.8 14.5H17"/></g></symbol>
 <symbol id="i-battery" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.6" y="7.2" width="16" height="9.6" rx="2.6"/><path d="M21.4 10.6v2.8"/><path d="M11.6 9.4 9.3 12.3h2.6l-1.7 2.4" stroke-width="1.5"/></g></symbol>
 <symbol id="i-display" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6.2" y="2.6" width="11.6" height="18.8" rx="3"/><path d="M10.2 4.7h3.6" stroke-width="1.9"/></g></symbol>
@@ -459,10 +486,13 @@
   </div>
   <div class="header-right">
     <div class="lang-switcher" id="lang-switcher"></div>
-    <button class="nav-btn active" id="btn-diag" onclick="switchView('diag')" data-i18n="nav_diag">🔬 Deep Diagnostics</button>
-    <button class="nav-btn db-btn" id="btn-db"   onclick="switchView('db')" data-i18n="nav_db">📋 Database</button>
+    <button class="nav-btn active" id="btn-diag" onclick="switchView('diag')">
+      <svg class="ti"><use href="#i-scope"/></svg><span data-i18n="nav_diag">Deep Diagnostics</span></button>
+    <button class="nav-btn db-btn" id="btn-db" onclick="switchView('db')">
+      <svg class="ti"><use href="#i-db"/></svg><span data-i18n="nav_db">Database</span></button>
     <div style="position:relative">
-      <button class="btn-header" id="btn-activation" onclick="toggleActivationPanel(event)" style="border-color:rgba(236,72,153,.3);color:var(--pink-dark)">⚡ Aktivace iPhonu</button>
+      <button class="btn-header accent" id="btn-activation" onclick="toggleActivationPanel(event)">
+        <svg class="ti"><use href="#i-bolt"/></svg><span data-i18n="nav_activation">Aktivace iPhonu</span></button>
       <div id="activation-panel" style="display:none;position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1.5px solid var(--border);border-radius:12px;padding:16px;width:290px;box-shadow:0 12px 30px rgba(0,0,0,.15);z-index:500;text-align:left">
         <div id="act-panel-title" style="font-family:var(--mono);font-size:11px;font-weight:700;color:var(--text);margin-bottom:8px">⚡ AKTIVACE IPHONU</div>
         <p id="act-panel-desc" style="font-size:12px;color:var(--text-dim);line-height:1.6;margin-bottom:12px">
@@ -475,8 +505,10 @@
         <div id="auto-activate-status" style="font-family:var(--mono);font-size:10px;color:var(--text-dim);margin-top:8px"></div>
       </div>
     </div>
-    <a class="btn-header" href="/support" target="_blank" style="text-decoration:none">🛟 Support</a>
-    <button class="btn-header logout" onclick="doLogout()" data-i18n="logout">Log out</button>
+    <a class="btn-header" href="/support" target="_blank" style="text-decoration:none">
+      <svg class="ti"><use href="#i-help"/></svg><span data-i18n="nav_support">Support</span></a>
+    <button class="btn-header logout" onclick="doLogout()">
+      <svg class="ti"><use href="#i-exit"/></svg><span data-i18n="logout">Log out</span></button>
   </div>
 </header>
 
@@ -643,8 +675,10 @@ const LANGS = {
 
 const T = {
   en: {
+    nav_support:'Support',
+    nav_activation:'Activate iPhone',
     // Header
-    nav_diag:'🔬 Deep Diagnostics', nav_db:'📋 Database', nav_sw:'📲 Software Tool', logout:'Log out',
+    nav_diag:'Deep Diagnostics', nav_db:'Database', nav_sw:'Software Tool', logout:'Log out',
     sw_no_device:'Connect iPhone via USB to get started',
     sw_recovery_mode:'Device is in Recovery Mode',
     sw_select_version:'Select iOS Version', sw_all_models:'All models',
@@ -734,7 +768,9 @@ const T = {
     act_btn:'⚡ iPhone Activation', act_panel_title:'⚡ IPHONE ACTIVATION', act_panel_desc:'Standard Apple activation. Locked (iCloud) devices are not activated — the app points to Apple instead; no password is ever entered here.', act_auto_label:'Automatically activate <b>tested</b> devices (no manual tap on ⚡)', act_status_on:'✓ Enabled — newly tested units activate themselves', act_status_off:'Disabled — activation does not run automatically', act_status_saving:'Saving…', act_status_save_err:'⚠ Could not save: ', act_modal_activating_title:'Activating device…', act_modal_activating_body:'Performing a handshake with Apple\'s servers (requires internet). One moment.', act_modal_success_title:'✅ Device activated', act_modal_success_new:'The phone should now continue through the activation screen.', act_modal_success_already:'Device was already activated.', act_modal_fail_title:'❌ Activation failed', act_modal_fail_unknown:'Unknown error', act_modal_endpoint_title:'⚠️ Endpoint missing from build', act_modal_endpoint_body:'This EXE has an old server.py without /api/device-activate. Rebuild with the latest server.py.', act_modal_timeout_title:'⏱️ Timed out', act_modal_timeout_body:'The device did not respond in time. Check the connection and internet, then try again.', act_modal_generic_fail_title:'❌ Could not activate', act_lock_title:'Device is still on iCloud', act_lock_desc:'The phone is signed in to Find My (Activation Lock). It can\'t be activated or sold until the original owner signs out. The password is entered with Apple, never here.', act_lock_btn_icloud:'Open iCloud.com/find (remove device)', act_lock_btn_appleid:'Open appleid.apple.com', act_lock_hint:'Or directly on the phone: Settings → [name] → Sign Out.', modal_close:'Close',
   },
   cs: {
-    nav_diag:'🔬 Důkladná diagnostika', nav_db:'📋 Vytvoření databáze', nav_sw:'📲 Software Tool', logout:'Odhlásit',
+    nav_support:'Podpora',
+    nav_activation:'Aktivace iPhonu',
+    nav_diag:'Důkladná diagnostika', nav_db:'Databáze', nav_sw:'📲 Software Tool', logout:'Odhlásit',
     sw_no_device:'Připojte iPhone přes USB pro zahájení',
     sw_recovery_mode:'Zařízení je v Recovery Mode',
     sw_select_version:'Vyberte verzi iOS', sw_all_models:'Všechny modely',
@@ -806,7 +842,9 @@ const T = {
     act_btn:'⚡ Aktivace iPhonu', act_panel_title:'⚡ AKTIVACE IPHONU', act_panel_desc:'Standardní Apple aktivace. Zamčené (iCloud) zařízení se neaktivují — appka nasměruje na Apple, žádné heslo se nikde nezadává.', act_auto_label:'Automaticky aktivovat <b>otestovaná</b> zařízení (bez ručního klikání na ⚡)', act_status_on:'✓ Zapnuto — nové otestované kusy se aktivují samy', act_status_off:'Vypnuto — aktivace se nespouští automaticky', act_status_saving:'Ukládám…', act_status_save_err:'⚠ Nepodařilo se uložit: ', act_modal_activating_title:'Aktivuji zařízení…', act_modal_activating_body:'Probíhá handshake s Apple serverem (nutný internet). Chvilku.', act_modal_success_title:'✅ Zařízení aktivováno', act_modal_success_new:'Telefon by měl pokračovat přes aktivační obrazovku.', act_modal_success_already:'Zařízení bylo již dříve aktivováno.', act_modal_fail_title:'❌ Aktivace selhala', act_modal_fail_unknown:'Neznámá chyba', act_modal_endpoint_title:'⚠️ Endpoint chybí v buildu', act_modal_endpoint_body:'V EXE je starý server.py bez /api/device-activate. Rebuildni s novým server.py.', act_modal_timeout_title:'⏱️ Vypršel čas', act_modal_timeout_body:'Zařízení neodpovědělo včas. Zkontroluj připojení a internet, pak zkus znovu.', act_modal_generic_fail_title:'❌ Aktivaci nelze provést', act_lock_title:'Zařízení je stále na iCloudu', act_lock_desc:'Telefon je přihlášený k Find My (Activation Lock). Aktivovat ani prodat ho nelze, dokud ho původní majitel neodhlásí. Heslo se zadává u Applu, ne zde.', act_lock_btn_icloud:'Otevřít iCloud.com/find (odebrat zařízení)', act_lock_btn_appleid:'Otevřít appleid.apple.com', act_lock_hint:'Nebo přímo na telefonu: Nastavení → [jméno] → Odhlásit se.', modal_close:'Zavřít',
   },
   pl: {
-    nav_diag:'🔬 Diagnostyka', nav_db:'📋 Baza danych', nav_sw:'📲 Software Tool', logout:'Wyloguj',
+    nav_support:'Wsparcie',
+    nav_activation:'Aktywacja iPhone',
+    nav_diag:'Pełna diagnostyka', nav_db:'Baza danych', nav_sw:'📲 Software Tool', logout:'Wyloguj',
     sw_no_device:'Podłącz iPhone przez USB aby rozpocząć',
     sw_recovery_mode:'Urządzenie jest w trybie Recovery',
     sw_select_version:'Wybierz wersję iOS', sw_all_models:'Wszystkie modele',
@@ -877,7 +915,9 @@ const T = {
     act_btn:'⚡ Aktywacja iPhone\'a', act_panel_title:'⚡ AKTYWACJA IPHONE\'A', act_panel_desc:'Standardowa aktywacja Apple. Zablokowane (iCloud) urządzenia nie są aktywowane — aplikacja kieruje do Apple, hasło nigdy nie jest tu wpisywane.', act_auto_label:'Automatycznie aktywuj <b>przetestowane</b> urządzenia (bez ręcznego klikania ⚡)', act_status_on:'✓ Włączone — nowo przetestowane sztuki aktywują się same', act_status_off:'Wyłączone — aktywacja nie uruchamia się automatycznie', act_status_saving:'Zapisywanie…', act_status_save_err:'⚠ Nie udało się zapisać: ', act_modal_activating_title:'Aktywacja urządzenia…', act_modal_activating_body:'Trwa uzgadnianie z serwerami Apple (wymagany internet). Chwila.', act_modal_success_title:'✅ Urządzenie aktywowane', act_modal_success_new:'Telefon powinien teraz przejść przez ekran aktywacji.', act_modal_success_already:'Urządzenie było już wcześniej aktywowane.', act_modal_fail_title:'❌ Aktywacja nie powiodła się', act_modal_fail_unknown:'Nieznany błąd', act_modal_endpoint_title:'⚠️ Brak endpointu w buildzie', act_modal_endpoint_body:'To EXE ma stary plik server.py bez /api/device-activate. Zbuduj ponownie z najnowszym server.py.', act_modal_timeout_title:'⏱️ Upłynął czas', act_modal_timeout_body:'Urządzenie nie odpowiedziało na czas. Sprawdź połączenie i internet, spróbuj ponownie.', act_modal_generic_fail_title:'❌ Nie można aktywować', act_lock_title:'Urządzenie jest nadal na iCloud', act_lock_desc:'Telefon jest zalogowany do Find My (Activation Lock). Nie można go aktywować ani sprzedać, dopóki pierwotny właściciel się nie wyloguje. Hasło podaje się u Apple, nigdy tutaj.', act_lock_btn_icloud:'Otwórz iCloud.com/find (usuń urządzenie)', act_lock_btn_appleid:'Otwórz appleid.apple.com', act_lock_hint:'Lub bezpośrednio na telefonie: Ustawienia → [imię] → Wyloguj się.', modal_close:'Zamknij',
   },
   ru: {
-    nav_diag:'🔬 Диагностика', nav_db:'📋 База данных', nav_sw:'📲 Software Tool', logout:'Выйти',
+    nav_support:'Поддержка',
+    nav_activation:'Активация iPhone',
+    nav_diag:'Полная диагностика', nav_db:'База данных', nav_sw:'📲 Software Tool', logout:'Выйти',
     sw_no_device:'Подключите iPhone через USB для начала работы',
     sw_recovery_mode:'Устройство в режиме восстановления',
     sw_select_version:'Выберите версию iOS', sw_all_models:'Все модели',
@@ -948,7 +988,9 @@ const T = {
     act_btn:'⚡ Активация iPhone', act_panel_title:'⚡ АКТИВАЦИЯ IPHONE', act_panel_desc:'Стандартная активация Apple. Заблокированные (iCloud) устройства не активируются — приложение направляет на сайт Apple, пароль здесь никогда не вводится.', act_auto_label:'Автоматически активировать <b>протестированные</b> устройства (без ручного нажатия ⚡)', act_status_on:'✓ Включено — новые протестированные устройства активируются сами', act_status_off:'Выключено — активация не запускается автоматически', act_status_saving:'Сохранение…', act_status_save_err:'⚠ Не удалось сохранить: ', act_modal_activating_title:'Активация устройства…', act_modal_activating_body:'Выполняется обмен данными с серверами Apple (нужен интернет). Одну минуту.', act_modal_success_title:'✅ Устройство активировано', act_modal_success_new:'Телефон теперь должен пройти через экран активации.', act_modal_success_already:'Устройство уже было активировано ранее.', act_modal_fail_title:'❌ Активация не удалась', act_modal_fail_unknown:'Неизвестная ошибка', act_modal_endpoint_title:'⚠️ Endpoint отсутствует в сборке', act_modal_endpoint_body:'В этом EXE старый server.py без /api/device-activate. Пересоберите с новым server.py.', act_modal_timeout_title:'⏱️ Истекло время ожидания', act_modal_timeout_body:'Устройство не ответило вовремя. Проверьте подключение и интернет, затем повторите попытку.', act_modal_generic_fail_title:'❌ Не удалось выполнить активацию', act_lock_title:'Устройство всё ещё привязано к iCloud', act_lock_desc:'Телефон вошёл в Find My (Activation Lock). Активировать или продать его нельзя, пока исходный владелец не выйдет из аккаунта. Пароль вводится у Apple, никогда не здесь.', act_lock_btn_icloud:'Открыть iCloud.com/find (удалить устройство)', act_lock_btn_appleid:'Открыть appleid.apple.com', act_lock_hint:'Или прямо на телефоне: Настройки → [имя] → Выйти.', modal_close:'Закрыть',
   },
   it: {
-    nav_diag:'🔬 Diagnostica', nav_db:'📋 Database', nav_sw:'📲 Software Tool', logout:'Esci',
+    nav_support:'Assistenza',
+    nav_activation:'Attiva iPhone',
+    nav_diag:'Diagnostica completa', nav_db:'Database', nav_sw:'📲 Software Tool', logout:'Esci',
     sw_no_device:'Collega iPhone tramite USB per iniziare',
     sw_recovery_mode:'Il dispositivo è in modalità Recovery',
     sw_select_version:'Seleziona versione iOS', sw_all_models:'Tutti i modelli',
@@ -1019,7 +1061,9 @@ const T = {
     act_btn:'⚡ Attivazione iPhone', act_panel_title:'⚡ ATTIVAZIONE IPHONE', act_panel_desc:'Attivazione Apple standard. I dispositivi bloccati (iCloud) non vengono attivati: l\'app indirizza ad Apple, nessuna password viene mai inserita qui.', act_auto_label:'Attiva automaticamente i dispositivi <b>testati</b> (senza toccare manualmente ⚡)', act_status_on:'✓ Attivo — i nuovi dispositivi testati si attivano da soli', act_status_off:'Disattivato — l\'attivazione non parte automaticamente', act_status_saving:'Salvataggio…', act_status_save_err:'⚠ Salvataggio non riuscito: ', act_modal_activating_title:'Attivazione del dispositivo…', act_modal_activating_body:'Handshake in corso con i server Apple (richiede internet). Un momento.', act_modal_success_title:'✅ Dispositivo attivato', act_modal_success_new:'Il telefono dovrebbe ora proseguire nella schermata di attivazione.', act_modal_success_already:'Il dispositivo era già stato attivato in precedenza.', act_modal_fail_title:'❌ Attivazione non riuscita', act_modal_fail_unknown:'Errore sconosciuto', act_modal_endpoint_title:'⚠️ Endpoint mancante nella build', act_modal_endpoint_body:'Questo EXE ha un vecchio server.py senza /api/device-activate. Ricompila con il server.py più recente.', act_modal_timeout_title:'⏱️ Tempo scaduto', act_modal_timeout_body:'Il dispositivo non ha risposto in tempo. Controlla la connessione e internet, poi riprova.', act_modal_generic_fail_title:'❌ Impossibile attivare', act_lock_title:'Il dispositivo è ancora collegato a iCloud', act_lock_desc:'Il telefono è connesso a Find My (Activation Lock). Non può essere attivato né venduto finché il proprietario originale non esegue il logout. La password si inserisce presso Apple, mai qui.', act_lock_btn_icloud:'Apri iCloud.com/find (rimuovi dispositivo)', act_lock_btn_appleid:'Apri appleid.apple.com', act_lock_hint:'Oppure direttamente sul telefono: Impostazioni → [nome] → Esci.', modal_close:'Chiudi',
   },
   fr: {
-    nav_diag:'🔬 Diagnostic approfondi', nav_db:'📋 Base de données', nav_sw:'📲 Software Tool', logout:'Déconnexion',
+    nav_support:'Assistance',
+    nav_activation:'Activer iPhone',
+    nav_diag:'Diagnostic complet', nav_db:'Base de données', nav_sw:'📲 Software Tool', logout:'Déconnexion',
     sw_no_device:'Connectez iPhone via USB pour commencer',
     sw_recovery_mode:'L\'appareil est en mode Recovery',
     sw_select_version:'Sélectionner la version iOS', sw_all_models:'Tous les modèles',
