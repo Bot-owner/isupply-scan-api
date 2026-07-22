@@ -2020,7 +2020,15 @@ def _product_text(source, keys):
             return v.strip().strip("\x00") or None
         if raw is None:
             return None
+        # 0xFF vypln = "nevyplneno" (napr. Panel_ID / coverglass na 16 Pro).
+        # Bez tohohle by z ff ff ff... vzniknul retezec smetnich znaku.
+        if raw and all(b == 0xFF for b in raw):
+            return None
         txt = raw.decode("ascii", "ignore").strip().strip("\x00").strip()
+        # Serial musi byt tisknutelny alfanumericky retezec rozumne delky.
+        txt = "".join(ch for ch in txt if 32 <= ord(ch) < 127).strip()
+        if len(txt) < 4:
+            return None
         return txt or None
 
     def scan(obj, path="$", depth=0):
@@ -2677,6 +2685,18 @@ async def _component_serials_collect(udid, sources=None, apply_baseline=True):
                     m["source"] = sname
                     value, meta = v, m
                     break
+            # ZALOHA: na nekterych generacich (napr. iPhone 16 Pro) je Panel_ID
+            # cely 0xFF = prazdny. Sklo displeje ma pak vlastni serial v uzlu
+            # "product". Na SE overeno: backglass-serial-number odpovida tomu,
+            # co 3uTools ukazuje jako "Cover Board Number". coverglass byva
+            # u nekterych kusu 0xFF, backglass drzi - proto backglass prvni.
+            if not value:
+                v, m = _product_text(
+                    source_map.get("product") or {},
+                    ("backglass-serial-number", "coverglass-serial-number",
+                     "raw-panel-serial-number"))
+                if v:
+                    value, meta = v, m
         else:
             value, meta = _v29_source_find(source_map, allowed_sources, exact_keys)
 
