@@ -365,6 +365,33 @@
 
 
 <!-- LOGIN -->
+<!-- Zachytna zprava. Je videt HNED po nacteni HTML a JavaScript ji po
+     uspesnem startu schova. Kdyz se aplikace nerozjede (stary WebView2,
+     chyba skriptu, proxy), technik misto bile plochy vidi, co delat. -->
+<div id="boot-fallback" style="position:fixed;inset:0;top:0;left:0;right:0;bottom:0;
+     background:#fff;z-index:9000;display:flex;align-items:center;justify-content:center;
+     padding:24px;font-family:-apple-system,Segoe UI,system-ui,sans-serif">
+  <div style="max-width:460px">
+    <div style="font-size:12px;letter-spacing:.2em;color:#9ca3af;margin-bottom:14px">
+      iSUPPLY SCAN</div>
+    <h1 style="font-size:20px;margin:0 0 12px">Aplikace se nenačetla</h1>
+    <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 16px">
+      Okno se otevřelo, ale rozhraní se nepodařilo zobrazit. Na některých
+      počítačích to způsobuje zastaralá komponenta Microsoft WebView2.
+    </p>
+    <p style="font-size:14px;line-height:1.6;color:#4b5563;margin:0 0 16px">
+      <strong>Co zkusit:</strong><br>
+      1. Vytvořte vedle aplikace prázdný soubor <code>PROHLIZEC.txt</code>
+         a spusťte ji znovu — otevře se v prohlížeči.<br>
+      2. Nebo doinstalujte WebView2 z
+         <code>developer.microsoft.com/microsoft-edge/webview2</code>
+    </p>
+    <p style="font-size:13px;color:#6b7280;margin:0">
+      Podpora: <strong>info@isupply.cz</strong>
+    </p>
+  </div>
+</div>
+
 <div id="login-overlay">
   <div class="login-box">
     <div class="login-logo">
@@ -4141,6 +4168,13 @@ applyTranslations();
 try { renderDatabase(); } catch(e) { console.error('renderDatabase init:', e); }
 
 // Při načtení zkontroluj jestli je licence aktivována
+// Skript bezi -> zachytnou zpravu schovat. Kdyz se sem beh nedostane,
+// zprava zustane a technik vidi navod misto bile plochy.
+(function hideBootFallback(){
+  var el = document.getElementById('boot-fallback');
+  if (el) el.style.display = 'none';
+})();
+
 (async function checkLicenceOnLoad() {
   try {
     const res  = await fetch('/api/licence-status');
