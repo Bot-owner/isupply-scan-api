@@ -1742,6 +1742,26 @@ async function saveColorChoice(slotId, color) {
 
 // ═══ DATABÁZE VIEW ═══
 function renderDatabase() {
+  // Diagnostika: jeden radek do konzole serveru pri kazdem otevreni databaze.
+  // Bez nej nejde rozlisit "kod spadl" od "pole je opravdu prazdne" - obe
+  // situace vypadaji na obrazovce uplne stejne.
+  let ls = 'n/a';
+  try {
+    const raw = localStorage.getItem('isupply_db');
+    ls = raw === null ? 'prazdny klic' : `${JSON.parse(raw).length} zaznamu`;
+  } catch (e) { ls = 'NEDOSTUPNY: ' + e.message; }
+  try {
+    fetch('/api/client-error', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        where: 'DIAG renderDatabase',
+        message: `v pameti=${database.length} | localStorage=${ls} | ` +
+                 `tbody=${document.getElementById('db-tbody') ? 'ok' : 'CHYBI'} | ` +
+                 `verze=2026-07-23c`,
+      })
+    }).catch(() => {});
+  } catch (e) {}
+
   try { _renderDatabase(); }
   catch (err) { reportClientError('renderDatabase', err); }
 }
