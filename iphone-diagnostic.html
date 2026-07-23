@@ -403,7 +403,7 @@
       </div>
       <div class="login-field">
         <label>Licence key</label>
-        <input type="text" id="act-key" placeholder="ISUP-XXXX-XXXX-XXXX" style="letter-spacing:0.08em;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
+        <input type="text" id="act-key" placeholder="ISPL-XXXX-XXXX-XXXX" style="letter-spacing:0.08em;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
       </div>
       <div class="login-field">
         <label>Choose username</label>
@@ -428,7 +428,7 @@
       </div>
       <div class="login-field">
         <label>Licence key</label>
-        <input type="text" id="reset-key" placeholder="ISUP-XXXX-XXXX-XXXX" style="letter-spacing:0.08em;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
+        <input type="text" id="reset-key" placeholder="ISPL-XXXX-XXXX-XXXX" style="letter-spacing:0.08em;text-transform:uppercase" oninput="this.value=this.value.toUpperCase()" />
       </div>
       <div class="login-field">
         <label>Username</label>
@@ -1328,7 +1328,9 @@ async function doActivate() {
   const btn   = document.getElementById('activate-btn');
   err.textContent = '';
   if (!key || !user || !pass) { err.textContent = 'Fill in all fields.'; return; }
-  if (!key.startsWith('ISUP-')) { err.textContent = 'Invalid key format (ISUP-XXXX-XXXX-XXXX).'; return; }
+  // Server prijima OBE predpony (ISPL- i ISUP-). Driv se kontrolovala jen
+  // ISUP-, takze zakaznik s klicem ISPL-... appku vubec neaktivoval.
+  if (!/^(ISPL|ISUP)-/i.test(key)) { err.textContent = 'Neplatný formát klíče (ISPL-XXXX-XXXX-XXXX).'; return; }
   if (pass !== pass2) { err.textContent = 'Passwords do not match.'; return; }
   if (pass.length < 4) { err.textContent = 'Password must be at least 4 characters.'; return; }
   btn.textContent = 'Activating...'; btn.disabled = true;
@@ -1362,7 +1364,9 @@ async function doReset() {
   err.textContent = '';
 
   if (!key || !user || !pass) { err.textContent = 'Fill in all fields.'; return; }
-  if (!key.startsWith('ISUP-')) { err.textContent = 'Invalid key format (ISUP-XXXX-XXXX-XXXX).'; return; }
+  // Server prijima OBE predpony (ISPL- i ISUP-). Driv se kontrolovala jen
+  // ISUP-, takze zakaznik s klicem ISPL-... appku vubec neaktivoval.
+  if (!/^(ISPL|ISUP)-/i.test(key)) { err.textContent = 'Neplatný formát klíče (ISPL-XXXX-XXXX-XXXX).'; return; }
   if (pass !== pass2) { err.textContent = 'Passwords do not match.'; return; }
   if (pass.length < 4) { err.textContent = 'Password must be at least 4 characters.'; return; }
 
@@ -2808,7 +2812,10 @@ const HW_I18N = {
     "val_fault": "Possible fault",
     "functional": "✓ Functional",
     "ambient_light_sensor": "Ambient light sensor",
-    "ultrawide_camera": "Ultra-wide camera"
+    "ultrawide_camera": "Ultra-wide camera",
+    "badge_na": "— N/A",
+    "na_wifi_only": "Wi-Fi model — no cellular modem, so no IMEI. Not a fault.",
+    "na_generic": "This model does not have this component. Not a fault."
   },
   "cs": {
     "modem_fw": "Firmware modemu (baseband)",
@@ -2879,7 +2886,10 @@ const HW_I18N = {
     "val_fault": "Možná závada",
     "functional": "✓ Funkční",
     "ambient_light_sensor": "Senzor okolního světla",
-    "ultrawide_camera": "Ultraširokoúhlá kamera"
+    "ultrawide_camera": "Ultraširokoúhlá kamera",
+    "badge_na": "— NEMÁ",
+    "na_wifi_only": "Wi-Fi model — nemá modem, proto ani IMEI. Není to závada.",
+    "na_generic": "Tento model tuto komponentu nemá. Není to závada."
   },
   "pl": {
     "modem_fw": "Firmware modemu (baseband)",
@@ -2950,7 +2960,10 @@ const HW_I18N = {
     "val_fault": "Możliwa usterka",
     "functional": "✓ Sprawny",
     "ambient_light_sensor": "Czujnik światła otoczenia",
-    "ultrawide_camera": "Aparat ultraszerokokątny"
+    "ultrawide_camera": "Aparat ultraszerokokątny",
+    "badge_na": "— BRAK",
+    "na_wifi_only": "Model Wi-Fi — bez modemu, więc bez IMEI. To nie usterka.",
+    "na_generic": "Ten model nie ma tego komponentu. To nie usterka."
   },
   "ru": {
     "modem_fw": "Прошивка модема (baseband)",
@@ -3021,7 +3034,10 @@ const HW_I18N = {
     "val_fault": "Возможна неисправность",
     "functional": "✓ Исправно",
     "ambient_light_sensor": "Датчик освещённости",
-    "ultrawide_camera": "Сверхширокоугольная камера"
+    "ultrawide_camera": "Сверхширокоугольная камера",
+    "badge_na": "— НЕТ",
+    "na_wifi_only": "Модель Wi-Fi — без модема, поэтому без IMEI. Это не неисправность.",
+    "na_generic": "В этой модели такого компонента нет. Это не неисправность."
   },
   "it": {
     "modem_fw": "Firmware del modem (baseband)",
@@ -3092,7 +3108,10 @@ const HW_I18N = {
     "val_fault": "Possibile guasto",
     "functional": "✓ Funzionante",
     "ambient_light_sensor": "Sensore di luce ambientale",
-    "ultrawide_camera": "Fotocamera ultra-grandangolare"
+    "ultrawide_camera": "Fotocamera ultra-grandangolare",
+    "badge_na": "— ASSENTE",
+    "na_wifi_only": "Modello Wi-Fi — senza modem, quindi senza IMEI. Non è un guasto.",
+    "na_generic": "Questo modello non ha questo componente. Non è un guasto."
   },
   "fr": {
     "modem_fw": "Firmware du modem (baseband)",
@@ -3163,7 +3182,10 @@ const HW_I18N = {
     "val_fault": "Défaut possible",
     "functional": "✓ Fonctionnel",
     "ambient_light_sensor": "Capteur de luminosité ambiante",
-    "ultrawide_camera": "Caméra ultra grand-angle"
+    "ultrawide_camera": "Caméra ultra grand-angle",
+    "badge_na": "— ABSENT",
+    "na_wifi_only": "Modèle Wi-Fi — sans modem, donc sans IMEI. Ce n'est pas une panne.",
+    "na_generic": "Ce modèle ne possède pas ce composant. Ce n'est pas une panne."
   }
 };
 
@@ -3758,6 +3780,19 @@ function renderComponentCard(key, c) {
       ${FAULT_ENGINE.render(key, c, FAULT_CTX)}
     </div>`;
   }
+  // Zarizeni tenhle hardware NEMA (Wi-Fi iPad nema modem ani IMEI).
+  // Karta se ukaze oranzove, ale s popiskem "Nemá", ne "Možná závada" -
+  // a bez rozboru pricin, protoze neni co diagnostikovat.
+  if (c.not_applicable) {
+    const duvod = c.na_reason === 'wifi_only' ? ht('na_wifi_only') : ht('na_generic');
+    return `<div style="border:1.5px solid #fde68a;border-radius:11px;padding:12px 14px;background:#fffbeb">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto;color:#78716c"><span style="flex:0 0 auto">${icon}</span><span style="min-width:0">${esc(fieldLabel(c))}</span></span>
+        <span style="flex:0 0 auto;white-space:nowrap;font-family:var(--mono,monospace);font-size:9.5px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:20px;border:1px solid #fde68a;color:#b45309;background:#fff">${ht('badge_na')}</span>
+      </div>
+      <div style="font-size:12px;color:#92400e;line-height:1.5">${duvod}</div>
+    </div>`;
+  }
   return `<div style="border:1.5px solid ${c.available?'#e8e8e8':'#fde68a'};border-radius:11px;padding:12px 14px;background:${c.available?'#fff':'#fffbeb'}">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
       <span style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:7px;min-width:0;flex:1 1 auto"><span style="flex:0 0 auto">${icon}</span><span style="min-width:0">${esc(fieldLabel(c))}</span></span>
@@ -4113,10 +4148,15 @@ try { renderDatabase(); } catch(e) { console.error('renderDatabase init:', e); }
     const tabs   = document.getElementById('login-tabs');
     const tabAct = document.getElementById('tab-activate');
     if (data.activated) {
-      if (tabs)   tabs.style.display = '';
+      // Licence uz na tomhle PC je -> zadna aktivace, jen prihlaseni.
+      // Panel zalozek se SCHOVA cely: jedina zbyla zalozka vypada jako
+      // tlacitko, ktere po kliknuti nic nedela, a uzivatel pak hleda,
+      // proc se neprihlasil (prihlasuje se az tlacitkem "Log in" nize).
       if (tabAct) tabAct.style.display = 'none';
+      if (tabs)   tabs.style.display = 'none';
       switchLoginTab('login');
     } else {
+      // Prvni spusteni u zakaznika: aktivace je to prvni, co ma videt.
       if (tabs)   tabs.style.display = '';
       if (tabAct) tabAct.style.display = '';
       switchLoginTab('activate');

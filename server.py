@@ -7339,10 +7339,20 @@ def _modem_firmware_fields(values):
     bb_status  = g("BasebandStatus")
     bb_chipid  = g("BasebandChipID")
     iccid      = g("IntegratedCircuitCardIdentity", "ICCID")
-    # Wi-Fi zarizeni modem nema. Cele pole vynechame - chybejici firmware
-    # modemu u Wi-Fi iPadu neni zavada, jen tam ten hardware neni.
+    # Wi-Fi zarizeni modem nema. Pole se NEVYNECHAVAJI - technik ma videt,
+    # ze se na ne nezapomnelo - ale nesou priznak not_applicable, takze se
+    # vykresli oranzove s popiskem "Nemá (Wi-Fi model)" misto "Možná závada".
     if not _has_cellular(values):
-        return {}
+        def _na(label):
+            f = _hw_field(label, None, "lockdown")
+            f["not_applicable"] = True
+            f["na_reason"] = "wifi_only"
+            return f
+        return {
+            "baseband_version": _na("Firmware modemu (Baseband)"),
+            "baseband_status":  _na("Stav basebandu"),
+            "sim_iccid":        _na("SIM (ICCID)"),
+        }
     modem_ok   = bool(bb_version)
     return {
         "baseband_version": _hw_field("Firmware modemu (Baseband)", bb_version, "lockdown"),
@@ -7419,36 +7429,45 @@ async def _hardware_report_collect(udid, fresh=False):
         "connectivity": _hw_field("Konektivita",
                                   "Wi-Fi + Cellular" if _cellular else "Wi-Fi",
                                   "lockdown"),
+        # IMEI ma smysl jen u zarizeni s modemem. U Wi-Fi iPadu se nevynechava
+        # (technik by nevedel, jestli se necetlo nebo chybi), ale oznaci se
+        # jako "nema" - viz not_applicable nize.
         **({
             "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
             "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
             "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
-        } if _cellular else {}),
+        } if _cellular else {
+            "imei": dict(_hw_field("IMEI", None, "lockdown"),
+                         not_applicable=True, na_reason="wifi_only"),
+        }),
     }
 
     # ── KAMERY (sériová čísla všech kamer vedle sebe – ať se hezky hledá) ──
-    cameras = {
-        "rear_camera": from_comp("rear_camera", "Zadní kamera"),
-        "front_camera": from_comp("front_camera", "Přední kamera"),
-    }
-    # Ultrasiroka kamera: iPhone 11 a novejsi, mimo rady SE.
-    if _has_ultrawide(_pt):
-        cameras["ultrawide_camera"] = from_comp("ultrawide_camera",
-                                                "Ultraširokoúhlá kamera")
-    # Teleobjektiv jen u modelu, ktere ho fyzicky maji. U jednookych telefonu
-    # (SE, 8, XR, 11-16 non-Pro) se do reportu vubec nedostane - prazdna karta
+    # Do reportu patri JEN dily, ktere zarizeni fyzicky ma. Prazdna karta
     # s "mozna zavada" na neexistujicim dilu je horsi nez zadna karta.
-    if _has_telephoto(_pt):
-        cameras["tele_camera"] = from_comp("tele_camera", "Teleobjektiv")
+    #
+    # DULEZITE: pouzivame _component_applicable(), tedy STEJNA pravidla jako
+    # endpoint /api/component-serials. Driv si report pravidla duplikoval a
+    # rozesly se - napr. teleobjektiv se ridil podle _has_telephoto(), ktera
+    # hleda v nazvu modelu slovo "Pro", takze "iPad Pro 12,9\"" jim prosel a
+    # tablet hlasil chybejici teleobjektiv. Taptic a ALS byly dokonce zadratovane
+    # natvrdo, bez jakekoli kontroly.
+    def _if_applicable(target, key, label):
+        if _component_applicable(key, _pt):
+            target[key] = from_comp(key, label)
+
+    cameras = {}
+    _if_applicable(cameras, "rear_camera", "Zadní kamera")
+    _if_applicable(cameras, "front_camera", "Přední kamera")
+    _if_applicable(cameras, "ultrawide_camera", "Ultraširokoúhlá kamera")
+    _if_applicable(cameras, "tele_camera", "Teleobjektiv")
 
     # ── KOMPONENTY (fyzická sériová čísla dílů) – z potvrzeného readeru ──
-    components = {
-        "screen": from_comp("screen", "Displej"),
-        "battery": from_comp("battery", "Baterie"),
-        "taptic_engine": from_comp("taptic_engine", "Taptic Engine"),
-        "ambient_light_sensor": from_comp("ambient_light_sensor",
-                                          "Senzor okolního světla"),
-    }
+    components = {}
+    _if_applicable(components, "screen", "Displej")
+    _if_applicable(components, "battery", "Baterie")
+    _if_applicable(components, "taptic_engine", "Taptic Engine")
+    _if_applicable(components, "ambient_light_sensor", "Senzor okolního světla")
 
     # ── BIOMETRIE ──
     # Touch ID telefony (8/8 Plus/SE, 6s, 7) NEMAJI TrueDepth modul, takze IR
