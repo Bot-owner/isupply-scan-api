@@ -1541,9 +1541,13 @@ function saveDatabase() { try { localStorage.setItem('isupply_db', JSON.stringif
 
 // Telefon, ktery uz v databazi je a prave se znovu pripojil:
 // zaznam se presune nahoru a na hodinu se lehce ruzove rozsviti.
-function markReconnected(imei) {
-  if (!imei || imei === '—' || imei === 'Načítání...') return false;
-  const i = database.findIndex(r => r.imei === imei);
+function markReconnected(imei, serial) {
+  // Wi-Fi iPady IMEI nemaji, takze druhotne hledame podle serioveho cisla -
+  // je to stejna identita, podle ktere se jim uctuje kredit.
+  const bad = v => !v || v === '—' || v === 'N/A' || v === 'Načítání...';
+  let i = -1;
+  if (!bad(imei)) i = database.findIndex(r => r.imei === imei);
+  if (i < 0 && !bad(serial)) i = database.findIndex(r => r.serial === serial);
   if (i < 0) return false;
   const [rec] = database.splice(i, 1);
   rec._recon = Date.now();
@@ -1757,7 +1761,7 @@ function renderDatabase() {
         where: 'DIAG renderDatabase',
         message: `v pameti=${database.length} | localStorage=${ls} | ` +
                  `tbody=${document.getElementById('db-tbody') ? 'ok' : 'CHYBI'} | ` +
-                 `verze=2026-07-23c`,
+                 `verze=2026-07-23d-nocache`,
       })
     }).catch(() => {});
   } catch (e) {}
@@ -1771,20 +1775,30 @@ function _renderDatabase() {
   if (!tbody) { reportClientError('renderDatabase', 'chybi #db-tbody'); return; }
   const pass = database.filter(r=>r.result==='PROŠLO').length;
   const fail = database.filter(r=>r.result==='SELHALO').length;
-  document.getElementById('db-count').textContent = database.length;
-  document.getElementById('db-pass').textContent  = pass;
-  document.getElementById('db-fail').textContent  = fail;
-  // Update table headers
+
+  // Zahlavi tabulky
   const thMap = {num:'db_col_num',model:'db_col_model',imei:'db_col_imei',storage:'db_col_storage',color:'db_col_color',battery:'db_col_battery',delete:'db_col_delete'};
   Object.entries(thMap).forEach(([id, key]) => {
     const el = document.getElementById('th-'+id);
     if (el) el.textContent = t(key);
   });
-  // db stats labels
+
+  // Souhrn nad tabulkou.
+  // POZOR - tady byla chyba, kvuli ktere databaze "nefungovala": puvodne se
+  // nejdriv zapisovalo do <strong id="db-count">, ale hned nato se prepsal
+  // CELY obsah toho divu novym HTML, ve kterem uz zadne id="db-count" nebylo.
+  // Pri DRUHEM volani proto getElementById('db-count') vratil null a funkce
+  // spadla hned na prvni radce - jeste pred vykreslenim tabulky. Tabulka tak
+  // zustala v prazdnem stavu ze startu, i kdyz zaznamy v pameti byly.
+  // Reseni: id se pri prepisu VZDY znovu vytvori a nikde se na ne nespolehame
+  // driv, nez ho zapiseme.
   const dbStatEls = document.querySelectorAll('.db-stat');
-  if (dbStatEls[0]) dbStatEls[0].innerHTML = t('db_total') + ': <strong>' + database.length + '</strong>';
-  if (dbStatEls[1]) dbStatEls[1].innerHTML = t('db_pass') + ': <strong id="db-pass" style="color:var(--green)">' + pass + '</strong>';
-  if (dbStatEls[2]) dbStatEls[2].innerHTML = t('db_fail') + ': <strong id="db-fail" style="color:var(--red)">' + fail + '</strong>';
+  if (dbStatEls[0]) dbStatEls[0].innerHTML =
+      t('db_total') + ': <strong id="db-count">' + database.length + '</strong>';
+  if (dbStatEls[1]) dbStatEls[1].innerHTML =
+      t('db_pass') + ': <strong id="db-pass" style="color:var(--green)">' + pass + '</strong>';
+  if (dbStatEls[2]) dbStatEls[2].innerHTML =
+      t('db_fail') + ': <strong id="db-fail" style="color:var(--red)">' + fail + '</strong>';
 
   if (!database.length) {
     tbody.innerHTML = `<tr><td colspan="7"><div class="db-empty">📋<span>${t('db_empty')}</span></div></td></tr>`;
@@ -1793,10 +1807,17 @@ function _renderDatabase() {
 
   tbody.innerHTML = database.map((r,i) => {
     const bc = battClass(r.battery);
-    const recon = r._recon && (Date.now() - r._recon) < 3600000;
-    return `<tr${recon ? ' style="background:#fdf2f8"' : ''}>
+    // Kus, ktery uz jednou prosel a prave se vratil na stul. Znacka drzi
+    // hodinu - dost na jednu smenu u vykupniho pultu, kratko na to, aby
+    // stary zaznam matl.
+    const vek = r._recon ? Date.now() - r._recon : null;
+    const recon = vek !== null && vek < 3600000;
+    const pred = recon ? (vek < 60000 ? 'právě teď' : `před ${Math.round(vek/60000)} min`) : '';
+    return `<tr${recon ? ' class="row-recon"' : ''}>
       <td class="td-mono" style="color:var(--text-dim)">${i+1}</td>
-      <td class="td-model">${r.model}</td>
+      <td class="td-model">${r.model}${recon
+        ? `<span class="recon-chip" title="Tenhle kus už v databázi byl a právě se znovu připojil"><svg class="ti"><use href="#i-db"/></svg>ZNOVU · ${pred}</span>`
+        : ''}</td>
       <td class="td-imei">${r.imei}</td>
       <td class="td-mono">${r.storage||'—'}</td>
       <td>${r.color||'—'}</td>
@@ -4042,7 +4063,7 @@ async function handleDeviceConnected(udid, info) {
   }
 
   const device = _mkDevice(udid, info);
-  markReconnected(device.imei);
+  markReconnected(device.imei, device.serial);
   showToast(`${t('toast_detected')} ${device.model} (${device.a_number}) · IMEI: ${device.imei}`);
   connectDevice(emptySlot.id, device);
 }

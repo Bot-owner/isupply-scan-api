@@ -118,6 +118,25 @@ app = Flask(__name__, static_folder=BASE_DIR)
 CORS(app)
 
 
+@app.after_request
+def _no_cache_html(resp):
+    """HTML a JSON se NESMI cachovat.
+
+    Duvod z praxe: okno aplikace bezi na WebView2, ktery si stranku drzi
+    v cache. Po aktualizaci iphone-diagnostic.html tak appka dal jela na
+    STARE verzi, zatimco v prohlizeci (po obnoveni) uz byla nova - a navenek
+    to vypadalo, ze oprava nefunguje. Hledani takove "chyby" stoji hodiny,
+    protoze se hleda v kodu, ktery se vubec nespoustel.
+    Obrazky a fonty cachovat muzou, ty se nemeni.
+    """
+    ctype = (resp.headers.get("Content-Type") or "").lower()
+    if "text/html" in ctype or "application/json" in ctype:
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        resp.headers["Pragma"] = "no-cache"
+        resp.headers["Expires"] = "0"
+    return resp
+
+
 def _data_dir():
     """Slozka pro ZAPISOVATELNA data (databaze, licence, token cache, barvy).
 
