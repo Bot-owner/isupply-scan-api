@@ -197,6 +197,13 @@ def _find_colors_file():
     # technikem. Pri prvnim spusteni jeste neexistuje, takze se pouzije
     # dodavana verze vedle aplikace a prvni zapis ji zkopiruje do _data_dir().
     candidates.insert(0, os.path.join(_data_dir(), 'model_colors.json'))
+    # Kopie zabalena uvnitr onefile EXE (_MEIPASS). Bez ni by zakaznik,
+    # ktery si stahl SAMOTNY .exe, nemel barvy vubec - soubor vedle aplikace
+    # nema odkud vzit. Je read-only, takze slouzi jen jako vychozi obsah;
+    # nove barvy se ukladaji do _data_dir().
+    _mp = getattr(_sys, '_MEIPASS', None)
+    if _mp:
+        candidates.append(os.path.join(_mp, 'model_colors.json'))
     for path in candidates:
         try:
             if os.path.isfile(path):
@@ -211,8 +218,10 @@ def _find_colors_file():
 def _colors_read_seed():
     """Dodavana (read-only) verze model_colors.json vedle aplikace. Pouzije se
     jako vychozi obsah, nez vznikne zapisovatelna kopie."""
+    _mp = getattr(_sys, '_MEIPASS', None)
     for path in (os.path.join(_get_base_dir(), 'model_colors.json'),
-                 os.path.join(os.path.dirname(_get_base_dir()), 'model_colors.json')):
+                 os.path.join(os.path.dirname(_get_base_dir()), 'model_colors.json'),
+                 os.path.join(_mp, 'model_colors.json') if _mp else ''):
         try:
             if os.path.isfile(path):
                 return path
@@ -525,17 +534,28 @@ def init_db():
             PRIMARY KEY (udid, component_key)
         );
     ''')
-    now = datetime.datetime.now().isoformat(timespec='seconds')
-    for (u, pw, fn, em, co, ro, li, va, no) in [
-        ('admin',    'admin',     'Administrator',   'admin@isupply.cz',    'iSupply s.r.o.',      'admin',      'enterprise', '2099-12-31', 'Hlavní admin'),
-        ('tester1',  'Test1234!', 'Jan Novák',       'jan@refurb.cz',       'Refurb Praha s.r.o.', 'technician', 'pro',        '2026-12-31', 'Technik Praha'),
-        ('tester2',  'Scan5678!', 'Petra Svobodová', 'petra@mobilezone.cz', 'MobileZone EU',       'technician', 'pro',        '2026-12-31', 'Technik Brno'),
-        ('manager1', 'Mgr9999!',  'Karel Dvořák',    'karel@mobilezone.cz', 'MobileZone EU',       'manager',    'enterprise', '2026-12-31', 'Vedoucí skladu'),
-    ]:
+    # ZADNE vychozi ucty se nezakladaji.
+    #
+    # Driv se tu vytvarely ctyri ucty s pevnymi hesly (admin/admin,
+    # tester1/Test1234! a dalsi). To znamenalo, ze kdokoli si stahl EXE
+    # z webu, prihlasil se jako admin - s roli admin a licenci "enterprise"
+    # platnou do roku 2099 - a mel aplikaci k dispozici bez zaplaceni.
+    # Byly to demo ucty z vyvoje, ktere se nikdy nemely dostat k zakaznikum.
+    #
+    # Prvniho uzivatele ted zaklada AZ aktivace licence (/api/activate),
+    # takze ucet vznikne jen tomu, kdo ma platny klic.
+    #
+    # Uklid u stavajicich instalaci: kdo si stahl starsi verzi, ma demo ucty
+    # porad v databazi. Mazeme je, ale JEN kdyz maji nezmenene vychozi heslo -
+    # kdyz si nekdo ucet 'admin' prevzal a heslo zmenil, zustava mu.
+    for _u, _pw in (('admin', 'admin'), ('tester1', 'Test1234!'),
+                    ('tester2', 'Scan5678!'), ('manager1', 'Mgr9999!')):
         try:
-            c.execute('INSERT INTO users (username,password_hash,full_name,email,company,role,license_type,license_valid_until,active,created_at,notes) VALUES (?,?,?,?,?,?,?,?,1,?,?)',
-                      (u, hash_pw(pw), fn, em, co, ro, li, va, now, no))
-        except sqlite3.IntegrityError:
+            _r = c.execute('DELETE FROM users WHERE username=? AND password_hash=?',
+                           (_u, hash_pw(_pw)))
+            if _r.rowcount:
+                print(f"  ⚠ Odstranen demo ucet '{_u}' s vychozim heslem.")
+        except Exception:
             pass
     conn.commit()
     conn.close()
@@ -7637,6 +7657,15 @@ def api_login():
     if datetime.date.fromisoformat(user['license_valid_until']) < datetime.date.today():
         conn.close()
         return jsonify({'ok': False, 'error': 'Platnost licence vypršela.'}), 403
+
+    # Aplikace musi byt licencovana. Driv se kontrolovala jen lokalni tabulka
+    # uzivatelu, takze kdo mel ucet (nebo znal vychozi admin/admin), dostal se
+    # dovnitr uplne bez licence. Ucet sam o sobe opravneni k pouzivani nedava.
+    if not load_license_key():
+        conn.close()
+        return jsonify({'ok': False,
+                        'error': 'Aplikace není aktivovaná. '
+                                 'Zadejte licenční klíč v záložce Aktivace.'}), 403
     conn.execute('UPDATE users SET last_login=? WHERE id=?',
                  (datetime.datetime.now().isoformat(timespec='seconds'), user['id']))
     conn.commit()
@@ -8022,6 +8051,22 @@ def api_activate():
         conn.close()
         return jsonify({'ok': False, 'error': f'DB error: {e}'}), 500
     conn.close()
+
+    # Licenci je potreba nacist i do BEZICIHO procesu. Bez toho by aplikace
+    # po aktivaci sice pustila uzivatele dal, ale skenovani by hlasilo
+    # "chybi licencni klic", protoze scan_quota drzi klic z doby startu -
+    # kdy zadny nebyl. Zakaznik by musel appku restartovat, aniz by tusil proc.
+    try:
+        globals()['LICENSE_KEY'] = license_key
+        if result.get('token'):
+            globals()['SESSION_TOKEN'] = result['token']
+        scan_quota.configure(api_base=LICENSE_API, licence_key=license_key)
+        tok = validate_token_offline(result.get('token') or '')
+        if tok.get('ok') and tok.get('features') is not None:
+            scan_quota.set_signed_features(tok.get('features'))
+        print(f"  ✓ Licence aktivovana za behu: {plan}")
+    except Exception as exc:
+        print(f"  ⚠ Licenci se nepodarilo nacist za behu: {exc}")
 
     return jsonify({'ok': True, 'username': username, 'plan': plan, 'valid_until': valid_until, 'company': result.get('company','')})
 
