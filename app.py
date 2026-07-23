@@ -585,6 +585,14 @@ def _register_modules():
         print(f'[modules] quota se nenacetl: {exc}', flush=True)
 
     try:
+        # Zakaznicke API v1 + verejna overovaci stranka /overit/<kod>.
+        from api import bp as api_bp
+        app.register_blueprint(api_bp)
+        print('[modules] api OK', flush=True)
+    except Exception as exc:
+        print(f'[modules] api se nenacetlo: {exc}', flush=True)
+
+    try:
         from invoices import bp as invoices_bp
         app.register_blueprint(invoices_bp)
         print('[modules] invoices OK', flush=True)

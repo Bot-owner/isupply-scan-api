@@ -275,9 +275,12 @@ def complete_scan():
         ] }
     """
     data = request.get_json(silent=True) or {}
-    imei = (data.get("imei") or "").strip()
-    if not IMEI_RE.match(imei):
-        return jsonify(error="bad_request", message="Neplatné IMEI."), 400
+    # Stejna identita jako u authorize_scan: IMEI -> SN -> UDID.
+    # Driv tu byla tvrda kontrola IMEI, takze iPad sken sice prosel
+    # autorizaci, ale karta zarizeni se mu neulozila.
+    imei, id_err = _device_id(data)
+    if id_err:
+        return jsonify(error="bad_request", message=id_err), 400
 
     dev = data.get("device") or {}
     components = data.get("components") or []
@@ -345,11 +348,68 @@ def complete_scan():
             results.append({"component": name, "verdict": verdict,
                             "baseline_serial": old, "scanned_serial": serial})
 
-        if data.get("scan_event_id") and data.get("grade"):
-            cur.execute("UPDATE scan_events SET grade = %s WHERE id = %s",
-                        (data["grade"], data["scan_event_id"]))
+        # ── Souhrn skenu + verejny overovaci kod ──
+        # Kod se generuje az tady, po dokonceni skenu - drive by mohl vzniknout
+        # odkaz na sken, ktery nikdy nedobehl.
+        verify_code = None
+        if data.get("scan_event_id"):
+            ok_cnt = sum(1 for r in results if r.get("verdict") in ("MATCH", "FIRST_SEEN"))
+            try:
+                from api import make_verify_code, fire_webhooks
+            except Exception:
+                make_verify_code = fire_webhooks = None
 
-    return jsonify(ok=True, imei=imei, components=results)
+            if make_verify_code:
+                # Kolize je nepravdepodobna, ale unikatni index by ji zachytil
+                # jako chybu a shodil ulozeni skenu - proto par pokusu.
+                for _ in range(5):
+                    candidate = make_verify_code()
+                    cur.execute("SELECT 1 FROM scan_events WHERE verify_code = %s",
+                                (candidate,))
+                    if not cur.fetchone():
+                        verify_code = candidate
+                        break
+
+            cur.execute(
+                """UPDATE scan_events
+                      SET grade            = coalesce(%s, grade),
+                          battery_health   = coalesce(%s, battery_health),
+                          battery_cycles   = coalesce(%s, battery_cycles),
+                          components_ok    = %s,
+                          components_total = %s,
+                          technician       = coalesce(%s, technician),
+                          verify_code      = coalesce(verify_code, %s)
+                    WHERE id = %s
+                RETURNING verify_code""",
+                (data.get("grade"), dev.get("battery_health"),
+                 dev.get("battery_cycles"), ok_cnt, len(results),
+                 data.get("technician"), verify_code, data["scan_event_id"]))
+            row = cur.fetchone()
+            verify_code = row["verify_code"] if row else verify_code
+
+            if data.get("grade"):
+                cur.execute("UPDATE devices SET last_grade = %s WHERE imei = %s",
+                            (data["grade"], imei))
+
+            # Webhook pro napojeni na eshop. Chyba nesmi shodit sken.
+            if fire_webhooks:
+                try:
+                    cur.execute("SELECT license_id FROM scan_events WHERE id = %s",
+                                (data["scan_event_id"],))
+                    lr = cur.fetchone()
+                    if lr:
+                        fire_webhooks(cur, lr["license_id"], "scan.completed", {
+                            "device_id": imei, "model": dev.get("model"),
+                            "grade": data.get("grade"),
+                            "battery_health_pct": dev.get("battery_health"),
+                            "components_ok": ok_cnt, "components_total": len(results),
+                            "verify_code": verify_code,
+                        })
+                except Exception as exc:
+                    print(f"[webhook] {type(exc).__name__}: {exc}", flush=True)
+
+    return jsonify(ok=True, imei=imei, components=results,
+                   verify_code=verify_code)
 
 
 # ─────────────────────────────────────────────────────────────────────
