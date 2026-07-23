@@ -1,0 +1,9 @@
+stripe==10.5.0
+flask==3.0.0
+flask-cors==4.0.0
+psycopg2-binary==2.9.9
+PyJWT==2.8.0
+sendgrid==6.11.0
+gunicorn==21.2.0
+requests==2.32.3
+cryptography==43.0.1
