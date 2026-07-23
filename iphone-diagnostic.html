@@ -1411,7 +1411,20 @@ const TEST_DEFS = [
   {id:'panic',      tkey:'t_panic',      icon:'<svg class="ti"><use href="#i-panic"/></svg>'},
 ];
 // TESTS is always fresh with current language
-function getTests() { return TEST_DEFS.map(d => ({...d, name: t(d.tkey)})); }
+function getTests(device) {
+  let defs = TEST_DEFS;
+  // iPad a jina ne-iPhone zarizeni: biometrii netestujeme, dokud nebude
+  // overena na fyzickych kusech (iPad Air ma Touch ID v tlacitku, iPad Pro
+  // Face ID - a mapovani jejich uzlu zatim nemame). Radek proto vynechame
+  // uplne, at netvrdi ani "funkcni", ani "mozna zavada".
+  if (device && device.product_type && !/^iphone/i.test(device.product_type)) {
+    defs = defs.filter(d => d.id !== 'touchid');
+  }
+  return defs.map(d => ({...d, name: t(d.tkey)}));
+}
+function _isIphone(device) {
+  return !device || !device.product_type || /^iphone/i.test(device.product_type);
+}
 
 // Touch ID mají jen iPhone 8 / 8 Plus a řada SE — všechno od iPhonu X výš je Face ID.
 // Popisek i ikona testu se volí podle konkrétního připojeného modelu.
@@ -1558,8 +1571,22 @@ function renderBody(slot) {
     </div>
   </div>`;
   let testsHTML = '';
-  if (slot.state !== 'empty' && slot.state !== 'connected') {
-    testsHTML = '<div class="test-list">' + getTests().map(tst => {
+  // Zarizeni ceka na obsluhu (zamek / Trust / obsazene USB). Bez tehle hlasky
+  // by slot jen visel na "Nacitani..." a nebylo by poznat, co s nim.
+  if (slot.state === 'connected' && slot.blocked) {
+    const ic = slot.blocked.code === 'busy' ? 'i-bolt' : 'i-id';
+    testsHTML = `
+      <div style="margin:10px 12px;padding:12px 14px;border:1.5px solid var(--amber,#f59e0b);
+                  border-radius:9px;background:var(--amber-dim,#fffbeb)">
+        <div style="display:flex;align-items:center;gap:7px;font-family:var(--mono);
+                    font-size:11px;font-weight:700;color:#92400e;margin-bottom:4px">
+          <svg class="ti"><use href="#${ic}"/></svg>POTŘEBUJE OBSLUHU
+        </div>
+        <div style="font-size:12.5px;color:#78350f;line-height:1.5">${esc(slot.blocked.message)}</div>
+      </div>`;
+  }
+  else if (slot.state !== 'empty' && slot.state !== 'connected') {
+    testsHTML = '<div class="test-list">' + getTests(d).map(tst => {
       const r = slot.tests.find(x=>x.id===tst.id);
       const tname = tst.id === 'touchid' ? biometryLabel(d.model) : tst.name;
       const ticon = tst.id === 'touchid' ? biometryIcon(d.model) : tst.icon;
@@ -1889,7 +1916,7 @@ async function exportSlotToExcel(id) {
 // ═══ SLOT LOGIC ═══
 function connectDevice(id, device) {
   const slot = slots[id];
-  Object.assign(slot, {state:'connected', device, tests:[], progress:0, grade:null, testedAt:null});
+  Object.assign(slot, {state:'connected', device, tests:[], progress:0, grade:null, testedAt:null, blocked:null});
   usedDevices.push(device.imei);
   render();
   setTimeout(() => startTesting(id), 600);
@@ -1996,11 +2023,11 @@ async function startTesting(id) {
   if (slot.state !== 'testing') return; // odpojeno během čtení
   let idx = 0;
   function next() {
-    if (idx >= getTests().length) { finishTesting(id); return; }
-    const tests = getTests(); const tdef = tests[idx];
+    if (idx >= getTests(slot.device).length) { finishTesting(id); return; }
+    const tests = getTests(slot.device); const tdef = tests[idx];
     slot.tests = slot.tests.filter(r=>r.id!==tdef.id);
     slot.tests.push({id:tdef.id, status:'running'});
-    slot.progress = Math.round((idx/getTests().length)*100);
+    slot.progress = Math.round((idx/getTests(slot.device).length)*100);
     render();
     setTimeout(() => {
       const isChanged = (slot.device.changed||[]).includes(tdef.id);
@@ -3914,7 +3941,12 @@ async function handleDeviceConnected(udid, info) {
       await new Promise(r => setTimeout(r, 2000));
       try {
         const r = await fetchJSON(`/api/device-info/${encodeURIComponent(udid)}`, {}, 30000);
-        if (_infoReady(r)) { info = r; break; }
+        if (_infoReady(r)) { info = r; s.blocked = null; break; }
+        // Zarizeni neco aktivne brani (zamek, nepotvrzeny Trust, obsazene USB).
+        // Driv slot jen visel na "Nacitani..." a technik nemel jak poznat,
+        // KTERY kus ze stolu potrebuje obsluhu. Ted to rovnou napiseme.
+        s.blocked = (r && r.blocked) || null;
+        if (s.blocked) render();
       } catch (e) {}
     }
     if (!_infoReady(info)) return;   // pořád nic – nech slot v "Načítání…", NETESTUJ

@@ -1187,6 +1187,10 @@ def get_device_info(udid):
             'udid': udid, 'imei': 'Načítání...', 'serial': udid[:12],
             'model': 'iPhone', 'name': 'iPhone', 'ios': 'N/A',
             'storage': 'N/A', 'color': 'N/A', 'battery': 0,
+            # Kdyz zarizeni neco AKTIVNE brani (zamek, nepotvrzeny Trust),
+            # rekneme to nahlas. Driv slot jen visel na "Nacitani..." a
+            # technik nemel jak poznat, ktery kus ze stolu ma odemknout.
+            'blocked': _blocked_reason(e),
         }
     finally:
         loop.close()
@@ -2616,6 +2620,16 @@ def _has_ultrawide(product_type):
 def _component_applicable(comp_key, product_type):
     if not product_type:
         return True
+    # iPad a jina ne-iPhone zarizeni: vsechna pravidla nize jsou overena
+    # VYHRADNE na iPhonech. Kdyz je pustime na iPad, hlasi falesne zavady -
+    # napr. iPad Air nema TrueDepth modul, takze by mu chybejici IR kamera
+    # vysla jako "mozna zavada". Dokud nebude iPadova mapa overena na
+    # fyzickych kusech, tyhle komponenty u nich netestujeme.
+    if not _is_iphone(product_type):
+        if comp_key in _FACE_ID_ONLY or comp_key in (
+                "touch_id", "tele_camera", "ultrawide_camera"):
+            return False
+        return True
     touch = _has_touch_id(product_type)
     if comp_key in _FACE_ID_ONLY:
         # Bez TrueDepth modulu nema smysl hlasit chybejici hodnotu jako zavadu.
@@ -2970,9 +2984,32 @@ def api_device_info(udid):
         return jsonify(info), 200
     except Exception as exc:
         return jsonify({'udid': udid, 'model': 'iPhone', 'imei': 'Načítání...',
+                        'blocked': _blocked_reason(exc),
                         'error': f'{type(exc).__name__}: {exc}'}), 200
 
 # ─── PANIC / CRASH LOGY ───────────────────────────────────────────────────
+# Chyby, ktere neznamenaji poruchu, ale ze zarizeni potrebuje obsluhu.
+_BLOCK_HINTS = (
+    ('passwordrequired',   'locked',      'Zařízení je zamčené — odemkni ho kódem'),
+    ('passwordprotected',  'locked',      'Zařízení je zamčené — odemkni ho kódem'),
+    ('pairingdialogresponsepending', 'trust', 'Potvrď na zařízení „Trust / Důvěřovat“'),
+    ('invalidhostid',      'trust',       'Potvrď na zařízení „Trust / Důvěřovat“'),
+    ('userdeniedpairing',  'trust',       'Na zařízení bylo spárování odmítnuto'),
+    ('notpaired',          'trust',       'Zařízení není spárované — potvrď „Trust“'),
+    ('183',                'busy',        'USB drží jiný program (3uTools / iTunes / Apple Devices)'),
+    ('muxexception',       'busy',        'USB drží jiný program (3uTools / iTunes / Apple Devices)'),
+)
+
+
+def _blocked_reason(exc):
+    """Prevede vyjimku na srozumitelny duvod pro UI, nebo None."""
+    text = f"{type(exc).__name__}: {exc}".lower().replace('_', '').replace(' ', '')
+    for needle, code, message in _BLOCK_HINTS:
+        if needle in text:
+            return {'code': code, 'message': message}
+    return None
+
+
 def _info_is_real(info):
     """Jsou to skutecna data ze zarizeni, nebo jen placeholder?
 
