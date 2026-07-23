@@ -7904,6 +7904,20 @@ def api_feature_check(name):
     return jsonify({'ok': True, 'feature': name, 'allowed': bool(allowed)})
 
 
+@app.route('/api/client-error', methods=['POST'])
+def api_client_error():
+    """Chyby z UI do konzole serveru. Bez tohohle JS chyba jen tise rozbije
+    cast rozhrani a navenek to vypada jako "nefunguje databaze" - hledani
+    pak stoji hodiny."""
+    d = request.get_json(silent=True) or {}
+    print(f"  ⚠ [UI] {d.get('where')}: {d.get('message')}")
+    stack = (d.get('stack') or '').strip()
+    if stack:
+        for line in stack.splitlines()[:6]:
+            print(f"      {line}")
+    return jsonify({'ok': True})
+
+
 @app.route('/api/licence-status', methods=['GET'])
 def api_licence_status():
     """Vrátí jestli je licence už aktivována na tomto PC."""

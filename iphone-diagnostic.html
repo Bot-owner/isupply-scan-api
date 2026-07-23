@@ -232,6 +232,18 @@
   .batt-warn{color:var(--yellow)}
   .batt-bad{color:var(--red)}
   .db-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--text-dim);gap:10px;font-family:var(--mono);font-size:12px}
+  /* Znovu pripojeny kus: vyrazny, ale ne krikvavy - technik ho ma najit
+     jednim pohledem, i kdyz je v tabulce padesat radku. */
+  .row-recon{background:linear-gradient(90deg,var(--pink-dim),transparent 60%);animation:reconPulse 1.4s ease-out 1}
+  .row-recon td{border-top:1px solid var(--pink-border);border-bottom:1px solid var(--pink-border)}
+  .row-recon td:first-child{box-shadow:inset 3px 0 0 var(--pink-dark)}
+  .recon-chip{display:inline-flex;align-items:center;gap:4px;margin-left:8px;
+    padding:1px 7px;border-radius:99px;background:var(--pink-dark);color:#fff;
+    font-family:var(--mono);font-size:9.5px;font-weight:700;letter-spacing:.04em;
+    vertical-align:1px;white-space:nowrap}
+  .recon-chip .ti{width:11px;height:11px;margin:0}
+  @keyframes reconPulse{0%{background-color:var(--pink-border)}100%{background-color:transparent}}
+  @media (prefers-reduced-motion:reduce){ .row-recon{animation:none} }
   .btn-delete-row{background:none;border:none;cursor:pointer;font-size:14px;opacity:.4;transition:opacity .2s;padding:2px 6px;border-radius:4px}
   .btn-delete-row:hover{opacity:1;background:var(--red-dim)}
 
@@ -1499,6 +1511,26 @@ async function openPanicModal(id) {
 
 function battClass(p) { return p>=70?'batt-ok':p>=50?'batt-warn':'batt-bad'; }
 
+// ── Hlaseni chyb ─────────────────────────────────────────────────────
+// Kdyz nekde spadne JS, prohlizec to spolkne a navenek to vypada jako
+// "nefunguje databaze" nebo "nejde prepnout pohled". Tohle chybu ukaze
+// technikovi a POSLE ji do konzole serveru, aby sla vyfotit a poslat.
+function reportClientError(kde, err) {
+  const text = `${kde}: ${err && err.message ? err.message : err}`;
+  try { console.error('[UI]', kde, err); } catch (e) {}
+  try { showToast('Chyba v aplikaci — ' + text, true); } catch (e) {}
+  try {
+    fetch('/api/client-error', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({where: kde, message: String(err && err.message || err),
+                            stack: String(err && err.stack || '')})
+    }).catch(() => {});
+  } catch (e) {}
+}
+
+window.addEventListener('error', e => reportClientError('window', e.error || e.message));
+window.addEventListener('unhandledrejection', e => reportClientError('promise', e.reason));
+
 // ═══ STATE ═══
 const slots = Array.from({length:10}, (_,i) => ({id:i, state:'empty', device:null, tests:[], progress:0, grade:null, testedAt:null}));
 let usedDevices = [];
@@ -1710,7 +1742,13 @@ async function saveColorChoice(slotId, color) {
 
 // ═══ DATABÁZE VIEW ═══
 function renderDatabase() {
+  try { _renderDatabase(); }
+  catch (err) { reportClientError('renderDatabase', err); }
+}
+
+function _renderDatabase() {
   const tbody = document.getElementById('db-tbody');
+  if (!tbody) { reportClientError('renderDatabase', 'chybi #db-tbody'); return; }
   const pass = database.filter(r=>r.result==='PROŠLO').length;
   const fail = database.filter(r=>r.result==='SELHALO').length;
   document.getElementById('db-count').textContent = database.length;
