@@ -3238,6 +3238,48 @@ def _load_panic_sensors():
         return {}
 
 
+_PANIC_PROB = {"verified": 95, "high": 90, "medium": 70, "low": 40}
+
+
+def _panic_kind(text):
+    """SMC / AOP / SEP / CPU panic. Rozliseni je dulezite: SMC panic znamena
+    senzor hlidany kontrolerem napajeni, ostatni maji jinou pricinu a hex
+    kody ze sensor array se na ne nevztahuji."""
+    t = str(text or "").upper()
+    for key in ("SMC PANIC", "AOP PANIC", "SEP PANIC", "CPU PANIC"):
+        if key in t:
+            return key.split()[0]
+    return None
+
+
+def _parse_sensor_arrays(raw):
+    """Vytahne NENULOVE hodnoty ze 'S.sensor array' / 'F.sensor array'.
+
+    KLICOVE: hodnoty v logu jsou DESITKOVE, kdezto vsechny Apple tabulky
+    jsou vedene v HEX. 2097152 v logu = 0x200000 v tabulce. Bez prevodu
+    by se kod nikdy nenasel.
+
+    Priklad logu:
+        S.sensor array 0 - 5 is
+        0, 2097152, 0, 0, 0
+
+    Vraci [(pole, index, desitkove, hex), ...] - nuly se preskakuji,
+    ty znamenaji "senzor v poradku".
+    """
+    out = []
+    for m in re.finditer(
+            r'([SF])\.sensor\s+array[^\n]*\n\s*([0-9,\s]+)', raw or "", re.IGNORECASE):
+        pole = m.group(1).upper()
+        for idx, kus in enumerate(m.group(2).split(",")):
+            kus = kus.strip()
+            if not kus.isdigit():
+                continue
+            hodnota = int(kus)
+            if hodnota:                      # nula = senzor hlasi OK
+                out.append((pole, idx, hodnota, hex(hodnota)))
+    return out
+
+
 def _confidence_mark(rec):
     """Jak moc dane mapovani verit. Technik musi poznat rozdil mezi
     "potvrzeno Apple" a "nekdo to napsal na wiki" - podle toho se rozhoduje,
@@ -3320,6 +3362,68 @@ def _remember_unknown_sensor(code, product_type="", reason=""):
             print(f"  ⚠ neznamy senzor {code} nelze zapsat: {exc}")
 
 
+def analyze_panic(raw, summary=None, product_type=""):
+    """Strukturovany rozbor panicu pro UI: co je vadne, jak jiste, co promerit
+    a co vymenit. Postup je stejny, jaky pouziva zkuseny technik:
+
+      1) urcit model (product / ProductType) - bez nej se kody vykladat NEDAJI
+      2) rozlisit typ panicu (SMC / AOP / SEP / CPU)
+      3) najit S.sensor array nebo F.sensor array
+      4) vzit nenulove hodnoty (nula = senzor v poradku)
+      5) prevest desitkove -> hex
+      6) vyhledat v tabulce PRO DANY MODEL
+
+    Radky typu "Misc(2) OUTBOX1 not ready" jsou NASLEDEK, ne pricina -
+    klasifikace je zamerne ignoruje.
+    """
+    raw = str(raw or "")
+    kind = _panic_kind(summary) or _panic_kind(raw)
+    data = _load_panic_sensors()
+    out = {"panic_kind": kind, "product_type": product_type, "findings": []}
+
+    # a) pojmenovane senzory
+    m = re.search(r'missing sensor\(s\):\s*([A-Za-z0-9,\s]+)', raw, re.IGNORECASE)
+    if m:
+        table = data.get("sensors") or {}
+        for c in [x.strip() for x in re.split(r'[,\s]+', m.group(1)) if x.strip()][:4]:
+            rec = table.get(c.upper())
+            if rec:
+                out["findings"].append({
+                    "code": c.upper(), "component": rec.get("component"),
+                    "probability": _PANIC_PROB.get(rec.get("confidence"), 50),
+                    "confidence": rec.get("confidence"),
+                    "why": rec.get("why") or rec.get("note", ""),
+                    "measure": rec.get("measure", []), "replace": rec.get("replace", []),
+                    "source": rec.get("source", "")})
+            else:
+                _remember_unknown_sensor(c, product_type, summary or "")
+                out["findings"].append({"code": c.upper(), "component": None,
+                                        "probability": None, "confidence": "unknown"})
+
+    # b) hodnoty ze sensor array (desitkove -> hex, podle modelu)
+    group = _smc_group(product_type)
+    table = (data.get("smc_codes") or {}).get(group or "", {})
+    for pole, idx, dec, hx in _parse_sensor_arrays(raw)[:4]:
+        rec = table.get(hx) if group else None
+        polozka = {"code": hx, "decimal": dec, "array": f"{pole}.sensor[{idx}]"}
+        if rec:
+            polozka.update({
+                "component": rec.get("component"),
+                "probability": _PANIC_PROB.get(rec.get("confidence"), 50),
+                "confidence": rec.get("confidence"), "why": rec.get("why", ""),
+                "measure": rec.get("measure", []), "replace": rec.get("replace", []),
+                "note": rec.get("note", ""), "source": rec.get("source", "")})
+        else:
+            _remember_unknown_smc(hx, product_type, summary or "")
+            polozka.update({"component": None, "probability": None,
+                            "confidence": "unknown"})
+        out["findings"].append(polozka)
+
+    # Nejjistejsi nalez nahoru - technik ma zacit od nej.
+    out["findings"].sort(key=lambda f: f.get("probability") or 0, reverse=True)
+    return out
+
+
 def _classify_panic(bug_type, text, summary=None, product_type=""):
     """Klasifikace příčiny panicu.
 
@@ -3356,31 +3460,26 @@ def _classify_panic(bug_type, text, summary=None, product_type=""):
         if parts:
             return 'Chybí senzor → ' + '; '.join(parts)
 
-    # ── Hexadecimalni kody ze "S.sensor array" ─────────────────────────
-    # POZOR: vyznam se lisi podle generace. 0x200000 je na iPhone 15 civka
-    # bezdratoveho nabijeni, na iPhone 14 predni senzorovy modul, 0x100000
-    # je na 14 nabijeci port, ale na 14 Pro flex tlacitka napajeni.
-    # Bez znameho modelu proto NEMAPUJEME vubec - spatny nalez by poslal
-    # technika menit jiny dil.
-    m = re.search(r'sensor\s*array[^\n]*?(0x[0-9a-fA-F]+)', raw, re.IGNORECASE)
-    if not m:
-        m = re.search(r'\bS\.sensor[^\n]*?(0x[0-9a-fA-F]+)', raw, re.IGNORECASE)
-    if m:
-        code = m.group(1).lower()
+    # ── Kody ze "S.sensor array" / "F.sensor array" ────────────────────
+    # Hodnoty jsou v logu DESITKOVE, tabulky Apple v HEX - viz
+    # _parse_sensor_arrays. Vyznam kodu se navic lisi podle generace:
+    # 0x200000 je na iPhone 15 civka bezdratoveho nabijeni, na iPhone 14
+    # predni senzorovy modul; 0x100000 je na 14 nabijeci port, ale na 14 Pro
+    # flex tlacitka napajeni. Bez znameho modelu proto NEMAPUJEME vubec.
+    kody = _parse_sensor_arrays(raw)
+    if kody:
         group = _smc_group(product_type)
-        if group:
-            rec = ((_load_panic_sensors().get("smc_codes") or {})
-                   .get(group, {}).get(code))
+        table = (_load_panic_sensors().get("smc_codes") or {}).get(group or "", {})
+        nalezy = []
+        for pole, idx, dec, hx in kody[:4]:
+            rec = table.get(hx) if group else None
             if rec and rec.get("component"):
-                out = f"SMC {code} → {rec['component']}{_confidence_mark(rec)}"
-                if rec.get("note"):
-                    out += f" · {rec['note']}"
-                return out
-            _remember_unknown_smc(code, product_type, summary or "")
-            return (f"SMC {code} → pro tenhle model neznámý kód — nutno dohledat")
-        _remember_unknown_smc(code, product_type, summary or "")
-        return (f"SMC {code} → model {product_type or '?'} nemá mapování kódů; "
-                "význam se liší podle generace")
+                nalezy.append(f"{hx} → {rec['component']}{_confidence_mark(rec)}")
+            else:
+                _remember_unknown_smc(hx, product_type, summary or "")
+                nalezy.append(f"{hx} ({dec}) → neznámý kód pro tenhle model")
+        kind = _panic_kind(summary) or _panic_kind(raw) or "SMC"
+        return f"{kind} panic · " + "; ".join(nalezy)
     # Poradi je od NEJKONKRETNEJSIHO k nejobecnejsimu - "power" a "battery"
     # se v textech objevuji nejcasteji, takze musi byt az na konci, jinak by
     # prebily presnejsi nalez.

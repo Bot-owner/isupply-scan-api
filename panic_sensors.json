@@ -12,7 +12,27 @@
       "low": "Nejiste, v literature nejednoznacne."
     },
     "jak_doplnit": "Neznamy kod appka zapise do 'unknown_*' i s modelem. Dohledej vyznam, pridej radek a zaznam smaz. NIKDY nedoplnuj odhadem.",
-    "zdroj_v1": "Rešerše iFixit Wiki / iFixit Answers / Apple Support Community, predana 2026-07-23."
+    "zdroj_v1": "Rešerše iFixit Wiki / iFixit Answers / Apple Support Community, predana 2026-07-23.",
+    "format_logu": {
+      "popis": "Hodnoty v 'S.sensor array' jsou DESITKOVE, tabulky Apple jsou v HEX.",
+      "priklad": "S.sensor array 0 - 5 is\\n0, 2097152, 0, 0, 0   ->  2097152 = 0x200000",
+      "postup": [
+        "1) precist 'product' = ProductType",
+        "2) overit, ze jde o SMC PANIC (ne CPU / AOP / SEP)",
+        "3) najit S.sensor array nebo F.sensor array",
+        "4) vzit NENULOVE hodnoty",
+        "5) prevest desitkove -> hex",
+        "6) vyhledat kod v tabulce PRO DANY MODEL"
+      ],
+      "pozor": "Radky jako 'Misc(2) OUTBOX1 not ready' jsou NASLEDEK, ne pricina. Neklasifikovat podle nich."
+    },
+    "pravdepodobnost": {
+      "popis": "Odvozena z duveryhodnosti zdroje, NE ze statistiky vlastnich oprav.",
+      "high": "90 %",
+      "medium": "70 %",
+      "low": "40 %",
+      "poznamka": "Az budes mit vlastni cisla z dilny, prepis je - budou presnejsi."
+    }
   },
   "model_groups": {
     "_info": "ProductType -> skupina, pod kterou jsou hex kody. Neuvedene modely hex kody nemaji namapovane.",
@@ -94,10 +114,20 @@
   "smc_codes": {
     "iphone15": {
       "0x200000": {
-        "component": "Cívka bezdrátového nabíjení → originální cívka nebo zadní sklo",
-        "note": "Vyžaduje kalibraci dílu (Apple SSRP). Zjištěno na iOS 18.4.1.",
+        "component": "Cívka bezdrátového nabíjení (Qi)",
+        "why": "SMC hlídá senzor cívky. Když se neohlásí, systém to vyhodnotí jako chybějící hardware a telefon restartuje zhruba každé 3 minuty.",
+        "measure": [
+          "Vizuálně zkontrolovat cívku a její flex na zadním skle (praskliny, koroze)",
+          "Změřit průchodnost cívky a spoj konektoru na základní desce",
+          "Zkusit bezdrátově nabíjet - typicky vůbec nezabere",
+          "Zkontrolovat stopy po vodě v okolí konektoru"
+        ],
+        "replace": [
+          "Cívka bezdrátového nabíjení, případně celé zadní sklo s modulem"
+        ],
         "confidence": "high",
-        "source": "Apple Support Community"
+        "source": "Apple Support Community + iFixit Wiki (potvrzeno na iOS 18.4.1)",
+        "note": "iPhone 15 vyžaduje spárování dílu (Apple SSRP). Neoriginální nebo nespárovaná cívka restarty nevyřeší."
       }
     },
     "iphone15pro": {
