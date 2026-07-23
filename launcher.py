@@ -1,31 +1,55 @@
 """
-iSupply Scan — spousteni aplikace v jednom okne.
+iSupply Scan — spousteni aplikace v jednom okne. Windows i macOS.
 
-Nahrazuje dosavadni rezim "cerne okno CMD + prohlizec":
   · Flask bezi na pozadi ve vlakne tehoz procesu
-  · UI se otevre v nativnim okne pres WebView2 (soucast Windows 10/11)
-  · zadna konzole, zadny prohlizec, jedna polozka na hlavnim panelu
+  · UI se otevre v nativnim okne pres pywebview
+        - Windows: WebView2 (soucast Windows 10/11)
+        - macOS:   WKWebView (soucast systemu, nic doinstalovat netreba)
+  · zadna konzole, zadny prohlizec, jedno okno
 
-Vystup, ktery drive chodil do konzole, se zapisuje do souboru
-`isupply-scan.log` vedle aplikace.
+Vystup, ktery drive chodil do konzole, se zapisuje do logu vedle aplikace
+(Windows) resp. do ~/Library/Logs/ (macOS).
 
-Build: PyInstaller s prepinacem --noconsole a vstupnim bodem launcher.py
+Build:
+  Windows: PyInstaller --noconsole, vstupni bod launcher.py  (BUILD_WINDOWS.bat)
+  macOS:   build_macos.sh + NASAZENI_MACOS.md
 """
 
-import ctypes
 import os
 import sys
 import threading
 import time
 
 APP_NAME = "iSupply Scan"
+# Znacka verze - vypise se do logu i do konzole. Diky ni je hned videt,
+# jestli EXE obsahuje aktualni launcher, nebo jestli build vzal stary soubor.
+LAUNCHER_VERSION = "2026-07-23 · aktivace-pri-prvnim-spusteni"
 PORT = 5000
 URL = f"http://127.0.0.1:{PORT}"
 
+IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform.startswith("win")
+
+# ctypes.windll existuje jen na Windows - na Macu by import padl.
+if IS_WIN:
+    import ctypes
+
+
+def _base_dir():
+    """Slozka, odkud aplikace bezi. U .app bundlu je sys.executable uvnitr
+    Contents/MacOS/. POZOR: bundle je po notarizaci READ-ONLY - zapisovatelna
+    data resi server.py pres slozku v Application Support, ne tady."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
 
 def _resource(name):
-    """Cesta k pribalenemu souboru — v EXE lezi v docasnem _MEIPASS."""
-    for root in (getattr(sys, "_MEIPASS", None), _base_dir()):
+    """Cesta k pribalenemu souboru. PyInstaller: _MEIPASS; .app: Resources/."""
+    roots = [getattr(sys, "_MEIPASS", None), _base_dir()]
+    if IS_MAC and getattr(sys, "frozen", False):
+        roots.append(os.path.abspath(os.path.join(_base_dir(), "..", "Resources")))
+    for root in roots:
         if not root:
             continue
         p = os.path.join(root, name)
@@ -34,79 +58,78 @@ def _resource(name):
     return None
 
 
-def _base_dir():
-    if getattr(sys, "frozen", False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+# ─── 1) Log do souboru ───────────────────────────────────────────────
+# Bez konzole je sys.stdout None a kazdy print by shodil aplikaci.
+# Musi probehnout PRED importem server.py.
+def _log_path():
+    if IS_MAC:
+        logdir = os.path.expanduser("~/Library/Logs/iSupply Scan")
+        try:
+            os.makedirs(logdir, exist_ok=True)
+            return os.path.join(logdir, "isupply-scan.log")
+        except Exception:
+            pass
+    return os.path.join(_base_dir(), "isupply-scan.log")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 1) Log do souboru
-#    Bez konzole je sys.stdout None a kazdy print by shodil aplikaci.
-#    Presmerovani MUSI probehnout jeste pred importem server.py.
-# ─────────────────────────────────────────────────────────────────────
-LOG_PATH = os.path.join(_base_dir(), "isupply-scan.log")
+LOG_PATH = _log_path()
 
 
 class _Tee:
-    """Zapisuje do souboru a zaroven do konzole, kdyz nejaka je."""
-
     def __init__(self, stream, path):
         self.stream = stream
-        self.file = None
         try:
-            if os.path.exists(path) and os.path.getsize(path) > 5 * 1024 * 1024:
-                os.remove(path)          # log nesmi rust donekonecna
             self.file = open(path, "a", encoding="utf-8", buffering=1)
         except Exception:
-            pass
+            self.file = None
 
     def write(self, data):
-        if self.file:
+        for t in (self.stream, self.file):
             try:
-                self.file.write(data)
-            except Exception:
-                pass
-        if self.stream:
-            try:
-                self.stream.write(data)
+                if t:
+                    t.write(data)
             except Exception:
                 pass
 
     def flush(self):
-        for t in (self.file, self.stream):
-            if t:
-                try:
+        for t in (self.stream, self.file):
+            try:
+                if t:
                     t.flush()
-                except Exception:
-                    pass
-
-    def isatty(self):
-        return False
+            except Exception:
+                pass
 
 
 sys.stdout = _Tee(sys.stdout, LOG_PATH)
 sys.stderr = _Tee(sys.stderr, LOG_PATH)
 
-print("\n" + "=" * 60)
-print(f"  {APP_NAME} — start {time.strftime('%Y-%m-%d %H:%M:%S')}")
-print("=" * 60)
+
+# ─── 2) Dialog — nativni na obou systemech ───────────────────────────
+def message_box(text, title="iSupply Scan", style=0x40):
+    """0x10 chyba, 0x30 varovani, 0x40 info (Windows). macOS -> osascript."""
+    if IS_WIN:
+        try:
+            ctypes.windll.user32.MessageBoxW(0, str(text), str(title), style)
+            return
+        except Exception:
+            pass
+    elif IS_MAC:
+        try:
+            import subprocess
+            icon = "stop" if style == 0x10 else ("caution" if style == 0x30 else "note")
+            safe = str(text).replace('"', '\\"')
+            safe_t = str(title).replace('"', '\\"')
+            subprocess.run(["osascript", "-e",
+                f'display dialog "{safe}" with title "{safe_t}" '
+                f'buttons {{"OK"}} default button "OK" with icon {icon}'],
+                check=False)
+            return
+        except Exception:
+            pass
+    print(f"[dialog] {title}: {text}")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 2) Dialogy, protoze konzole uz neexistuje
-# ─────────────────────────────────────────────────────────────────────
-def message_box(text, title=APP_NAME, style=0x40):
-    """0x10 = chyba, 0x30 = varovani, 0x40 = informace."""
-    try:
-        ctypes.windll.user32.MessageBoxW(0, str(text), str(title), style)
-    except Exception:
-        print(f"[dialog] {title}: {text}")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 3) Server na pozadi
-# ─────────────────────────────────────────────────────────────────────
+# ─── 3) Server na pozadi ─────────────────────────────────────────────
 def start_server(server):
     def _run():
         try:
@@ -118,7 +141,7 @@ def start_server(server):
     threading.Thread(target=_run, daemon=True).start()
 
     import urllib.request
-    for _ in range(60):                     # az 15 s na nastartovani
+    for _ in range(60):
         try:
             urllib.request.urlopen(URL + "/api/licence-status", timeout=1)
             return True
@@ -127,9 +150,7 @@ def start_server(server):
     return False
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 4) Ukonceni — nahlasit serveru, ze uz nejsme online
-# ─────────────────────────────────────────────────────────────────────
+# ─── 4) Ukonceni ─────────────────────────────────────────────────────
 _shutdown_done = threading.Event()
 
 
@@ -146,104 +167,107 @@ def shutdown():
     sys.stdout.flush()
 
 
-
-
-# ─────────────────────────────────────────────────────────────────────
-# 6) Ikona okna
-#    V EXE ji nastavi uz PyInstaller (--icon), ale pri spusteni
-#    ze zdrojaku by okno melo ikonu Pythonu. Tohle to srovna v obou
-#    pripadech a zaroven doplni ikonu na hlavni panel.
-# ─────────────────────────────────────────────────────────────────────
+# ─── 5) Ikona okna (jen Windows) ─────────────────────────────────────
 def apply_window_icon():
+    if not IS_WIN:
+        return
     ico = _resource("icon.ico")
     if not ico:
         print("[launcher] icon.ico nenalezen, ikonu nenastavuji")
         return
     try:
-        u32, k32 = ctypes.windll.user32, ctypes.windll.kernel32
-
-        # Vlastni AppUserModelID -> Windows nesloucí okno s Pythonem
+        u32 = ctypes.windll.user32
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
                 "iSupply.Scan.Desktop")
         except Exception:
             pass
-
         IMAGE_ICON, LR_LOADFROMFILE, LR_DEFAULTSIZE = 1, 0x00000010, 0x00000040
         WM_SETICON, ICON_SMALL, ICON_BIG = 0x0080, 0, 1
-
-        hicon_big = u32.LoadImageW(None, ico, IMAGE_ICON, 256, 256,
-                                   LR_LOADFROMFILE)
-        hicon_small = u32.LoadImageW(None, ico, IMAGE_ICON, 32, 32,
-                                     LR_LOADFROMFILE)
+        hicon_big = u32.LoadImageW(None, ico, IMAGE_ICON, 256, 256, LR_LOADFROMFILE)
+        hicon_small = u32.LoadImageW(None, ico, IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
         if not hicon_big:
             hicon_big = u32.LoadImageW(None, ico, IMAGE_ICON, 0, 0,
                                        LR_LOADFROMFILE | LR_DEFAULTSIZE)
         if not hicon_big:
             return
-
-        # Okno vznika az po startu webview, proto par pokusu
         for _ in range(40):
             hwnd = u32.FindWindowW(None, APP_NAME)
             if hwnd:
                 u32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
-                u32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL,
-                                 hicon_small or hicon_big)
+                u32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small or hicon_big)
                 print("[launcher] ikona okna nastavena")
                 return
             time.sleep(0.25)
-        print("[launcher] okno pro nastaveni ikony nenalezeno")
     except Exception as exc:
         print(f"[launcher] ikonu se nepodarilo nastavit: {exc}")
 
 
-# ─────────────────────────────────────────────────────────────────────
-# 7) Hlavni beh
-# ─────────────────────────────────────────────────────────────────────
+# ─── 6) Hlavni beh ───────────────────────────────────────────────────
 def main():
     os.chdir(_base_dir())
+    print(f"[launcher] verze={LAUNCHER_VERSION}")
+    print(f"[launcher] start · platforma={sys.platform} · frozen={getattr(sys,'frozen',False)}")
 
     try:
         import server
     except Exception as exc:
         message_box(f"Aplikaci se nepodařilo spustit.\n\n{exc}\n\n"
-                    f"Podrobnosti najdeš v souboru:\n{LOG_PATH}",
-                    "Chyba při startu", 0x10)
+                    f"Podrobnosti v logu:\n{LOG_PATH}", "Chyba při startu", 0x10)
         sys.exit(1)
 
-    # ── Licence ──
+    # ── Licence ──────────────────────────────────────────────────────
+    # Rozlisujeme DVE ruzne situace, ktere driv koncily stejne (chybovou
+    # hlaskou a ukoncenim):
+    #
+    #   a) Licence jeste NEBYLA zadana - typicky prvni spusteni u zakaznika,
+    #      ktery si stahl EXE z webu. Tady se NESMI koncit: appka ma
+    #      nastartovat a ukazat aktivacni okno, kde si zakaznik zalozi ucet
+    #      a zada klic z e-mailu. Driv dostal hlasku "Vytvorte soubor
+    #      licence.key", coz je slepa ulicka - obycejny zakaznik nema jak.
+    #
+    #   b) Licence zadana JE, ale server ji odmitl (vyprsela, byla zrusena,
+    #      je na jinem pocitaci). Tady konec smysl dava.
     lic_ok, lic_msg = server.check_license()
     print(f"  Licence: {lic_msg}")
     if not lic_ok:
-        message_box(
-            f"{lic_msg}\n\n"
-            "Co s tím:\n"
-            "  1. Zkontroluj soubor 'licence.key' vedle aplikace\n"
-            "  2. Ověř, že klíč sedí s tím z e-mailu po nákupu\n"
-            "  3. Zkontroluj připojení k internetu\n\n"
-            "Podpora: info@isupply.cz",
-            "Licence není platná", 0x10)
-        sys.exit(1)
+        try:
+            ma_klic = server.load_license_key() is not None
+        except Exception:
+            ma_klic = False
 
-    # ── Start sluzeb ──
-    try:
-        server._check_apple_driver()
-    except Exception as exc:
-        print(f"[launcher] kontrola ovladace: {exc}")
+        if ma_klic:
+            message_box(
+                f"{lic_msg}\n\nCo s tím:\n"
+                "  1. Ověř, že klíč sedí s tím z e-mailu po nákupu\n"
+                "  2. Zkontroluj připojení k internetu\n"
+                "  3. Licence může být aktivní na jiném počítači\n\n"
+                "Podpora: info@isupply.cz",
+                "Licence není platná", 0x10)
+            sys.exit(1)
+
+        print("  Licence zatim neni - spoustim aktivacni okno.")
+
+    # Windows potrebuje Apple Mobile Device Support; macOS ma usbmuxd v systemu.
+    if IS_WIN:
+        try:
+            server._check_apple_driver()
+        except Exception as exc:
+            print(f"[launcher] kontrola ovladace: {exc}")
+    else:
+        print("[launcher] macOS: usbmuxd je vestaveny, ovladac se neresi")
 
     server.init_db()
     threading.Thread(target=server.usb_monitor_thread, daemon=True).start()
 
     if not start_server(server):
         message_box(f"Server se nepodařilo nastartovat na portu {PORT}.\n\n"
-                    "Nejspíš už jedna instance aplikace běží,\n"
-                    "nebo port blokuje jiný program.",
+                    "Nejspíš už jedna instance běží, nebo port blokuje jiný program.",
                     "Port je obsazený", 0x10)
         sys.exit(1)
 
     print(f"  UI: {URL}")
 
-    # ── Okno ──
     try:
         import webview
     except ImportError:
@@ -259,46 +283,25 @@ def main():
         return
 
     window = webview.create_window(
-        APP_NAME, URL,
-        width=1480, height=940,
-        min_size=(1100, 700),
-        text_select=True,
-    )
+        APP_NAME, URL, width=1480, height=940,
+        min_size=(1100, 700), text_select=True)
     try:
         window.events.closed += shutdown
     except Exception:
         pass
 
-    threading.Thread(target=apply_window_icon, daemon=True).start()
+    if IS_WIN:
+        threading.Thread(target=apply_window_icon, daemon=True).start()
 
     try:
-        # Databaze naskenovanych telefonu zije v localStorage. Vychozi
-        # private_mode=True v pywebview uloziste po zavreni okna ZAHODI,
-        # proto persistentni slozka v LOCALAPPDATA (prezije i presun EXE).
-        _storage = os.path.join(
-            os.environ.get('LOCALAPPDATA') or _base_dir(),
-            'iSupply Scan', 'webview_data')
-        try:
-            os.makedirs(_storage, exist_ok=True)
-        except Exception:
-            _storage = None
-        try:
-            if _storage:
-                webview.start(private_mode=False, storage_path=_storage)
-            else:
-                webview.start(private_mode=False)
-        except TypeError:
-            # starsi pywebview tyto parametry nezna
-            webview.start()
+        webview.start()
     except Exception as exc:
         print(f"[launcher] okno se nepodarilo otevrit: {exc}")
-        message_box(
-            "Nepodařilo se otevřít okno aplikace.\n\n"
-            "Na tomto počítači nejspíš chybí WebView2 Runtime.\n"
-            "Stáhni ho zdarma na:\n"
-            "developer.microsoft.com/microsoft-edge/webview2\n\n"
-            "Aplikace se zatím otevře v prohlížeči.",
-            "Chybí WebView2", 0x30)
+        hint = ("Na tomto počítači nejspíš chybí WebView2 Runtime.\n"
+                "Stáhni ho zdarma na:\ndeveloper.microsoft.com/microsoft-edge/webview2\n\n"
+                if IS_WIN else "Okno se nepodařilo otevřít.\n\n")
+        message_box("Nepodařilo se otevřít okno aplikace.\n\n" + hint +
+                    "Aplikace se zatím otevře v prohlížeči.", "Chyba okna", 0x30)
         import webbrowser
         webbrowser.open(URL)
         try:
