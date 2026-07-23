@@ -117,12 +117,50 @@ BASE_DIR = _get_base_dir()
 app = Flask(__name__, static_folder=BASE_DIR)
 CORS(app)
 
-DB_PATH        = os.path.join(_get_base_dir(), 'isupply_users.db')
+
+def _data_dir():
+    """Slozka pro ZAPISOVATELNA data (databaze, licence, token cache, barvy).
+
+    Nesmi to byt slozka vedle aplikace: na macOS je .app bundle po notarizaci
+    READ-ONLY, takze zapis vedle spustitelneho souboru by selhal. Na Windows
+    zase zapis do Program Files vyzaduje admina. Reseni je systemova slozka
+    pro data aplikace:
+        macOS:   ~/Library/Application Support/iSupply Scan/
+        Windows: %APPDATA%\\iSupply Scan\\
+        jinak:   vedle aplikace (vyvoj ze zdrojaku)
+    Diky tomu aktualizace aplikace nepretpise zakaznikovi licenci ani databazi.
+    """
+    try:
+        if _sys.platform == 'darwin':
+            base = os.path.expanduser('~/Library/Application Support/iSupply Scan')
+        elif _sys.platform.startswith('win'):
+            base = os.path.join(os.environ.get('APPDATA')
+                                or os.path.expanduser('~'), 'iSupply Scan')
+        else:
+            base = _get_base_dir()
+        os.makedirs(base, exist_ok=True)
+        return base
+    except Exception:
+        return _get_base_dir()
+
+
+def _pick_existing(name):
+    """Pro data, ktera uz zakaznik muze mit z drivejska vedle aplikace:
+    kdyz existuji na starem miste, pouzij je (a nech je tam), jinak nove
+    misto v _data_dir(). Zabrani ztrate licence po prechodu na novou verzi."""
+    legacy = os.path.join(_get_base_dir(), name)
+    if os.path.exists(legacy):
+        return legacy
+    return os.path.join(_data_dir(), name)
+
+
+DATA_DIR       = _data_dir()
+DB_PATH        = _pick_existing('isupply_users.db')
 LICENSE_API    = os.environ.get('ISUPPLY_API', 'https://isupply-scan.cz')
 LICENSE_KEY    = None   # nastaveno ze souboru licence.key
 SESSION_TOKEN  = None   # JWT token z Railway API
-TOKEN_FILE     = os.path.join(_get_base_dir(), '.token_cache')
-LICENSE_FILE   = os.path.join(_get_base_dir(), 'licence.key')
+TOKEN_FILE     = os.path.join(_data_dir(), '.token_cache')
+LICENSE_FILE   = _pick_existing('licence.key')
 def _find_colors_file():
     """Najde model_colors.json. U EXE vraci _get_base_dir() slozku vedle .exe
     (typicky dist\\), jenze soubor casto zustane v korenu projektu vedle
@@ -136,13 +174,32 @@ def _find_colors_file():
         os.path.join(os.path.dirname(base), 'model_colors.json'),   # dist\.. 
         os.path.join(os.getcwd(), 'model_colors.json'),
     ]
+    # Zapisovatelna kopie ma prednost - do ni se ukladaji nove barvy pridane
+    # technikem. Pri prvnim spusteni jeste neexistuje, takze se pouzije
+    # dodavana verze vedle aplikace a prvni zapis ji zkopiruje do _data_dir().
+    candidates.insert(0, os.path.join(_data_dir(), 'model_colors.json'))
     for path in candidates:
         try:
             if os.path.isfile(path):
                 return path
         except Exception:
             continue
-    return candidates[0]
+    # Nikde neni: vrat cestu do zapisovatelne slozky, at ma save_enclosure_color
+    # kam ukladat i na read-only bundlu.
+    return os.path.join(_data_dir(), 'model_colors.json')
+
+
+def _colors_read_seed():
+    """Dodavana (read-only) verze model_colors.json vedle aplikace. Pouzije se
+    jako vychozi obsah, nez vznikne zapisovatelna kopie."""
+    for path in (os.path.join(_get_base_dir(), 'model_colors.json'),
+                 os.path.join(os.path.dirname(_get_base_dir()), 'model_colors.json')):
+        try:
+            if os.path.isfile(path):
+                return path
+        except Exception:
+            continue
+    return None
 
 
 COLORS_FILE    = _find_colors_file()
@@ -752,8 +809,11 @@ def save_enclosure_color(product_type, code, color, model_number=""):
     with _colors_lock:
         try:
             data = {}
-            if os.path.exists(COLORS_FILE):
-                with open(COLORS_FILE, "r", encoding="utf-8") as fh:
+            # Nacti stavajici obsah - bud uz zapisovatelnou kopii, nebo (pri
+            # prvnim zapisu na read-only bundlu) dodavany seed vedle aplikace.
+            src = COLORS_FILE if os.path.exists(COLORS_FILE) else _colors_read_seed()
+            if src and os.path.exists(src):
+                with open(src, "r", encoding="utf-8") as fh:
                     data = json.load(fh)
             table = data.setdefault("enclosure_colors", {}).setdefault(pt, {})
             table[code] = {
@@ -2831,8 +2891,11 @@ def api_component_serials(udid):
     except Exception as exc:
         print(f"  [kvota] nepodarilo se zjistit IMEI: {exc}")
 
+    # UDID se posila jako zaloha: kdyz zarizeni nema IMEI (Wi-Fi iPad) nebo ho
+    # klient neposle, uctuje se podle UDID. Driv takovy sken prosel zdarma.
     auth = scan_quota.authorize_scan(
-        imei, model=dev_info.get('model'), ios_version=dev_info.get('ios'))
+        imei, model=dev_info.get('model'), ios_version=dev_info.get('ios'),
+        udid=udid)
 
     if not auth.get('allowed'):
         return jsonify({

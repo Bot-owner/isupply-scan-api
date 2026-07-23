@@ -80,6 +80,25 @@ def has_feature(tier, feature):
     return feature in features_for(tier)
 
 IMEI_RE = re.compile(r"^\d{14,17}$")
+# Nahradni identita zarizeni, kdyz IMEI neexistuje nebo ho klient neposlal.
+# Duvod: puvodne se sken BEZ platneho IMEI povolil zdarma a server se na nej
+# ani nezeptal - stacilo IMEI zamlcet a kvota se neodecitala vubec. Navic
+# Wi-Fi iPady IMEI nemaji, takze se uctovaly zdarma i legitimne.
+# UDID je pres USB vzdy k dispozici (bez nej se zarizeni ani neadresuje).
+# Format: 00008110-001A09583A00A01E (novy) nebo 40 hex znaku (stary).
+UDID_RE = re.compile(r"^(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})$")
+
+
+def _device_id(data):
+    """Vrati identitu zarizeni pro uctovani a deduplikaci: primarne IMEI,
+    jinak UDID. Vraci (identita, None) nebo (None, chybova_hlaska)."""
+    imei = (data.get("imei") or "").strip()
+    if IMEI_RE.match(imei):
+        return imei, None
+    udid = (data.get("udid") or "").strip()
+    if UDID_RE.match(udid):
+        return udid, None
+    return None, "Chybi platne IMEI ani UDID zarizeni."
 
 
 @contextmanager
@@ -131,10 +150,11 @@ def _credits_left(cur, license_id):
 def authorize_scan():
     data = request.get_json(silent=True) or {}
     licence_key = (data.get("licence_key") or "").strip()
-    imei = (data.get("imei") or "").strip()
+    imei, id_err = _device_id(data)
 
-    if not licence_key or not IMEI_RE.match(imei):
-        return jsonify(error="bad_request", message="Chybí licence_key nebo platné IMEI."), 400
+    if not licence_key or id_err:
+        return jsonify(error="bad_request",
+                       message=id_err or "Chybí licence_key."), 400
 
     with db() as cur:
         lic = _locked_licence(cur, licence_key)

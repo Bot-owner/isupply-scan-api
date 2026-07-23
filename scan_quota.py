@@ -50,7 +50,7 @@ def _valid_imei(imei):
 # ─────────────────────────────────────────────────────────────────────
 # 1) Autorizace PRED skenem
 # ─────────────────────────────────────────────────────────────────────
-def authorize_scan(imei, model=None, ios_version=None):
+def authorize_scan(imei, model=None, ios_version=None, udid=None):
     """
     Vraci dict:
       {'allowed': True,  'billed': True/False, 'scan_event_id': 123, ...}
@@ -62,12 +62,20 @@ def authorize_scan(imei, model=None, ios_version=None):
         return {"allowed": False, "error": "no_licence",
                 "message": "Chybi licencni klic (soubor licence.key)."}
 
-    if not _valid_imei(imei):
-        # Zarizeni jeste nedohlasilo IMEI. Neuctujeme, ale ani neblokujeme —
-        # frontend si data dotahne a zavola znovu.
-        return {"allowed": True, "billed": False, "reason": "imei_unknown"}
-
-    key = str(imei)
+    # DRIVE: kdyz IMEI nebylo platne, sken se povolil zdarma a server se na nej
+    # ani nezeptal. Stacilo tedy IMEI zamlcet a kvota se neodecetla vubec.
+    # Wi-Fi iPady navic IMEI nemaji, takze se uctovaly zdarma i legitimne.
+    # TED: kdyz IMEI chybi, pouzije se UDID - pres USB je vzdy k dispozici.
+    if _valid_imei(imei):
+        key = str(imei)
+    elif udid:
+        key = str(udid).strip()
+    else:
+        # Ani UDID neni - zarizeni jeste nedohlasilo nic. Neuctujeme, ale
+        # ani nepovolujeme sken; frontend zavola znovu, az bude mit data.
+        return {"allowed": False, "billed": False, "reason": "device_unknown",
+                "error": "device_unknown",
+                "message": "Zarizeni jeste nedohlasilo identifikaci."}
     now = time.time()
     with _cache_lock:
         hit = _cache.get(key)
@@ -78,6 +86,7 @@ def authorize_scan(imei, model=None, ios_version=None):
         r = requests.post(
             f"{_API_BASE}/api/scan/authorize",
             json={"licence_key": _LICENCE_KEY, "imei": key,
+                  "udid": udid or "",
                   "model": model, "ios_version": ios_version},
             timeout=_TIMEOUT,
         )
