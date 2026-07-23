@@ -3198,47 +3198,210 @@ def _info_is_real(info):
                 and serial and serial not in ('—', 'N/A'))
 
 
-def _classify_panic(bug_type, text):
-    """Klasifikace příčiny panicu. Nejkonkrétnější je "Missing sensor(s): X"
-    (mapování dle iPad Rehab / Jessa) – tam přímo víme, co vyměnit."""
+_PANIC_SENSORS_CACHE = {"mtime": None, "data": None}
+_panic_sensors_lock = threading.Lock()
+
+
+def _panic_sensors_file():
+    """Stejny princip jako model_colors.json: soubor vedle aplikace nebo
+    zabaleny v EXE, zapisovatelna kopie v _data_dir()."""
+    cands = [os.path.join(_data_dir(), 'panic_sensors.json'),
+             os.path.join(_get_base_dir(), 'panic_sensors.json'),
+             os.path.join(os.path.dirname(_get_base_dir()), 'panic_sensors.json')]
+    mp = getattr(_sys, '_MEIPASS', None)
+    if mp:
+        cands.append(os.path.join(mp, 'panic_sensors.json'))
+    for path in cands:
+        try:
+            if os.path.isfile(path):
+                return path
+        except Exception:
+            continue
+    return os.path.join(_data_dir(), 'panic_sensors.json')
+
+
+def _load_panic_sensors():
+    path = _panic_sensors_file()
+    try:
+        mtime = os.path.getmtime(path)
+    except Exception:
+        return {}
+    if _PANIC_SENSORS_CACHE["mtime"] == mtime and _PANIC_SENSORS_CACHE["data"] is not None:
+        return _PANIC_SENSORS_CACHE["data"]
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        _PANIC_SENSORS_CACHE.update(mtime=mtime, data=data)
+        return data
+    except Exception as exc:
+        print(f"  ⚠ panic_sensors.json nelze nacist: {exc}")
+        return {}
+
+
+def _confidence_mark(rec):
+    """Jak moc dane mapovani verit. Technik musi poznat rozdil mezi
+    "potvrzeno Apple" a "nekdo to napsal na wiki" - podle toho se rozhoduje,
+    jestli dil rovnou vymeni, nebo nejdriv promeri."""
+    return {"verified": "", "high": "", "medium": " (pravděpodobné)",
+            "low": " (nejisté)"}.get(str(rec.get("confidence") or ""), " (neověřeno)")
+
+
+def _smc_group(product_type):
+    """Skupina modelu pro hex kody. Vyznam kodu se LISI podle generace,
+    takze bez znameho modelu radeji nemapujeme vubec."""
+    return (_load_panic_sensors().get("model_groups") or {}).get(
+        str(product_type or "").strip())
+
+
+def _remember_unknown_smc(code, product_type="", reason=""):
+    """Hex kod, ktery pro dany model neznáme. Uklada se VCETNE modelu -
+    stejny kod znamena na jine generaci neco jineho."""
+    code = str(code or "").strip().lower()
+    if not code:
+        return
+    with _panic_sensors_lock:
+        try:
+            path = os.path.join(_data_dir(), 'panic_sensors.json')
+            src = _panic_sensors_file()
+            data = {}
+            if os.path.exists(src):
+                with open(src, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            key = f"{product_type or '?'}|{code}"
+            unknown = data.setdefault("unknown_smc_codes", {})
+            rec = unknown.setdefault(key, {"component": "", "vyskyty": 0,
+                                           "model": product_type,
+                                           "kod": code, "priklad_duvodu": ""})
+            rec["vyskyty"] = int(rec.get("vyskyty", 0)) + 1
+            if reason and not rec.get("priklad_duvodu"):
+                rec["priklad_duvodu"] = str(reason)[:200]
+            rec["poznamka"] = ("Dohledat vyznam PRO TENHLE MODEL - "
+                               "stejny kod ma na jine generaci jiny vyznam.")
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+            _PANIC_SENSORS_CACHE["mtime"] = None
+        except Exception as exc:
+            print(f"  ⚠ neznamy SMC kod {code} nelze zapsat: {exc}")
+
+
+def _remember_unknown_sensor(code, product_type="", reason=""):
+    """Neznamy kod senzoru si zapiseme i s modelem, at je co dohledat.
+    Nikdy nehadame, co znamena - to musi zjistit clovek."""
+    code = str(code or "").strip().upper()
+    if not code:
+        return
+    with _panic_sensors_lock:
+        try:
+            path = os.path.join(_data_dir(), 'panic_sensors.json')
+            src = _panic_sensors_file()
+            data = {}
+            if os.path.exists(src):
+                with open(src, "r", encoding="utf-8") as fh:
+                    data = json.load(fh)
+            if code in (data.get("sensors") or {}):
+                return
+            unknown = data.setdefault("unknown_sensors", {})
+            rec = unknown.setdefault(code, {"component": "", "vyskyty": 0,
+                                            "modely": [], "priklad_duvodu": ""})
+            rec["vyskyty"] = int(rec.get("vyskyty", 0)) + 1
+            if product_type and product_type not in rec["modely"]:
+                rec["modely"].append(product_type)
+            if reason and not rec.get("priklad_duvodu"):
+                rec["priklad_duvodu"] = str(reason)[:200]
+            rec["poznamka"] = "Doplnit, co tenhle kod na dane generaci znamena."
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+            _PANIC_SENSORS_CACHE["mtime"] = None
+        except Exception as exc:
+            print(f"  ⚠ neznamy senzor {code} nelze zapsat: {exc}")
+
+
+def _classify_panic(bug_type, text, summary=None, product_type=""):
+    """Klasifikace příčiny panicu.
+
+    POZOR NA ROZSAH TEXTU - tady byla chyba, kvuli ktere se hlasily nesmyslne
+    komponenty: klicova slova se hledala v CELEM panic logu. Ten ale obsahuje
+    seznam nactenych kernel rozsireni, kde se retezce jako "AppleSmartBattery",
+    "AppleDisplay", "WiFi" nebo "AudioDMAController" objevi prakticky vzdy.
+    Prvni klicove slovo v poradi proto vyhralo bez ohledu na skutecnou pricinu
+    a temer kazdy panic vysel jako "Wi-Fi / sitovy modul".
+
+    Ted se rozlisuje:
+      · "Missing sensor(s): X"  - konkretni vzor, hleda se v CELEM logu,
+        protoze planych nalezu nehrozi a rovnou rika, co vymenit
+      · klicova slova          - jen v DUVODU panicu (panicString), ne v dumpu
+    """
     raw = str(text) or ''
-    t = raw.lower()
-    SENSORS = {
-        'prs0': 'Barometr (PRS0) → nabíjecí konektor / jeho konektor na desce',
-        'prs':  'Barometr → nabíjecí konektor',
-        'mic1': 'Spodní mikrofon (Mic1) → nabíjecí konektor',
-        'mic2': 'Zadní mikrofon (Mic2) → kabel power tlačítka / blesku kamery',
-        'tg0v': 'Teplotní/napěťový senzor baterie (TG0V) → baterie / její konektor',
-        'tg0b': 'Teplotní/napěťový senzor baterie (TG0B) → baterie / její konektor',
-        'als0': 'Senzor světla (ALS) → přední flex',
-        'als':  'Senzor světla (ALS) → přední flex',
-        'prox': 'Proximity senzor → přední flex',
-        'gyro': 'Gyroskop → základní deska',
-        'accel':'Akcelerometr → základní deska',
-        'mag0': 'Magnetometr (kompas) → deska / anténní flex',
-    }
+    # Duvod panicu. Kdyz ho nemame, radeji necharakterizujeme nic, nez abychom
+    # hadali z dumpu - u nastroje na dolozitelnost je vymysleny nalez to nejhorsi.
+    reason = str(summary or '')[:600]
+    t = reason.lower()
     m = re.search(r'missing sensor\(s\):\s*([A-Za-z0-9,\s]+)', raw, re.IGNORECASE)
     if m:
         codes = [c.strip() for c in re.split(r'[,\s]+', m.group(1)) if c.strip()]
-        parts = [SENSORS.get(c.lower(), f'Chybí senzor {c}') for c in codes[:4]]
+        table = (_load_panic_sensors().get("sensors") or {})
+        parts = []
+        for c in codes[:4]:
+            rec = table.get(c.upper())
+            if rec and rec.get("component"):
+                parts.append(f"{c}: {rec['component']}{_confidence_mark(rec)}")
+            else:
+                # NEHADAME. Kod zapiseme k dohledani a rekneme pravdu.
+                _remember_unknown_sensor(c, product_type, summary or "")
+                parts.append(f"{c}: neznámý senzor — nutno dohledat")
         if parts:
-            return 'Chybí senzor: ' + '; '.join(parts)
+            return 'Chybí senzor → ' + '; '.join(parts)
+
+    # ── Hexadecimalni kody ze "S.sensor array" ─────────────────────────
+    # POZOR: vyznam se lisi podle generace. 0x200000 je na iPhone 15 civka
+    # bezdratoveho nabijeni, na iPhone 14 predni senzorovy modul, 0x100000
+    # je na 14 nabijeci port, ale na 14 Pro flex tlacitka napajeni.
+    # Bez znameho modelu proto NEMAPUJEME vubec - spatny nalez by poslal
+    # technika menit jiny dil.
+    m = re.search(r'sensor\s*array[^\n]*?(0x[0-9a-fA-F]+)', raw, re.IGNORECASE)
+    if not m:
+        m = re.search(r'\bS\.sensor[^\n]*?(0x[0-9a-fA-F]+)', raw, re.IGNORECASE)
+    if m:
+        code = m.group(1).lower()
+        group = _smc_group(product_type)
+        if group:
+            rec = ((_load_panic_sensors().get("smc_codes") or {})
+                   .get(group, {}).get(code))
+            if rec and rec.get("component"):
+                out = f"SMC {code} → {rec['component']}{_confidence_mark(rec)}"
+                if rec.get("note"):
+                    out += f" · {rec['note']}"
+                return out
+            _remember_unknown_smc(code, product_type, summary or "")
+            return (f"SMC {code} → pro tenhle model neznámý kód — nutno dohledat")
+        _remember_unknown_smc(code, product_type, summary or "")
+        return (f"SMC {code} → model {product_type or '?'} nemá mapování kódů; "
+                "význam se liší podle generace")
+    # Poradi je od NEJKONKRETNEJSIHO k nejobecnejsimu - "power" a "battery"
+    # se v textech objevuji nejcasteji, takze musi byt az na konci, jinak by
+    # prebily presnejsi nalez.
     for needles, label in (
-        (("wifi", "bcm", "brcm", "corecapture"), "Wi-Fi / síťový modul"),
-        (("baseband", "modem", "cellular"), "Modem / baseband"),
-        (("gpu", "agx", "sgx"), "GPU / grafika"),
-        (("thermal", "overtemp", "temperature"), "Přehřátí"),
-        (("pmu", "charg", "battery", "power"), "Napájení / baterie"),
-        (("watchdog", "wdog", "hang"), "Watchdog / systém zamrzl"),
-        (("nand", "ans", "nvme", "smartio"), "Úložiště / NAND"),
-        (("aop", "audio"), "Audio"),
-        (("clcd", "backlight", "display"), "Displej"),
+        (("watchdog", "wdog"), "Watchdog / systém zamrzl"),
+        (("nand", "nvme", "smartio", "ans2"), "Úložiště / NAND"),
+        (("overtemp", "thermal"), "Přehřátí"),
+        (("agx", "sgx", "gpu"), "GPU / grafika"),
+        (("baseband", "modem"), "Modem / baseband"),
+        (("corecapture", "brcm", "bcmwifi"), "Wi-Fi / síťový modul"),
+        (("backlight", "clcd"), "Displej"),
+        (("aop",), "Audio / AOP"),
+        (("pmu", "charger"), "Napájení"),
     ):
         if any(n in t for n in needles):
             return label
+
+    # Nic konkretniho. Vratime typ panicu, ale NEHADAME komponentu.
     return (f"Panic (typ {bug_type})" if bug_type else "Neurčeno")
 
-def _parse_ips(name, raw):
+def _parse_ips(name, raw, product_type=""):
     import json as _json
     if isinstance(raw, (bytes, bytearray)):
         raw = bytes(raw).decode('utf-8', errors='ignore')
@@ -3256,7 +3419,8 @@ def _parse_ips(name, raw):
     except Exception:
         summary = (raw.strip().split(chr(10), 1)[0][:200]) or None
     return {'name': name, 'bug_type': bug_type, 'timestamp': ts,
-            'summary': summary, 'cause': _classify_panic(bug_type, raw),
+            'summary': summary,
+            'cause': _classify_panic(bug_type, raw, summary, product_type),
             'full': raw[:20000]}
 
 async def _panic_logs_collect(udid):

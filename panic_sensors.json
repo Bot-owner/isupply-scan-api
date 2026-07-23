@@ -1,0 +1,187 @@
+{
+  "_info": {
+    "popis": "Mapovani kodu z kernel panic logu (panicFull) -> komponenta k vymene.",
+    "dva_druhy_kodu": {
+      "sensors": "Pojmenovane senzory z 'Missing sensor(s): X'. Plati napric modely.",
+      "smc_codes": "Hexadecimalni kody z 'S.sensor array'. POZOR - vyznam se LISI PODLE MODELU! Stejny kod 0x200000 je na iPhone 15 civka bezdratoveho nabijeni, ale na iPhone 14 predni senzorovy modul. Proto jsou klicovane skupinou modelu."
+    },
+    "confidence": {
+      "verified": "Overeno na vlastnim fyzickem kuse (zatim zadne).",
+      "high": "Potvrzeno Apple nebo opravarskymi experty.",
+      "medium": "iFixit wiki nebo neprimy zdroj.",
+      "low": "Nejiste, v literature nejednoznacne."
+    },
+    "jak_doplnit": "Neznamy kod appka zapise do 'unknown_*' i s modelem. Dohledej vyznam, pridej radek a zaznam smaz. NIKDY nedoplnuj odhadem.",
+    "zdroj_v1": "Rešerše iFixit Wiki / iFixit Answers / Apple Support Community, predana 2026-07-23."
+  },
+  "model_groups": {
+    "_info": "ProductType -> skupina, pod kterou jsou hex kody. Neuvedene modely hex kody nemaji namapovane.",
+    "iPhone15,4": "iphone15",
+    "iPhone15,5": "iphone15",
+    "iPhone16,1": "iphone15pro",
+    "iPhone16,2": "iphone15pro",
+    "iPhone14,7": "iphone14",
+    "iPhone14,8": "iphone14",
+    "iPhone15,2": "iphone14pro",
+    "iPhone15,3": "iphone14pro",
+    "iPhone14,5": "iphone13",
+    "iPhone14,4": "iphone13",
+    "iPhone14,2": "iphone13",
+    "iPhone14,3": "iphone13"
+  },
+  "sensors": {
+    "MIC1": {
+      "component": "Spodní mikrofon → nabíjecí konektor (Lightning flex)",
+      "note": "Typicky neoriginální nebo poškozený nabíjecí flex. Restart po ~3 min.",
+      "confidence": "high",
+      "source": "iFixit Answers (iPhone X, 8/8 Plus)"
+    },
+    "MIC2": {
+      "component": "Zadní mikrofon → flex tlačítka napájení (power flex)",
+      "note": "Flex vede pod bočním tlačítkem. Časté u iPhone 11 / 11 Pro Max.",
+      "confidence": "high",
+      "source": "iFixit Answers (iPhone 11)"
+    },
+    "PRS0": {
+      "component": "Barometr → nabíjecí konektor",
+      "note": "Barometr je součástí modulu nabíjecího portu.",
+      "confidence": "medium",
+      "source": "iFixit Wiki"
+    },
+    "TG0B": {
+      "component": "Termistor baterie → baterie nebo její konektor",
+      "note": "Vadná či neoriginální baterie, případně poškozený konektor na desce.",
+      "confidence": "high",
+      "source": "iFixit Answers (iPhone 7–12)"
+    },
+    "TG0V": {
+      "component": "Napěťový obvod baterie (gas gauge) → baterie nebo konektor",
+      "note": "Stejná příčina jako TG0B. U 11 Pro se může objevit 2× kvůli dvěma konektorům.",
+      "confidence": "high",
+      "source": "iFixit Answers (iPhone 7–12)"
+    },
+    "ALS0": {
+      "component": "Senzor okolního světla → přední flex (sluchátko / proximity)",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    },
+    "ALS": {
+      "component": "Senzor okolního světla → přední flex (sluchátko / proximity)",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    },
+    "PROX": {
+      "component": "Proximity senzor → přední flex",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    },
+    "GYRO": {
+      "component": "Gyroskop → základní deska",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    },
+    "ACCEL": {
+      "component": "Akcelerometr → základní deska",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    },
+    "MAG0": {
+      "component": "Magnetometr (kompas) → deska nebo anténní flex",
+      "confidence": "medium",
+      "source": "iPad Rehab"
+    }
+  },
+  "smc_codes": {
+    "iphone15": {
+      "0x200000": {
+        "component": "Cívka bezdrátového nabíjení → originální cívka nebo zadní sklo",
+        "note": "Vyžaduje kalibraci dílu (Apple SSRP). Zjištěno na iOS 18.4.1.",
+        "confidence": "high",
+        "source": "Apple Support Community"
+      }
+    },
+    "iphone15pro": {
+      "0x300000": {
+        "component": "Nabíjecí port (USB-C)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x400000": {
+        "component": "Cívka bezdrátového nabíjení → cívka nebo zadní sklo",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0xA1": {
+        "component": "Baterie (obvod BMS / SWI)",
+        "note": "Výklad je v literatuře nejednoznačný — ber s rezervou.",
+        "confidence": "low",
+        "source": "iFixit Wiki"
+      }
+    },
+    "iphone14": {
+      "0x100000": {
+        "component": "Nabíjecí port (Lightning flex)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x200000": {
+        "component": "Přední senzorový modul (Face ID / True Tone / kamera)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x400000": {
+        "component": "Cívka bezdrátového nabíjení → cívka nebo zadní sklo",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x500000": {
+        "component": "Baterie (linka SWI / GSPI)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      }
+    },
+    "iphone14pro": {
+      "0x40000": {
+        "component": "Nabíjecí port (Lightning)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x80000": {
+        "component": "Přední senzorový modul (Face ID / True Tone)",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x100000": {
+        "component": "Flex tlačítka napájení",
+        "note": "POZOR: stejný kód znamená na iPhone 14 / 14 Plus nabíjecí port.",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0xA1": {
+        "component": "Baterie (vícesenzorový kód)",
+        "confidence": "low",
+        "source": "iFixit Wiki"
+      }
+    },
+    "iphone13": {
+      "0x800": {
+        "component": "Nabíjecí port (Lightning) → senzor v modulu portu",
+        "note": "Projevuje se restartem po ~3 minutách. Ověřeno na iOS 15.1.",
+        "confidence": "high",
+        "source": "iFixit Answers"
+      },
+      "0x10000": {
+        "component": "Přední kamera / senzorový modul",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      },
+      "0x40000": {
+        "component": "Baterie",
+        "confidence": "medium",
+        "source": "iFixit Wiki"
+      }
+    }
+  },
+  "unknown_sensors": {},
+  "unknown_smc_codes": {}
+}
