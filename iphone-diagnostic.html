@@ -3868,8 +3868,17 @@ function startUSBListener() {
 }
 
 function _infoReady(info) {
-  return !!(info && info.imei && info.imei !== 'Načítání...' && info.imei !== '—'
-            && info.model && info.model !== 'iPhone');
+  if (!info) return false;
+  // Placeholder ze serveru ma vzdy model 'iPhone' - dokud tam je, data
+  // z pristroje jeste nedorazila a testovat se nesmi.
+  if (!info.model || info.model === 'iPhone') return false;
+  const imeiOk = info.imei && info.imei !== 'Načítání...'
+                 && info.imei !== '—' && info.imei !== 'N/A';
+  // Wi-Fi iPady IMEI nemaji vubec. Driv se na nej cekalo i u nich, takze
+  // slot zustal navzdy na "Nacitani..." a sken se nespustil. U takovych
+  // zarizeni staci seriove cislo - podle nej se i uctuje kredit.
+  const serialOk = info.serial && info.serial !== '—' && info.serial !== 'N/A';
+  return !!(imeiOk || serialOk);
 }
 function _mkDevice(udid, info) {
   return {

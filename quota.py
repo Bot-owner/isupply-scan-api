@@ -87,18 +87,32 @@ IMEI_RE = re.compile(r"^\d{14,17}$")
 # UDID je pres USB vzdy k dispozici (bez nej se zarizeni ani neadresuje).
 # Format: 00008110-001A09583A00A01E (novy) nebo 40 hex znaku (stary).
 UDID_RE = re.compile(r"^(?:[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}|[0-9A-Fa-f]{40})$")
+# Apple seriove cislo: stare 11-12 znaku, nove (2021+) 10 nahodnych znaku.
+SERIAL_RE = re.compile(r"^[A-Z0-9]{8,14}$", re.I)
 
 
 def _device_id(data):
-    """Vrati identitu zarizeni pro uctovani a deduplikaci: primarne IMEI,
-    jinak UDID. Vraci (identita, None) nebo (None, chybova_hlaska)."""
+    """Identita zarizeni pro uctovani a deduplikaci.
+
+    Poradi je zamerne a musi byt DETERMINISTICKE - stejny kus musi vzdy dat
+    stejnou identitu, jinak by se jeden telefon uctoval dvakrat:
+      1) IMEI   - telefony; vazane na cellular modul
+      2) SN     - iPady a vse bez IMEI; je to udaj, ktery se pouziva v obchode
+                  a da se dohledat na faktuře i v GSX
+      3) UDID   - posledni zachrana, kdyz zarizeni nedohlasi ani SN
+
+    Vraci (identita, None) nebo (None, chybova_hlaska).
+    """
     imei = (data.get("imei") or "").strip()
     if IMEI_RE.match(imei):
         return imei, None
+    serial = (data.get("serial") or "").strip()
+    if SERIAL_RE.match(serial):
+        return serial.upper(), None
     udid = (data.get("udid") or "").strip()
     if UDID_RE.match(udid):
         return udid, None
-    return None, "Chybi platne IMEI ani UDID zarizeni."
+    return None, "Chybi IMEI, seriove cislo ani UDID zarizeni."
 
 
 @contextmanager

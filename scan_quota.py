@@ -50,7 +50,7 @@ def _valid_imei(imei):
 # ─────────────────────────────────────────────────────────────────────
 # 1) Autorizace PRED skenem
 # ─────────────────────────────────────────────────────────────────────
-def authorize_scan(imei, model=None, ios_version=None, udid=None):
+def authorize_scan(imei, model=None, ios_version=None, udid=None, serial=None):
     """
     Vraci dict:
       {'allowed': True,  'billed': True/False, 'scan_event_id': 123, ...}
@@ -68,6 +68,10 @@ def authorize_scan(imei, model=None, ios_version=None, udid=None):
     # TED: kdyz IMEI chybi, pouzije se UDID - pres USB je vzdy k dispozici.
     if _valid_imei(imei):
         key = str(imei)
+    elif serial and str(serial).strip() not in ("", "N/A"):
+        # iPady a Wi-Fi zarizeni bez IMEI. SN je udaj, ktery se pouziva
+        # v obchode, takze se da dohledat i zpetne na fakture.
+        key = str(serial).strip().upper()
     elif udid:
         key = str(udid).strip()
     else:
@@ -86,7 +90,7 @@ def authorize_scan(imei, model=None, ios_version=None, udid=None):
         r = requests.post(
             f"{_API_BASE}/api/scan/authorize",
             json={"licence_key": _LICENCE_KEY, "imei": key,
-                  "udid": udid or "",
+                  "udid": udid or "", "serial": serial or "",
                   "model": model, "ios_version": ios_version},
             timeout=_TIMEOUT,
         )

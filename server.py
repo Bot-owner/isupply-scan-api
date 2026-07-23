@@ -2564,6 +2564,16 @@ _TOUCH_ID_PRODUCT_TYPES = {
 _FACE_ID_ONLY = ("front_ir_camera", "true_depth_projector")
 
 
+def _is_iphone(product_type):
+    """Je to iPhone? Pravidla pro biometrii a kamery jsou postavena vyhradne
+    na iPhonech (overena na fyzickych kusech). iPad, iPod ani Apple Watch
+    do nich nespadaji - napr. iPad Air ma Touch ID v tlacitku a zadny
+    TrueDepth modul, takze by mu appka hlasila falesnou zavadu Face ID.
+    Dokud nebude iPadova tabulka overena na skutecnych kusech, biometrii
+    u nich netestujeme. Chybejici udaj je mensi vada nez vymysleny nalez."""
+    return str(product_type or "").strip().lower().startswith("iphone")
+
+
 def _has_touch_id(product_type):
     pt = str(product_type or "").strip()
     if pt in _TOUCH_ID_PRODUCT_TYPES:
@@ -2895,7 +2905,7 @@ def api_component_serials(udid):
     # klient neposle, uctuje se podle UDID. Driv takovy sken prosel zdarma.
     auth = scan_quota.authorize_scan(
         imei, model=dev_info.get('model'), ios_version=dev_info.get('ios'),
-        udid=udid)
+        udid=udid, serial=dev_info.get('serial'))
 
     if not auth.get('allowed'):
         return jsonify({
@@ -2954,7 +2964,7 @@ def api_device_info(udid):
     kazdy dotaz otevrel nove usbmux spojeni a zpusoboval chyby 183."""
     try:
         cached = _device_info_cache_get(udid)
-        if cached and cached.get('imei') not in (None, '', 'Načítání...'):
+        if _info_is_real(cached):
             return jsonify(cached), 200
         info = get_device_info(udid)
         return jsonify(info), 200
@@ -2963,6 +2973,25 @@ def api_device_info(udid):
                         'error': f'{type(exc).__name__}: {exc}'}), 200
 
 # ─── PANIC / CRASH LOGY ───────────────────────────────────────────────────
+def _info_is_real(info):
+    """Jsou to skutecna data ze zarizeni, nebo jen placeholder?
+
+    Driv se to poznavalo VYHRADNE podle IMEI. Wi-Fi iPady ale IMEI nemaji
+    vubec, takze u nich podminka nikdy neplatila: cache se nepouzila, kazdy
+    dotaz otevrel nove usbmux spojeni a slot zustal navzdy na "Nacitani...".
+    Proto se ted bere i druha moznost - skutecny nazev modelu + seriove cislo.
+    Placeholder ma model 'iPhone', takze se timhle nepropasuje.
+    """
+    if not info:
+        return False
+    if info.get('imei') not in (None, '', 'Načítání...', '—', 'N/A'):
+        return True
+    model = str(info.get('model') or '').strip()
+    serial = str(info.get('serial') or '').strip()
+    return bool(model and model != 'iPhone'
+                and serial and serial not in ('—', 'N/A'))
+
+
 def _classify_panic(bug_type, text):
     """Klasifikace příčiny panicu. Nejkonkrétnější je "Missing sensor(s): X"
     (mapování dle iPad Rehab / Jessa) – tam přímo víme, co vyměnit."""
@@ -7186,7 +7215,12 @@ async def _hardware_report_collect(udid, fresh=False):
     # Touch ID telefony (8/8 Plus/SE, 6s, 7) NEMAJI TrueDepth modul, takze IR
     # kamera ani Dot projektor se u nich necetou - hlasily by falesnou zavadu.
     _touch_id_device = _has_touch_id(_pt)
-    if _touch_id_device:
+    if not _is_iphone(_pt):
+        # iPad / jine zarizeni: biometrii zatim netestujeme (viz _is_iphone).
+        # Prazdny slovnik = sekce se v reportu vubec neobjevi, misto aby
+        # hlasila zavadu na hardwaru, ktery zarizeni nema.
+        face_id = {}
+    elif _touch_id_device:
         face_id = {"touch_id": from_comp("touch_id", "Touch ID (Mesa)")}
     else:
         # Face ID: do iPhone 12 vc. Distance senzoru; od iPhone 13 jen IR + Dot.

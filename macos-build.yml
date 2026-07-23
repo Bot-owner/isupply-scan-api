@@ -1,0 +1,136 @@
+# ============================================================================
+#  iSupply Scan — sestaveni a notarizace macOS aplikace bez vlastniho Macu
+#
+#  GitHub pujci macOS stroj, na nem se aplikace sestavi, podepise, posle
+#  Applu k notarizaci a vysledny .dmg se da stahnout z Actions.
+#
+#  SPUSTENI:
+#    - rucne:       Actions -> macOS build -> Run workflow
+#    - automaticky: git tag v1.0.7 && git push --tags
+#
+#  Bez nastavenych secrets workflow probehne jen do NEPODEPSANEHO .app.
+#  To je uzitecne samo o sobe - overis, ze se projekt na macOS vubec
+#  sestavi, jeste nez zaplatis Apple Developer ucet.
+# ============================================================================
+name: macOS build
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    # macos-14 = Apple Silicon (M1). Vysledek je aplikace pro arm64.
+    # Pro Intel Macy pridej druhy job s runs-on: macos-13.
+    runs-on: macos-14
+
+    # Secrets se v podmince "if:" pouzit primo nedaji, proto se prevedou
+    # na promenne tady. Job-level env se vyhodnocuje jeste pred kroky.
+    env:
+      HAS_CERT: ${{ secrets.MACOS_CERTIFICATE != '' && secrets.DEVELOPER_ID != '' }}
+      HAS_NOTARY: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+
+    steps:
+      - name: Stahnout zdrojaky
+        uses: actions/checkout@v4
+
+      - name: Nastavit Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Nainstalovat zavislosti
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller flask flask-cors PyJWT cryptography \
+                      pymobiledevice3 readchar requests pywebview pyobjc
+
+      # ── Podpisovy certifikat ─────────────────────────────────────────
+      # Certifikat je v secrets jako base64 (.p12). Importuje se do DOCASNE
+      # klicenky, ktera zanikne spolu se strojem - na runneru po nas nic
+      # nezustane a certifikat se nikam nezapise natrvalo.
+      - name: Naimportovat podpisovy certifikat
+        if: env.HAS_CERT == 'true'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+        run: |
+          set -euo pipefail
+          CERT_PATH="$RUNNER_TEMP/cert.p12"
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          # Heslo ke klicence je jednorazove, nikde se neuklada.
+          KC_PASS="$(openssl rand -base64 24)"
+
+          echo -n "$MACOS_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          security create-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PASS" "$KEYCHAIN"
+          security import "$CERT_PATH" -k "$KEYCHAIN" \
+            -P "$MACOS_CERTIFICATE_PWD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KC_PASS" "$KEYCHAIN" >/dev/null
+          # Docasnou klicenku pridat do prohledavaneho seznamu, jinak ji
+          # codesign nenajde.
+          security list-keychain -d user -s "$KEYCHAIN" login.keychain-db
+
+          rm -f "$CERT_PATH"
+          echo "Dostupne podpisove identity:"
+          security find-identity -v -p codesigning
+
+      # ── Vlastni build ────────────────────────────────────────────────
+      - name: Sestavit aplikaci
+        env:
+          DEVELOPER_ID: ${{ secrets.DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          chmod +x build_macos.sh
+          if [ "$HAS_CERT" = "true" ]; then
+            echo "== Podepsany build =="
+            ./build_macos.sh --sign
+          else
+            echo "== Nepodepsany build (chybi secrets) =="
+            ./build_macos.sh
+          fi
+
+      # ── Kontrola ─────────────────────────────────────────────────────
+      # Tohle je hlavni duvod, proc buildit v CI: dozvis se HNED, jestli by
+      # aplikace u zakaznika naskocila, nebo hlasila "nedoveryhodny vyvojar".
+      - name: Overit podpis a Gatekeeper
+        continue-on-error: true
+        run: |
+          APP="dist/iSupply Scan.app"
+          [ -d "$APP" ] || { echo "aplikace nevznikla"; exit 0; }
+          echo "── codesign ──"
+          codesign -dv --verbose=4 "$APP" 2>&1 || true
+          echo ""
+          echo "── Gatekeeper (ocekavane: accepted, source=Notarized Developer ID) ──"
+          spctl -a -vvv -t install "$APP" 2>&1 || true
+
+      - name: Zabalit vysledek
+        run: |
+          mkdir -p out
+          if [ -f dist/iSupply_Scan.dmg ]; then
+            cp dist/iSupply_Scan.dmg out/
+          elif [ -d "dist/iSupply Scan.app" ]; then
+            ( cd dist && zip -qry ../out/iSupply_Scan_unsigned.zip "iSupply Scan.app" )
+          fi
+          ls -lh out/
+
+      - name: Nabidnout ke stazeni
+        uses: actions/upload-artifact@v4
+        with:
+          name: isupply-scan-macos
+          path: out/
+          retention-days: 30
+
+      # Build z tagu se rovnou privesi k releasu - odtud muze web stahovat.
+      - name: Prilozit k releasu
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
