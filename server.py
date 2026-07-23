@@ -711,6 +711,12 @@ def resolve_model(product_type, sales_model=None):
     if product_type in APPLE_MODELS:
         name, a_number = APPLE_MODELS[product_type]
         return name, a_number
+    if product_type in IPAD_MODELS:
+        # A-cislo (A2436 apod.) je natistene na zadni strane a lisi se podle
+        # konektivity. Dokud ho pro dany model nemame OVERENE z fyzickeho kusu,
+        # vracime 'N/A' - drive se sem dosazoval ModelNumber (MNXR3), coz je
+        # part number, ne A-cislo, a v karte to pusobilo jako spatny udaj.
+        return IPAD_MODELS[product_type][0], (IPAD_A_NUMBERS.get(product_type) or 'N/A')
     # Pokud není v databázi, použij SalesModel nebo ProductType
     if sales_model and sales_model not in ('N/A', '', None):
         return product_type, sales_model
@@ -1134,6 +1140,10 @@ def get_device_info(udid):
             # (missing/False = OFF – ověřeno na odemčeném kuse; ON ověřit na zamčeném)
             'icloud_lock':    bool(vals.get('FMiPAccountExists') or vals.get('FMiPActivationLockIsActivatable')),
             # Pro UI: kdyz barvu neznáme, kod + nabidka k jednomu kliknuti.
+            # Biometrie: 'face' / 'touch' / None. Frontend podle toho popisuje
+            # radek testu - u iPadu se nedá odvodit z nazvu modelu.
+            'biometry':       (_ipad_biometry(_pt_color) if _is_ipad(_pt_color)
+                               else ('touch' if _has_touch_id(_pt_color) else 'face')),
             'color_code':     _color_code,
             'color_options':  _color_options,
             'model_number':   _model_number,
@@ -2568,6 +2578,107 @@ _TOUCH_ID_PRODUCT_TYPES = {
 _FACE_ID_ONLY = ("front_ir_camera", "true_depth_projector")
 
 
+# ─── IPADY ───────────────────────────────────────────────────────────────────
+# ProductType -> (citelny nazev, biometrie).
+# Biometrie rozhoduje, co se u kusu vubec testuje:
+#   "face"  = TrueDepth modul (vsechny iPad Pro od 2018)
+#   "touch" = Touch ID v tlacitku nebo v home buttonu
+# POZOR: tohle je referencni tabulka, ne fyzicky overena data jako barvy.
+# Kdyz u nejakeho kusu nazev nesedi, oprav radek - projevi se hned.
+# Fyzicky overeno: iPad14,5 (J620AP, t8112, MNXR3, SN FVC65H62X4) 2026-07-23.
+IPAD_MODELS = {
+    # ── iPad Pro (Face ID) ──
+    "iPad8,1": ("iPad Pro 11\" (1. gen)", "face"),
+    "iPad8,2": ("iPad Pro 11\" (1. gen)", "face"),
+    "iPad8,3": ("iPad Pro 11\" (1. gen)", "face"),
+    "iPad8,4": ("iPad Pro 11\" (1. gen)", "face"),
+    "iPad8,5": ("iPad Pro 12,9\" (3. gen)", "face"),
+    "iPad8,6": ("iPad Pro 12,9\" (3. gen)", "face"),
+    "iPad8,7": ("iPad Pro 12,9\" (3. gen)", "face"),
+    "iPad8,8": ("iPad Pro 12,9\" (3. gen)", "face"),
+    "iPad8,9": ("iPad Pro 11\" (2. gen)", "face"),
+    "iPad8,10": ("iPad Pro 11\" (2. gen)", "face"),
+    "iPad8,11": ("iPad Pro 12,9\" (4. gen)", "face"),
+    "iPad8,12": ("iPad Pro 12,9\" (4. gen)", "face"),
+    "iPad13,4": ("iPad Pro 11\" (3. gen, M1)", "face"),
+    "iPad13,5": ("iPad Pro 11\" (3. gen, M1)", "face"),
+    "iPad13,6": ("iPad Pro 11\" (3. gen, M1)", "face"),
+    "iPad13,7": ("iPad Pro 11\" (3. gen, M1)", "face"),
+    "iPad13,8": ("iPad Pro 12,9\" (5. gen, M1)", "face"),
+    "iPad13,9": ("iPad Pro 12,9\" (5. gen, M1)", "face"),
+    "iPad13,10": ("iPad Pro 12,9\" (5. gen, M1)", "face"),
+    "iPad13,11": ("iPad Pro 12,9\" (5. gen, M1)", "face"),
+    "iPad14,3": ("iPad Pro 11\" (4. gen, M2)", "face"),
+    "iPad14,4": ("iPad Pro 11\" (4. gen, M2)", "face"),
+    "iPad14,5": ("iPad Pro 12,9\" (6. gen, M2)", "face"),
+    "iPad14,6": ("iPad Pro 12,9\" (6. gen, M2)", "face"),
+    "iPad16,3": ("iPad Pro 11\" (M4)", "face"),
+    "iPad16,4": ("iPad Pro 11\" (M4)", "face"),
+    "iPad16,5": ("iPad Pro 13\" (M4)", "face"),
+    "iPad16,6": ("iPad Pro 13\" (M4)", "face"),
+    # ── iPad Air (Touch ID) ──
+    "iPad11,3": ("iPad Air (3. gen)", "touch"),
+    "iPad11,4": ("iPad Air (3. gen)", "touch"),
+    "iPad13,1": ("iPad Air (4. gen)", "touch"),
+    "iPad13,2": ("iPad Air (4. gen)", "touch"),
+    "iPad13,16": ("iPad Air (5. gen, M1)", "touch"),
+    "iPad13,17": ("iPad Air (5. gen, M1)", "touch"),
+    "iPad14,8": ("iPad Air 11\" (M2)", "touch"),
+    "iPad14,9": ("iPad Air 11\" (M2)", "touch"),
+    "iPad14,10": ("iPad Air 13\" (M2)", "touch"),
+    "iPad14,11": ("iPad Air 13\" (M2)", "touch"),
+    # ── iPad mini (Touch ID) ──
+    "iPad11,1": ("iPad mini (5. gen)", "touch"),
+    "iPad11,2": ("iPad mini (5. gen)", "touch"),
+    "iPad14,1": ("iPad mini (6. gen)", "touch"),
+    "iPad14,2": ("iPad mini (6. gen)", "touch"),
+    "iPad16,1": ("iPad mini (A17 Pro)", "touch"),
+    "iPad16,2": ("iPad mini (A17 Pro)", "touch"),
+    # ── iPad zakladni (Touch ID) ──
+    "iPad7,11": ("iPad (7. gen)", "touch"),
+    "iPad7,12": ("iPad (7. gen)", "touch"),
+    "iPad11,6": ("iPad (8. gen)", "touch"),
+    "iPad11,7": ("iPad (8. gen)", "touch"),
+    "iPad12,1": ("iPad (9. gen)", "touch"),
+    "iPad12,2": ("iPad (9. gen)", "touch"),
+    "iPad13,18": ("iPad (10. gen)", "touch"),
+    "iPad13,19": ("iPad (10. gen)", "touch"),
+}
+
+
+# iPady s ultrasirokou zadni kamerou. OVERENO 2026-07-23 na iPad14,5:
+# AppleH13CamIn nese BackSuperWideCameraModuleSerialNumString = F0W323300WNLV412J,
+# tedy uplne stejny klic jako iPhony. iPad Pro z roku 2018 (iPad8,1-8,8) ma
+# jen jednu zadni kameru, proto v seznamu neni. Air, mini ani zakladni iPad
+# ultrasirokou nemaji vubec.
+_IPAD_ULTRAWIDE = {
+    "iPad8,9", "iPad8,10", "iPad8,11", "iPad8,12",           # Pro 2020
+    "iPad13,4", "iPad13,5", "iPad13,6", "iPad13,7",          # Pro M1 11"
+    "iPad13,8", "iPad13,9", "iPad13,10", "iPad13,11",        # Pro M1 12,9"
+    "iPad14,3", "iPad14,4", "iPad14,5", "iPad14,6",          # Pro M2
+    "iPad16,3", "iPad16,4", "iPad16,5", "iPad16,6",          # Pro M4
+}
+
+
+# A-cisla iPadu. Doplnuji se z FYZICKY OVERENYCH kusu - je natistene na zadni
+# strane pristroje. Zamerne tu nejsou vypsana vsechna zpameti: A-cislo se lisi
+# podle konektivity i regionu a spatny udaj je u nastroje na dolozitelnost
+# horsi nez zadny. Kdyz model chybi, karta ukaze 'N/A'.
+IPAD_A_NUMBERS = {
+    # "iPad14,5": "A2436",   # doplnit podle stitku na zadni strane
+}
+
+
+def _ipad_biometry(product_type):
+    """'face' / 'touch' pro znamy iPad, jinak None (netestovat)."""
+    rec = IPAD_MODELS.get(str(product_type or "").strip())
+    return rec[1] if rec else None
+
+
+def _is_ipad(product_type):
+    return str(product_type or "").strip().lower().startswith("ipad")
+
+
 def _is_iphone(product_type):
     """Je to iPhone? Pravidla pro biometrii a kamery jsou postavena vyhradne
     na iPhonech (overena na fyzickych kusech). iPad, iPod ani Apple Watch
@@ -2626,8 +2737,27 @@ def _component_applicable(comp_key, product_type):
     # vysla jako "mozna zavada". Dokud nebude iPadova mapa overena na
     # fyzickych kusech, tyhle komponenty u nich netestujeme.
     if not _is_iphone(product_type):
-        if comp_key in _FACE_ID_ONLY or comp_key in (
-                "touch_id", "tele_camera", "ultrawide_camera"):
+        # ── iPad ── OVERENO 2026-07-23 dumpem z iPad14,5 (Pro 12,9" M2):
+        # kamery, displej i baterie se ctou UPLNE STEJNYMI klici jako
+        # u iPhonu (AppleH13CamIn / AppleCLCD2 / AppleSmartBattery).
+        # Nize jsou proto jen vyjimky - dily, ktere iPad fyzicky NEMA.
+        bio = _ipad_biometry(product_type)
+        if comp_key in _FACE_ID_ONLY:
+            return bio == "face"
+        if comp_key == "touch_id":
+            return bio == "touch"
+        if comp_key == "ultrawide_camera":
+            return str(product_type).strip() in _IPAD_ULTRAWIDE
+        if comp_key == "tele_camera":
+            # Zadny iPad nema teleobjektiv.
+            return False
+        if comp_key == "taptic_engine":
+            # iPady nemaji Taptic Engine - uzel AppleHapticsSupportLEAP
+            # na iPad14,5 vubec neexistuje (overeno dumpem).
+            return False
+        if comp_key == "ambient_light_sensor":
+            # ALS na iPadu neni v uzlu "product" (na iPhonech ano) a jiny
+            # verejny zdroj neznam. Netestovat, dokud nebude overeno.
             return False
         return True
     touch = _has_touch_id(product_type)
@@ -7138,6 +7268,27 @@ def _hw_field(label, value, source=None):
         out["source"] = source
     return out
 
+def _has_cellular(values):
+    """Ma zarizeni modem? OVERENO 2026-07-23 na iPad14,5 (Wi-Fi):
+        TelephonyCapability = False
+        BasebandStatus      = "NoTelephonyCapabilty"   (Apple to ma bez 'i')
+    Wi-Fi iPad nema IMEI ani firmware modemu - nejsou to zavady, ten hardware
+    tam proste neni. Rozhodujeme podle lockdownu, NE podle ProductType:
+    dvojice jako iPad14,5 / iPad14,6 se lisi prave konektivitou a spolehat
+    na to, ktere cislo je ktere, by byl odhad.
+    """
+    def g(*keys):
+        return _component_serial_find(values, keys)
+    tc = values.get("TelephonyCapability")
+    if isinstance(tc, bool):
+        return tc
+    status = str(g("BasebandStatus") or "")
+    if status and "notelephony" in status.lower().replace(" ", ""):
+        return False
+    # Kdyz lockdown nic nerekne, rozhodne pritomnost IMEI.
+    return bool(g("InternationalMobileEquipmentIdentity", "IMEI"))
+
+
 def _modem_firmware_fields(values):
     """Modem / baseband firmware z lockdown all_values (root doména).
     BasebandVersion = verze firmwaru modemu. 'modem_ok' je ODVOZENÝ proxy
@@ -7149,6 +7300,10 @@ def _modem_firmware_fields(values):
     bb_status  = g("BasebandStatus")
     bb_chipid  = g("BasebandChipID")
     iccid      = g("IntegratedCircuitCardIdentity", "ICCID")
+    # Wi-Fi zarizeni modem nema. Cele pole vynechame - chybejici firmware
+    # modemu u Wi-Fi iPadu neni zavada, jen tam ten hardware neni.
+    if not _has_cellular(values):
+        return {}
     modem_ok   = bool(bb_version)
     return {
         "baseband_version": _hw_field("Firmware modemu (Baseband)", bb_version, "lockdown"),
@@ -7212,16 +7367,24 @@ async def _hardware_report_collect(udid, fresh=False):
         _report_model, _report_anum = None, None
 
     # ── IDENTITA ZAŘÍZENÍ ──
+    # IMEI / IMEI2 / MEID maji smysl jen u zarizeni s modemem. Wi-Fi iPad je
+    # nema vubec, takze by se v reportu ukazovala prazdna pole jako by chybela.
+    _cellular = _has_cellular(values)
     device = {
         "serial_number": _hw_field("Sériové číslo", lv("SerialNumber"), "lockdown"),
-        "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
-        "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
-        "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
         "product_type": _hw_field("ProductType", lv("ProductType"), "lockdown"),
         "model": _hw_field("Model", _report_model or cached.get("model") or lv("ProductType"), "resolved"),
         "a_number": _hw_field("Model number (A)", cached.get("a_number") or _report_anum, "resolved"),
         "ios": _hw_field("iOS", lv("ProductVersion"), "lockdown"),
         "build": _hw_field("Build", lv("BuildVersion"), "lockdown"),
+        "connectivity": _hw_field("Konektivita",
+                                  "Wi-Fi + Cellular" if _cellular else "Wi-Fi",
+                                  "lockdown"),
+        **({
+            "imei": _hw_field("IMEI", lv("InternationalMobileEquipmentIdentity"), "lockdown"),
+            "imei2": _hw_field("IMEI2", lv("InternationalMobileEquipmentIdentity2", "SecondaryMobileEquipmentIdentifier"), "lockdown"),
+            "meid": _hw_field("MEID", lv("MobileEquipmentIdentifier"), "lockdown"),
+        } if _cellular else {}),
     }
 
     # ── KAMERY (sériová čísla všech kamer vedle sebe – ať se hezky hledá) ──
@@ -7253,10 +7416,19 @@ async def _hardware_report_collect(udid, fresh=False):
     # kamera ani Dot projektor se u nich necetou - hlasily by falesnou zavadu.
     _touch_id_device = _has_touch_id(_pt)
     if not _is_iphone(_pt):
-        # iPad / jine zarizeni: biometrii zatim netestujeme (viz _is_iphone).
-        # Prazdny slovnik = sekce se v reportu vubec neobjevi, misto aby
-        # hlasila zavadu na hardwaru, ktery zarizeni nema.
-        face_id = {}
+        # iPad: biometriku rozlisujeme podle tabulky IPAD_MODELS.
+        # Neznamy iPad -> prazdny slovnik, sekce se v reportu vubec neobjevi.
+        # Falesna zavada je horsi nez chybejici udaj.
+        _bio = _ipad_biometry(_pt)
+        if _bio == "touch":
+            face_id = {"touch_id": from_comp("touch_id", "Touch ID (Mesa)")}
+        elif _bio == "face":
+            face_id = {
+                "true_depth_projector": from_comp("true_depth_projector", "Dot projektor (Lattice)"),
+                "front_ir_camera": from_comp("front_ir_camera", "IR kamera"),
+            }
+        else:
+            face_id = {}
     elif _touch_id_device:
         face_id = {"touch_id": from_comp("touch_id", "Touch ID (Mesa)")}
     else:

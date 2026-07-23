@@ -1387,14 +1387,24 @@ function doLogout() {
 
 // ═══ VIEW SWITCH ═══
 function switchView(v) {
-  document.getElementById('view-diag').classList.toggle('active', v === 'diag');
-  document.getElementById('view-db').classList.toggle('active', v === 'db');
-  document.getElementById('view-sw').classList.toggle('active', v === 'sw');
-  document.getElementById('btn-diag').classList.toggle('active', v === 'diag');
-  document.getElementById('btn-db').classList.toggle('active', v === 'db');
-  document.getElementById('btn-sw').classList.toggle('active', v === 'sw');
+  // POZOR: tlacitko 'btn-sw' v hlavicce NENI (pohled Software Tool se otevira
+  // jinudy). Driv se na nej sahalo primo, takze getElementById vratil null,
+  // cely switchView spadl na TypeError JESTE PRED renderDatabase() - a
+  // tabulka databaze se proto nikdy neprekreslila. Paticka pritom ukazovala
+  // spravny pocet, protoze tu plni updateStats() odjinud.
+  // Proto se ted na kazdy prvek saha obezretne.
+  const set = (id, on) => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('active', on);
+  };
+  set('view-diag', v === 'diag');
+  set('view-db',   v === 'db');
+  set('view-sw',   v === 'sw');
+  set('btn-diag',  v === 'diag');
+  set('btn-db',    v === 'db');
+  set('btn-sw',    v === 'sw');
   if (v === 'db') renderDatabase();
-  if (v === 'sw') swInit();
+  if (v === 'sw' && typeof swInit === 'function') swInit();
 }
 
 // ═══ TESTS ═══
@@ -1417,7 +1427,8 @@ function getTests(device) {
   // overena na fyzickych kusech (iPad Air ma Touch ID v tlacitku, iPad Pro
   // Face ID - a mapovani jejich uzlu zatim nemame). Radek proto vynechame
   // uplne, at netvrdi ani "funkcni", ani "mozna zavada".
-  if (device && device.product_type && !/^iphone/i.test(device.product_type)) {
+  if (device && device.product_type && !/^iphone/i.test(device.product_type)
+      && device.biometry !== 'face' && device.biometry !== 'touch') {
     defs = defs.filter(d => d.id !== 'touchid');
   }
   return defs.map(d => ({...d, name: t(d.tkey)}));
@@ -1588,8 +1599,17 @@ function renderBody(slot) {
   else if (slot.state !== 'empty' && slot.state !== 'connected') {
     testsHTML = '<div class="test-list">' + getTests(d).map(tst => {
       const r = slot.tests.find(x=>x.id===tst.id);
-      const tname = tst.id === 'touchid' ? biometryLabel(d.model) : tst.name;
-      const ticon = tst.id === 'touchid' ? biometryIcon(d.model) : tst.icon;
+      const bio = d.biometry;   // 'face' / 'touch' ze serveru (zna i iPady)
+      const tname = tst.id === 'touchid'
+          ? (bio === 'touch' ? 'Touch ID' : bio === 'face' ? 'Face ID' : biometryLabel(d.model))
+          : tst.name;
+      const ticon = tst.id === 'touchid'
+          ? (bio === 'touch'
+              ? '<svg class="ti"><use href="#i-touchid"/></svg>'
+              : bio === 'face'
+                ? '<svg class="ti"><use href="#i-face"/></svg>'
+                : biometryIcon(d.model))
+          : tst.icon;
       if (!r) return `<div class="test-item pending"><span class="test-name">${ticon} ${tname}</span><span class="test-value pending">—</span></div>`;
       let val;
       if (tst.id==='battery' && (r.status==='pass'||r.status==='warn')) {
@@ -3916,7 +3936,8 @@ function _mkDevice(udid, info) {
     battery: info.battery || 0, battery_health: info.battery_health || 0,
     battery_cycles: info.battery_cycles || 0, icloud: info.icloud_lock || false,
     // Pro prirazeni barvy: kod z telefonu + nabidka moznosti pro dany model.
-    product_type: info.product_type || '', color_code: info.color_code || null,
+    product_type: info.product_type || '', biometry: info.biometry || null,
+    color_code: info.color_code || null,
     color_options: info.color_options || [], model_number: info.model_number || '',
     changed: [], udid,
   };
@@ -3936,17 +3957,27 @@ async function handleDeviceConnected(udid, info) {
     s.state = 'connected'; s.device = { udid, model: 'iPhone', imei: 'Načítání...' };
     s.tests = []; s.progress = 0;
     render();
-    for (let i = 0; i < 20; i++) {                 // ~40 s pokusů
+    // Zkousime dokola. Kdyz je zarizeni zamcene nebo ceka na "Trust", nema
+    // smysl to po 40 s vzdat - technik ho za chvili odemkne a slot se ma
+    // chytit sam. Proto se u techhle duvodu zkousi dal (az 10 minut),
+    // zatimco u ostatnich problemu zustava puvodnich ~40 s.
+    const START = Date.now();
+    const CEKA_NA_OBSLUHU = () => s.blocked &&
+          (s.blocked.code === 'locked' || s.blocked.code === 'trust');
+    for (let i = 0; ; i++) {
       if (udidToSlot[udid] === undefined) return;   // mezitím odpojeno
-      await new Promise(r => setTimeout(r, 2000));
+      const limit = CEKA_NA_OBSLUHU() ? 600000 : 40000;
+      if (Date.now() - START > limit) break;
+      await new Promise(r => setTimeout(r, CEKA_NA_OBSLUHU() ? 3000 : 2000));
       try {
         const r = await fetchJSON(`/api/device-info/${encodeURIComponent(udid)}`, {}, 30000);
-        if (_infoReady(r)) { info = r; s.blocked = null; break; }
+        if (_infoReady(r)) { info = r; s.blocked = null; render(); break; }
         // Zarizeni neco aktivne brani (zamek, nepotvrzeny Trust, obsazene USB).
         // Driv slot jen visel na "Nacitani..." a technik nemel jak poznat,
         // KTERY kus ze stolu potrebuje obsluhu. Ted to rovnou napiseme.
+        const drive = s.blocked && s.blocked.code;
         s.blocked = (r && r.blocked) || null;
-        if (s.blocked) render();
+        if (s.blocked && s.blocked.code !== drive) render();
       } catch (e) {}
     }
     if (!_infoReady(info)) return;   // pořád nic – nech slot v "Načítání…", NETESTUJ
