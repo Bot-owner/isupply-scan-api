@@ -130,6 +130,74 @@ def message_box(text, title="iSupply Scan", style=0x40):
 
 
 # ─── 3) Server na pozadi ─────────────────────────────────────────────
+# Oficialni instalator WebView2 od Microsoftu (trvaly odkaz).
+WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+
+def webview2_version():
+    """Verze nainstalovaneho WebView2 Runtime, nebo None.
+
+    Okno aplikace vykresluje WebView2 - tedy zabudovany Microsoft Edge.
+    Kdyz na stroji chybi, okno se otevre PRAZDNE (bila obrazovka) a nic
+    nenapovi, co se deje. Zaznamenano na notebooku HP, kde runtime nebyl
+    nikdy doinstalovany. Proto to overujeme drive, nez okno otevreme.
+    """
+    if not IS_WIN:
+        return "n/a"
+    try:
+        import winreg
+    except ImportError:
+        return None
+    # Pozor: GUID obsahuje slozene zavorky, takze zadny .format() ani f-string -
+    # bralo by je jako zastupne symboly. Skladame prostym spojenim.
+    konec = "Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_GUID
+    mista = [
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\" + konec),
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\" + konec),
+        (winreg.HKEY_CURRENT_USER,  "SOFTWARE\\" + konec),
+    ]
+    for root, cesta in mista:
+        try:
+            with winreg.OpenKey(root, cesta) as key:
+                verze, _ = winreg.QueryValueEx(key, "pv")
+                if verze and verze != "0.0.0.0":
+                    return verze
+        except OSError:
+            continue
+    return None
+
+
+def handle_missing_webview2():
+    """Runtime chybi. NEBLOKUJEME praci - UI otevreme v prohlizeci, aby technik
+    mohl testovat hned - a zaroven nabidneme doinstalovani."""
+    print("[launcher] WebView2 Runtime NENALEZEN -> nahradni rezim v prohlizeci")
+    import webbrowser
+    webbrowser.open(URL)
+    message_box(
+        "Na tomto počítači chybí komponenta Microsoft WebView2.\n\n"
+        "Bez ní se okno aplikace nezobrazí (zůstane bílé).\n\n"
+        "Aplikace se proto otevřela ve vašem prohlížeči a můžete\n"
+        "rovnou pracovat.\n\n"
+        "Trvalé řešení: doinstalujte WebView2 (zdarma, od Microsoftu).\n"
+        "Po kliknutí na OK se otevře stránka se stažením.\n\n"
+        "Po instalaci aplikaci restartujte — otevře se už ve vlastním okně.",
+        "Chybí Microsoft WebView2", 0x30)
+    try:
+        webbrowser.open(WEBVIEW2_URL)
+    except Exception as exc:
+        print(f"[launcher] stranku se stazenim nelze otevrit: {exc}")
+
+
+def check_port_free(port=PORT):
+    """Neposlouchá už nekdo na nasem portu? Kdyz ano, prohlizec by se pripojil
+    k CIZI aplikaci a okno by zustalo bile nebo ukazalo neco jineho."""
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(("127.0.0.1", port)) != 0
+
+
 def start_server(server):
     def _run():
         try:
@@ -257,6 +325,14 @@ def main():
     else:
         print("[launcher] macOS: usbmuxd je vestaveny, ovladac se neresi")
 
+    if not check_port_free():
+        message_box(
+            f"Na portu {PORT} už něco poslouchá.\n\n"
+            "Nejspíš už jedna instance iSupply Scan běží, nebo port zabral\n"
+            "jiný program. Zavřete druhou instanci a zkuste to znovu.\n\n"
+            "Kdyby problém trval, restartujte počítač.",
+            "Port je obsazený", 0x30)
+
     server.init_db()
     threading.Thread(target=server.usb_monitor_thread, daemon=True).start()
 
@@ -267,6 +343,52 @@ def main():
         sys.exit(1)
 
     print(f"  UI: {URL}")
+
+    # ── Nouzovy rezim: otevrit v prohlizeci misto vlastniho okna ──────
+    # Na nekterych strojich (zaznamenano na HP) zustane okno WebView2 bile:
+    # server bezi, ale obsah se do nej nedostane. Byva to zastaraly nebo
+    # poskozeny WebView2, ovladac grafiky, nebo firemni proxy bez vyjimky
+    # pro localhost. Aby technik nezustal stat, staci vedle aplikace vytvorit
+    # prazdny soubor PROHLIZEC.txt - UI se pak otevre v defaultnim prohlizeci.
+    if os.path.exists(os.path.join(_base_dir(), "PROHLIZEC.txt")):
+        print("[launcher] nalezen PROHLIZEC.txt -> otviram UI v prohlizeci")
+        import webbrowser
+        webbrowser.open(URL)
+        message_box(
+            "Aplikace běží v prohlížeči.\n\n"
+            f"Adresa: {URL}\n\n"
+            "Toto okno nechte otevřené — po jeho zavření se aplikace ukončí.",
+            "iSupply Scan — režim prohlížeče", 0x40)
+        shutdown()
+        return
+
+    # Bila obrazovka byva casto o hardwarovou akceleraci. Vypnout ji jde
+    # promennou prostredi, kterou WebView2 cte pri startu; nastavujeme ji
+    # jen kdyz si o to nekdo rekne souborem BEZ_GPU.txt, protoze jinak by
+    # to zbytecne zpomalilo vsechny ostatni stroje.
+    if os.path.exists(os.path.join(_base_dir(), "BEZ_GPU.txt")):
+        os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+            "--disable-gpu --disable-software-rasterizer")
+        print("[launcher] nalezen BEZ_GPU.txt -> WebView2 bez hardwarove akcelerace")
+
+    # ── WebView2 ─────────────────────────────────────────────────────
+    # Okno vykresluje WebView2 (zabudovany Edge). Kdyz chybi, okno by se
+    # otevrelo PRAZDNE a nic by neporadilo, co delat - presne to se stalo na
+    # notebooku HP. Kontrolujeme proto DRIV, nez okno zkusime otevrit, a misto
+    # bile plochy nabidneme reseni + rovnou spustime UI v prohlizeci.
+    if IS_WIN:
+        _wv = webview2_version()
+        if _wv:
+            print(f"[launcher] WebView2 Runtime {_wv}")
+        else:
+            handle_missing_webview2()
+            try:
+                while True:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                pass
+            shutdown()
+            return
 
     try:
         import webview
