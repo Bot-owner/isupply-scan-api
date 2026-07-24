@@ -3266,9 +3266,15 @@ def _parse_sensor_arrays(raw):
     Vraci [(pole, index, desitkove, hex), ...] - nuly se preskakuji,
     ty znamenaji "senzor v poradku".
     """
+    # V .ips souboru je panicString ULOZENY V JSONU, takze konce radku jsou
+    # escapovane jako dvojznak \n, ne skutecne nove radky. Bez tehle
+    # normalizace se "S.sensor array" nikdy nenajde a kazdy panic skonci
+    # jako obecne "Panic (typ 210)".
+    text = str(raw or "")
+    text = text.replace("\\r\\n", "\n").replace("\\n", "\n").replace("\\t", " ")
     out = []
     for m in re.finditer(
-            r'([SF])\.sensor\s+array[^\n]*\n\s*([0-9,\s]+)', raw or "", re.IGNORECASE):
+            r'([SF])\.sensor\s+array[^\n]*\n\s*([0-9,\s]+)', text, re.IGNORECASE):
         pole = m.group(1).upper()
         for idx, kus in enumerate(m.group(2).split(",")):
             kus = kus.strip()
@@ -3403,7 +3409,8 @@ def analyze_panic(raw, summary=None, product_type=""):
     # b) hodnoty ze sensor array (desitkove -> hex, podle modelu)
     group = _smc_group(product_type)
     table = (data.get("smc_codes") or {}).get(group or "", {})
-    for pole, idx, dec, hx in _parse_sensor_arrays(raw)[:4]:
+    for pole, idx, dec, hx in (_parse_sensor_arrays(summary or "")
+                               or _parse_sensor_arrays(raw))[:4]:
         rec = table.get(hx) if group else None
         polozka = {"code": hx, "decimal": dec, "array": f"{pole}.sensor[{idx}]"}
         if rec:
@@ -3466,7 +3473,9 @@ def _classify_panic(bug_type, text, summary=None, product_type=""):
     # 0x200000 je na iPhone 15 civka bezdratoveho nabijeni, na iPhone 14
     # predni senzorovy modul; 0x100000 je na 14 nabijeci port, ale na 14 Pro
     # flex tlacitka napajeni. Bez znameho modelu proto NEMAPUJEME vubec.
-    kody = _parse_sensor_arrays(raw)
+    # Hledame v rozkodovanem panicStringu i v surovem textu podle toho,
+    # co se z .ips podarilo vytahnout.
+    kody = _parse_sensor_arrays(summary or "") or _parse_sensor_arrays(raw)
     if kody:
         group = _smc_group(product_type)
         table = (_load_panic_sensors().get("smc_codes") or {}).get(group or "", {})
@@ -3533,6 +3542,24 @@ async def _panic_logs_collect(udid):
     async def _m(x):
         return await x if inspect.isawaitable(x) else x
     panics = []; errors = {}
+
+    # Model MUSI byt znamy, jinak nejde hex kody ze sensor array vylozit -
+    # stejny kod znamena na jine generaci jiny dil.
+    product_type = ""
+    try:
+        _pt = ld.get_value(key='ProductType')
+        if inspect.isawaitable(_pt):
+            _pt = await _pt
+        product_type = str(_pt or "").strip()
+    except Exception:
+        try:
+            _vals = await _m(ld.all_values)
+            product_type = str((_vals or {}).get('ProductType') or '').strip()
+        except Exception:
+            pass
+    if product_type:
+        print(f"  [panic] model {product_type}")
+
     try:
         from pymobiledevice3.services.crash_reports import CrashReportsManager
         mgr = (await CrashReportsManager(ld)) if inspect.iscoroutinefunction(CrashReportsManager) else CrashReportsManager(ld)
@@ -3576,7 +3603,7 @@ async def _panic_logs_collect(udid):
                         except Exception as e:
                             errors[f'read:{name}'] = f'{type(e).__name__}: {e}'
             if content:
-                panics.append(_parse_ips(name, content))
+                panics.append(_parse_ips(name, content, product_type))
     except Exception as e:
         errors['crash_reports'] = f'{type(e).__name__}: {e}'
     return {'ok': True, 'udid': udid, 'count': len(panics), 'panics': panics, 'errors': errors}
