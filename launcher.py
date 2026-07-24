@@ -404,9 +404,23 @@ def main():
         shutdown()
         return
 
+    # Okno se otevira co nejvetsi. Pri 1480x940 se karty slotu nevesly a
+    # technik v nich musel scrollovat, coz je u nastroje, kde ma vsech deset
+    # slotu videt najednou, k nicemu.
+    sirka, vyska = 1760, 1060
+    try:
+        import ctypes as _c
+        _u = _c.windll.user32 if IS_WIN else None
+        if _u:
+            _u.SetProcessDPIAware()
+            sirka = max(1280, min(int(_u.GetSystemMetrics(0) * 0.94), 2400))
+            vyska = max(800, min(int(_u.GetSystemMetrics(1) * 0.92), 1500))
+    except Exception:
+        pass
+
     window = webview.create_window(
-        APP_NAME, URL, width=1480, height=940,
-        min_size=(1100, 700), text_select=True)
+        APP_NAME, URL, width=sirka, height=vyska,
+        min_size=(1200, 780), text_select=True)
     try:
         window.events.closed += shutdown
     except Exception:

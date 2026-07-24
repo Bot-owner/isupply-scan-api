@@ -194,6 +194,7 @@
   .progress-bar{height:100%;background:var(--pink);border-radius:2px;transition:width .3s ease}
   .result-summary{margin-top:8px;padding:8px;border-radius:8px;text-align:center}
   .result-summary.pass{background:var(--green-dim);border:1px solid rgba(22,163,74,.2)}
+  .result-summary.warn{background:var(--amber-dim,#fffbeb);border-color:var(--amber,#f59e0b);color:#b45309}
   .result-summary.fail{background:var(--red-dim);border:1px solid rgba(220,38,38,.18)}
   .result-grade{font-family:var(--mono);font-size:20px;font-weight:700;line-height:1}
   .result-grade.pass{color:var(--green)}
@@ -714,6 +715,9 @@ const LANGS = {
 
 const T = {
   en: {
+    rs_warn_many:'possible faults',
+    rs_warn_one:'possible fault',
+    rs_warn:'FUNCTIONAL · CHECK',
     pn_many:'records',
     pn_few:'records',
     pn_one:'record',
@@ -811,6 +815,9 @@ const T = {
     act_btn:'⚡ iPhone Activation', act_panel_title:'⚡ IPHONE ACTIVATION', act_panel_desc:'Standard Apple activation. Locked (iCloud) devices are not activated — the app points to Apple instead; no password is ever entered here.', act_auto_label:'Automatically activate <b>tested</b> devices (no manual tap on ⚡)', act_status_on:'✓ Enabled — newly tested units activate themselves', act_status_off:'Disabled — activation does not run automatically', act_status_saving:'Saving…', act_status_save_err:'⚠ Could not save: ', act_modal_activating_title:'Activating device…', act_modal_activating_body:'Performing a handshake with Apple\'s servers (requires internet). One moment.', act_modal_success_title:'✅ Device activated', act_modal_success_new:'The phone should now continue through the activation screen.', act_modal_success_already:'Device was already activated.', act_modal_fail_title:'❌ Activation failed', act_modal_fail_unknown:'Unknown error', act_modal_endpoint_title:'⚠️ Endpoint missing from build', act_modal_endpoint_body:'This EXE has an old server.py without /api/device-activate. Rebuild with the latest server.py.', act_modal_timeout_title:'⏱️ Timed out', act_modal_timeout_body:'The device did not respond in time. Check the connection and internet, then try again.', act_modal_generic_fail_title:'❌ Could not activate', act_lock_title:'Device is still on iCloud', act_lock_desc:'The phone is signed in to Find My (Activation Lock). It can\'t be activated or sold until the original owner signs out. The password is entered with Apple, never here.', act_lock_btn_icloud:'Open iCloud.com/find (remove device)', act_lock_btn_appleid:'Open appleid.apple.com', act_lock_hint:'Or directly on the phone: Settings → [name] → Sign Out.', modal_close:'Close',
   },
   cs: {
+    rs_warn_many:'možné závady',
+    rs_warn_one:'možná závada',
+    rs_warn:'FUNKČNÍ · PROVĚŘIT',
     pn_many:'záznamů',
     pn_few:'záznamy',
     pn_one:'záznam',
@@ -889,6 +896,9 @@ const T = {
     act_btn:'⚡ Aktivace iPhonu', act_panel_title:'⚡ AKTIVACE IPHONU', act_panel_desc:'Standardní Apple aktivace. Zamčené (iCloud) zařízení se neaktivují — appka nasměruje na Apple, žádné heslo se nikde nezadává.', act_auto_label:'Automaticky aktivovat <b>otestovaná</b> zařízení (bez ručního klikání na ⚡)', act_status_on:'✓ Zapnuto — nové otestované kusy se aktivují samy', act_status_off:'Vypnuto — aktivace se nespouští automaticky', act_status_saving:'Ukládám…', act_status_save_err:'⚠ Nepodařilo se uložit: ', act_modal_activating_title:'Aktivuji zařízení…', act_modal_activating_body:'Probíhá handshake s Apple serverem (nutný internet). Chvilku.', act_modal_success_title:'✅ Zařízení aktivováno', act_modal_success_new:'Telefon by měl pokračovat přes aktivační obrazovku.', act_modal_success_already:'Zařízení bylo již dříve aktivováno.', act_modal_fail_title:'❌ Aktivace selhala', act_modal_fail_unknown:'Neznámá chyba', act_modal_endpoint_title:'⚠️ Endpoint chybí v buildu', act_modal_endpoint_body:'V EXE je starý server.py bez /api/device-activate. Rebuildni s novým server.py.', act_modal_timeout_title:'⏱️ Vypršel čas', act_modal_timeout_body:'Zařízení neodpovědělo včas. Zkontroluj připojení a internet, pak zkus znovu.', act_modal_generic_fail_title:'❌ Aktivaci nelze provést', act_lock_title:'Zařízení je stále na iCloudu', act_lock_desc:'Telefon je přihlášený k Find My (Activation Lock). Aktivovat ani prodat ho nelze, dokud ho původní majitel neodhlásí. Heslo se zadává u Applu, ne zde.', act_lock_btn_icloud:'Otevřít iCloud.com/find (odebrat zařízení)', act_lock_btn_appleid:'Otevřít appleid.apple.com', act_lock_hint:'Nebo přímo na telefonu: Nastavení → [jméno] → Odhlásit se.', modal_close:'Zavřít',
   },
   pl: {
+    rs_warn_many:'możliwe usterki',
+    rs_warn_one:'możliwa usterka',
+    rs_warn:'SPRAWNY · SPRAWDZIĆ',
     pn_many:'wpisów',
     pn_few:'wpisy',
     pn_one:'wpis',
@@ -966,6 +976,9 @@ const T = {
     act_btn:'⚡ Aktywacja iPhone\'a', act_panel_title:'⚡ AKTYWACJA IPHONE\'A', act_panel_desc:'Standardowa aktywacja Apple. Zablokowane (iCloud) urządzenia nie są aktywowane — aplikacja kieruje do Apple, hasło nigdy nie jest tu wpisywane.', act_auto_label:'Automatycznie aktywuj <b>przetestowane</b> urządzenia (bez ręcznego klikania ⚡)', act_status_on:'✓ Włączone — nowo przetestowane sztuki aktywują się same', act_status_off:'Wyłączone — aktywacja nie uruchamia się automatycznie', act_status_saving:'Zapisywanie…', act_status_save_err:'⚠ Nie udało się zapisać: ', act_modal_activating_title:'Aktywacja urządzenia…', act_modal_activating_body:'Trwa uzgadnianie z serwerami Apple (wymagany internet). Chwila.', act_modal_success_title:'✅ Urządzenie aktywowane', act_modal_success_new:'Telefon powinien teraz przejść przez ekran aktywacji.', act_modal_success_already:'Urządzenie było już wcześniej aktywowane.', act_modal_fail_title:'❌ Aktywacja nie powiodła się', act_modal_fail_unknown:'Nieznany błąd', act_modal_endpoint_title:'⚠️ Brak endpointu w buildzie', act_modal_endpoint_body:'To EXE ma stary plik server.py bez /api/device-activate. Zbuduj ponownie z najnowszym server.py.', act_modal_timeout_title:'⏱️ Upłynął czas', act_modal_timeout_body:'Urządzenie nie odpowiedziało na czas. Sprawdź połączenie i internet, spróbuj ponownie.', act_modal_generic_fail_title:'❌ Nie można aktywować', act_lock_title:'Urządzenie jest nadal na iCloud', act_lock_desc:'Telefon jest zalogowany do Find My (Activation Lock). Nie można go aktywować ani sprzedać, dopóki pierwotny właściciel się nie wyloguje. Hasło podaje się u Apple, nigdy tutaj.', act_lock_btn_icloud:'Otwórz iCloud.com/find (usuń urządzenie)', act_lock_btn_appleid:'Otwórz appleid.apple.com', act_lock_hint:'Lub bezpośrednio na telefonie: Ustawienia → [imię] → Wyloguj się.', modal_close:'Zamknij',
   },
   ru: {
+    rs_warn_many:'возможные неисправности',
+    rs_warn_one:'возможная неисправность',
+    rs_warn:'РАБОТАЕТ · ПРОВЕРИТЬ',
     pn_many:'записей',
     pn_few:'записи',
     pn_one:'запись',
@@ -1043,6 +1056,9 @@ const T = {
     act_btn:'⚡ Активация iPhone', act_panel_title:'⚡ АКТИВАЦИЯ IPHONE', act_panel_desc:'Стандартная активация Apple. Заблокированные (iCloud) устройства не активируются — приложение направляет на сайт Apple, пароль здесь никогда не вводится.', act_auto_label:'Автоматически активировать <b>протестированные</b> устройства (без ручного нажатия ⚡)', act_status_on:'✓ Включено — новые протестированные устройства активируются сами', act_status_off:'Выключено — активация не запускается автоматически', act_status_saving:'Сохранение…', act_status_save_err:'⚠ Не удалось сохранить: ', act_modal_activating_title:'Активация устройства…', act_modal_activating_body:'Выполняется обмен данными с серверами Apple (нужен интернет). Одну минуту.', act_modal_success_title:'✅ Устройство активировано', act_modal_success_new:'Телефон теперь должен пройти через экран активации.', act_modal_success_already:'Устройство уже было активировано ранее.', act_modal_fail_title:'❌ Активация не удалась', act_modal_fail_unknown:'Неизвестная ошибка', act_modal_endpoint_title:'⚠️ Endpoint отсутствует в сборке', act_modal_endpoint_body:'В этом EXE старый server.py без /api/device-activate. Пересоберите с новым server.py.', act_modal_timeout_title:'⏱️ Истекло время ожидания', act_modal_timeout_body:'Устройство не ответило вовремя. Проверьте подключение и интернет, затем повторите попытку.', act_modal_generic_fail_title:'❌ Не удалось выполнить активацию', act_lock_title:'Устройство всё ещё привязано к iCloud', act_lock_desc:'Телефон вошёл в Find My (Activation Lock). Активировать или продать его нельзя, пока исходный владелец не выйдет из аккаунта. Пароль вводится у Apple, никогда не здесь.', act_lock_btn_icloud:'Открыть iCloud.com/find (удалить устройство)', act_lock_btn_appleid:'Открыть appleid.apple.com', act_lock_hint:'Или прямо на телефоне: Настройки → [имя] → Выйти.', modal_close:'Закрыть',
   },
   it: {
+    rs_warn_many:'possibili guasti',
+    rs_warn_one:'possibile guasto',
+    rs_warn:'FUNZIONANTE · VERIFICARE',
     pn_many:'record',
     pn_few:'record',
     pn_one:'record',
@@ -1120,6 +1136,9 @@ const T = {
     act_btn:'⚡ Attivazione iPhone', act_panel_title:'⚡ ATTIVAZIONE IPHONE', act_panel_desc:'Attivazione Apple standard. I dispositivi bloccati (iCloud) non vengono attivati: l\'app indirizza ad Apple, nessuna password viene mai inserita qui.', act_auto_label:'Attiva automaticamente i dispositivi <b>testati</b> (senza toccare manualmente ⚡)', act_status_on:'✓ Attivo — i nuovi dispositivi testati si attivano da soli', act_status_off:'Disattivato — l\'attivazione non parte automaticamente', act_status_saving:'Salvataggio…', act_status_save_err:'⚠ Salvataggio non riuscito: ', act_modal_activating_title:'Attivazione del dispositivo…', act_modal_activating_body:'Handshake in corso con i server Apple (richiede internet). Un momento.', act_modal_success_title:'✅ Dispositivo attivato', act_modal_success_new:'Il telefono dovrebbe ora proseguire nella schermata di attivazione.', act_modal_success_already:'Il dispositivo era già stato attivato in precedenza.', act_modal_fail_title:'❌ Attivazione non riuscita', act_modal_fail_unknown:'Errore sconosciuto', act_modal_endpoint_title:'⚠️ Endpoint mancante nella build', act_modal_endpoint_body:'Questo EXE ha un vecchio server.py senza /api/device-activate. Ricompila con il server.py più recente.', act_modal_timeout_title:'⏱️ Tempo scaduto', act_modal_timeout_body:'Il dispositivo non ha risposto in tempo. Controlla la connessione e internet, poi riprova.', act_modal_generic_fail_title:'❌ Impossibile attivare', act_lock_title:'Il dispositivo è ancora collegato a iCloud', act_lock_desc:'Il telefono è connesso a Find My (Activation Lock). Non può essere attivato né venduto finché il proprietario originale non esegue il logout. La password si inserisce presso Apple, mai qui.', act_lock_btn_icloud:'Apri iCloud.com/find (rimuovi dispositivo)', act_lock_btn_appleid:'Apri appleid.apple.com', act_lock_hint:'Oppure direttamente sul telefono: Impostazioni → [nome] → Esci.', modal_close:'Chiudi',
   },
   fr: {
+    rs_warn_many:'pannes possibles',
+    rs_warn_one:'panne possible',
+    rs_warn:'FONCTIONNEL · À VÉRIFIER',
     pn_many:'entrées',
     pn_few:'entrées',
     pn_one:'entrée',
@@ -1782,8 +1801,21 @@ function renderBody(slot) {
   }
   const progressHTML = slot.state==='testing' ? `<div class="progress-wrap"><div class="progress-bar" style="width:${slot.progress}%"></div></div>` : '';
   const isDone = slot.state==='done-pass'||slot.state==='done-fail';
-  const summaryHTML = isDone ? `<div class="result-summary ${slot.state==='done-pass'?'pass':'fail'}">
-    <div class="result-label" style="font-size:11px">${slot.state==='done-pass'?t('rs_pass'):t('rs_fail')}</div>
+  // Verdikt musí odpovídat tomu, co je v seznamu výš. Dokud tu stálo
+  // "FUNKČNÍ / PROŠLO" i u telefonu se dvěma "možná závada", byl to
+  // rozpor, který v reklamaci neobhájíš. Proto tři stavy:
+  //   fail  = doložená výměna dílu (SN se liší od prvního testu)
+  //   warn  = možná závada (chybí SN nebo je v telefonu panic log)
+  //   pass  = čisté
+  const pocetWarn = slot.tests.filter(x => x.status === 'warn').length;
+  let vClass = 'pass', vText = t('rs_pass');
+  if (slot.state === 'done-fail') { vClass = 'fail'; vText = t('rs_fail'); }
+  else if (pocetWarn) {
+    vClass = 'warn';
+    vText = `${t('rs_warn')} · ${pocetWarn}\u00D7 ${pocetWarn === 1 ? t('rs_warn_one') : t('rs_warn_many')}`;
+  }
+  const summaryHTML = isDone ? `<div class="result-summary ${vClass}">
+    <div class="result-label" style="font-size:11px">${vText}</div>
   </div>` : '';
   return imeiRow + deviceInfo + testsHTML + progressHTML + summaryHTML;
 }

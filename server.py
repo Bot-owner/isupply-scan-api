@@ -561,6 +561,22 @@ def init_db():
     conn.close()
     print(f"✓ Databáze: {DB_PATH}")
     # At je pri startu hned videt, jestli se barvy vubec maji odkud cist.
+    # Tabulka panic kodu. Kdyz chybi, KAZDY panic vyjde jako "kod se nenasel"
+    # a technik si mysli, ze appka neumi analyzovat - pritom jen nema z ceho.
+    try:
+        _pf = _panic_sensors_file()
+        if os.path.isfile(_pf):
+            _pd = _load_panic_sensors()
+            _ns = len(_pd.get("sensors") or {})
+            _nc = sum(len(v) for v in (_pd.get("smc_codes") or {}).values())
+            print(f"✓ Panic mapování: {_pf} ({_ns} senzorů, {_nc} kódů)")
+        else:
+            print(f"⚠ Panic mapování: panic_sensors.json NENALEZEN")
+            print("  Panic logy se načtou, ale příčinu nepůjde určit.")
+            print("  Zkopíruj panic_sensors.json vedle aplikace (do dist\\).")
+    except Exception as _exc:
+        print(f"⚠ Panic mapování: {_exc}")
+
     try:
         if os.path.isfile(COLORS_FILE):
             _c = _load_colors_file()
