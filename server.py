@@ -3529,6 +3529,9 @@ def _parse_ips(name, raw, product_type=""):
     return {'name': name, 'bug_type': bug_type, 'timestamp': ts,
             'summary': summary,
             'cause': _classify_panic(bug_type, raw, summary, product_type),
+            # Strukturovany rozbor pro UI: co je vadne, jak jiste, co promerit
+            # a co vymenit. Technik nema cist dump, ma dostat zaver.
+            'analysis': analyze_panic(raw, summary, product_type),
             'full': raw[:20000]}
 
 async def _panic_logs_collect(udid):
